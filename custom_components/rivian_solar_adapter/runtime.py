@@ -48,7 +48,7 @@ from .const import (
     STOP_TIMEOUT,
     TICK_INTERVAL,
 )
-from .controller import AdapterConfig, Observation, RivianScheduleController
+from .controller import AdapterConfig, Observation, Phase, RivianScheduleController
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -147,7 +147,6 @@ class AdapterRuntime:
         return self.controller.snapshot(now) | {
             "observation": asdict(self.observation()),
             "reauth_required": self.reauth_required,
-            "last_tick_at": self.last_tick_at.isoformat() if self.last_tick_at else None,
             "last_provider_read": self.last_provider_read,
             "last_provider_read_at": (
                 self.last_provider_read_at.isoformat() if self.last_provider_read_at else None
@@ -262,7 +261,12 @@ class AdapterRuntime:
         self.request_tick()
 
     @callback
-    def _async_handle_state_change(self, _event: Event[EventStateChangedData]) -> None:
+    def _async_handle_state_change(self, event: Event[EventStateChangedData]) -> None:
+        old_state = event.data["old_state"]
+        new_state = event.data["new_state"]
+        if old_state and new_state and old_state.state == new_state.state:
+            # Attribute updates (a tracker's coordinates, say) change nothing here.
+            return
         # evcc_status follows the mapped entities immediately.
         self.async_notify()
         self.request_tick()
@@ -299,6 +303,11 @@ class AdapterRuntime:
 
     async def async_request_release(self, reason: str) -> None:
         """Ask the next tick to restore the owner's schedule."""
+        if self.controller.journal.phase is Phase.FAULT:
+            # Nothing is written during a fault, so a release would never happen.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="release_blocked_by_fault"
+            )
         await self.controller.async_request_release(reason)
         self.async_notify()
         self.request_tick()

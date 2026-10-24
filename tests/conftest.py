@@ -14,11 +14,10 @@ from copy import deepcopy
 from typing import Any
 from unittest.mock import patch
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-import pytest
-from rivian.exceptions import RivianInvalidOTP
-
 from homeassistant.core import HomeAssistant
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+from rivian.exceptions import RivianInvalidOTP
 
 from custom_components.rivian_solar_adapter.const import (
     CONF_ACCESS_TOKEN,

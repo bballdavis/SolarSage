@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import glob
 import logging
+import os
 from typing import Any
 
 from homeassistant.components import persistent_notification
@@ -29,7 +31,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.storage import Store
+from homeassistant.helpers.storage import STORAGE_DIR, Store
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
@@ -81,6 +83,22 @@ def create_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, STORAGE_VERSION, storage_key(entry_id), private=True, atomic_writes=True)
 
 
+async def async_find_corrupt_journals(hass: HomeAssistant, key: str) -> list[str]:
+    """Return journals Home Assistant set aside as unparsable, if none replaced them.
+
+    Home Assistant renames a storage file it cannot parse and loads nothing,
+    which would silently drop the owner's original schedules.
+    """
+
+    def find() -> list[str]:
+        if os.path.exists(hass.config.path(STORAGE_DIR, key)):
+            return []
+        paths = glob.glob(hass.config.path(STORAGE_DIR, f"{glob.escape(key)}.corrupt.*"))
+        return sorted(os.path.relpath(path, hass.config.config_dir) for path in paths)
+
+    return await hass.async_add_executor_job(find)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the integration's services."""
     _async_register_services(hass)
@@ -105,16 +123,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
         store,
         adapter_config_from_entry(hass, entry),
     )
+    # Never start over without the journal: it may hold the owner's original
+    # schedules. An unreadable file is left untouched for inspection.
     try:
         await controller.async_load()
     except (HomeAssistantError, KeyError, TypeError, ValueError) as err:
-        # Never start over without the journal: it may hold the owner's
-        # original schedules. The file is left untouched for inspection.
         raise ConfigEntryError(
             translation_domain=DOMAIN,
             translation_key="journal_unreadable",
             translation_placeholders={"path": f".storage/{store.key}", "error": str(err)},
         ) from err
+    if corrupt := await async_find_corrupt_journals(hass, store.key):
+        raise ConfigEntryError(
+            translation_domain=DOMAIN,
+            translation_key="journal_corrupt",
+            translation_placeholders={"path": ", ".join(corrupt)},
+        )
 
     integration = await async_get_integration(hass, DOMAIN)
     runtime = AdapterRuntime(
@@ -143,6 +167,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         data = await store.async_load()
     except HomeAssistantError as err:
         _async_notify_restore_failed(hass, entry, store, f"the journal is unreadable: {err}")
+        return
+    if not data and (corrupt := await async_find_corrupt_journals(hass, store.key)):
+        _async_notify_restore_failed(
+            hass, entry, store, f"the journal was corrupt and moved to {', '.join(corrupt)}"
+        )
         return
     if not data or (data.get("phase") == Phase.IDLE.value and data.get("original") is None):
         await store.async_remove()

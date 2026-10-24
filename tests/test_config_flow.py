@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 from conftest import (
@@ -20,6 +20,9 @@ from conftest import (
     FakeRivian,
     make_entry,
 )
+from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 import pytest
 from rivian.exceptions import (
     RivianApiException,
@@ -27,10 +30,6 @@ from rivian.exceptions import (
     RivianTemporarilyLockedError,
     RivianUnauthenticated,
 )
-
-from homeassistant.config_entries import SOURCE_USER
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.rivian_solar_adapter.const import (
     CONF_CHARGER_STATE_ENTITY,
@@ -61,12 +60,19 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture
-def mock_setup_entry() -> Generator[AsyncMock]:
+async def mock_setup_entry(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
     """Do not set up the entry a flow creates or reloads."""
-    with patch(
-        "custom_components.rivian_solar_adapter.async_setup_entry", return_value=True
-    ) as mock:
+    with (
+        patch(
+            "custom_components.rivian_solar_adapter.async_setup_entry", return_value=True
+        ) as mock,
+        patch("custom_components.rivian_solar_adapter.async_unload_entry", return_value=True),
+    ):
         yield mock
+        # Unload while the patches still apply: the entries have no runtime.
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.state is ConfigEntryState.LOADED:
+                await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def _sign_in(hass: HomeAssistant) -> dict:

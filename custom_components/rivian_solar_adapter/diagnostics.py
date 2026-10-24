@@ -46,6 +46,7 @@ async def async_get_config_entry_diagnostics(
         "evcc_status": runtime.evcc_status,
         "observation": asdict(runtime.observation()),
         "reauth_required": runtime.reauth_required,
+        "last_tick_at": runtime.last_tick_at.isoformat() if runtime.last_tick_at else None,
         "controller": async_redact_data(controller.snapshot(now), TO_REDACT_JOURNAL),
         "journal": async_redact_data(controller.journal.to_dict(), TO_REDACT_JOURNAL),
         "last_provider_read": async_redact_data(runtime.last_provider_read, TO_REDACT_JOURNAL),

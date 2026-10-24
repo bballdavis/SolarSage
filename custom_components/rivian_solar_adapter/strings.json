@@ -154,6 +154,9 @@
     "journal_unreadable": {
       "message": "The adapter's ownership journal at {path} could not be read ({error}). It was left unchanged because it may hold the owner's original charging schedules. Check the schedules in the Rivian app, then repair or remove the file."
     },
+    "journal_corrupt": {
+      "message": "The adapter's ownership journal could not be parsed, so Home Assistant moved it to {path} and started without it. It may hold the owner's original charging schedules. Check the schedules in the Rivian app and restore them if needed, then delete the moved file to start the adapter again."
+    },
     "entry_not_found": {
       "message": "No Rivian solar adapter has the config entry ID {entry_id}."
     },
@@ -162,6 +165,9 @@
     },
     "clear_fault_refused": {
       "message": "The fault was not cleared: Rivian holds a charging schedule this adapter did not write. Check the Rivian app, then restore the schedule by hand or use abandon ownership."
+    },
+    "release_blocked_by_fault": {
+      "message": "The adapter is in a fault and writes nothing until it is cleared. Clear the fault first; if that is refused, restore the schedule in the Rivian app and use abandon ownership."
     },
     "reauth_required": {
       "message": "Rivian rejected the session. Sign in again from the integration's repair notice."
