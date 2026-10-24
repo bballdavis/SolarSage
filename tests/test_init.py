@@ -333,6 +333,55 @@ async def test_requests_do_not_wait_for_rivian(
     assert state(hass, "sensor", "control_state") == "lease_active"
 
 
+async def test_release_while_taking_over_cancels_it(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
+) -> None:
+    """A release pressed while the first read is under way stops the takeover."""
+    mock_rivian.read_gate = asyncio.Event()
+    await hass.services.async_call(
+        SWITCH_DOMAIN,
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: entity_id(hass, "switch", "solar_charging")},
+        blocking=True,
+    )
+    assert mock_rivian.reads == 1
+    await hass.services.async_call(
+        BUTTON_DOMAIN,
+        SERVICE_PRESS,
+        {ATTR_ENTITY_ID: entity_id(hass, "button", "release")},
+        blocking=True,
+    )
+    mock_rivian.read_gate.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert mock_rivian.writes == []
+    assert state(hass, "sensor", "control_state") == "handed_back"
+    assert read_journal(hass)["phase"] == "idle"
+
+
+async def test_request_while_away_is_not_acted_on_later(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    mock_rivian: FakeRivian,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A command for a car that is not here does not cause a takeover at plug-in."""
+    hass.states.async_set(PLUGGED_ENTITY, "off")
+    hass.states.async_set(LOCATION_ENTITY, "not_home")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await start_charging(hass)
+    assert state(hass, "sensor", "evcc_status") == "a"
+
+    await advance(hass, freezer, timedelta(days=2))
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await advance(hass, freezer, TICK_INTERVAL)
+    assert mock_rivian.reads == 0
+    assert mock_rivian.writes == []
+    assert state(hass, "sensor", "control_state") == "idle"
+
+
 async def test_dry_run_writes_nothing(
     hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
 ) -> None:
