@@ -1,0 +1,37 @@
+{
+  "synthetic": true,
+  "cases": [
+    {
+      "name": "rivian_surplus_start",
+      "vehicle": "rivian",
+      "amp_step": 2,
+      "inputs": {"grid_power_w": -4000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "inputs_fresh": true},
+      "expected": {"should_charge": true, "target_amps": 8, "state": "solar_active"}
+    },
+    {
+      "name": "tesla_surplus_start",
+      "vehicle": "tesla",
+      "amp_step": 1,
+      "inputs": {"grid_power_w": -4000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "inputs_fresh": true},
+      "expected": {"should_charge": true, "target_amps": 8, "state": "solar_active"}
+    },
+    {
+      "name": "ambiguous_both_vehicle_branch",
+      "vehicle": null,
+      "amp_step": 2,
+      "inputs": {"grid_power_w": -4000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "inputs_fresh": true},
+      "expected": {"should_charge": false, "reason": "vehicle_identity_ambiguous"}
+    }
+  ],
+  "transition": {
+    "fresh_start": {"now_monotonic": 0, "grid_power_w": -4000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "vehicle": "tesla", "inputs_fresh": true},
+    "stale_wall": {"now_monotonic": 1, "grid_power_w": -4000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "vehicle": "tesla", "inputs_fresh": false}
+  },
+  "cloud_import_sequence": [
+    {"now_monotonic": 0, "grid_power_w": -6000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "vehicle": "rivian", "inputs_fresh": true, "expected": {"should_charge": true, "target_amps": 8}},
+    {"now_monotonic": 60, "grid_power_w": -12000, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 0, "wall_voltage_v": 240, "vehicle": "rivian", "inputs_fresh": true, "expected": {"should_charge": true, "target_amps": 10}},
+    {"now_monotonic": 61, "grid_power_w": -2420, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 1920, "wall_voltage_v": 240, "vehicle": "rivian", "inputs_fresh": true, "expected": {"should_charge": true, "target_amps": 10}},
+    {"now_monotonic": 70, "grid_power_w": 600, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 1920, "wall_voltage_v": 240, "vehicle": "rivian", "inputs_fresh": true, "expected": {"should_charge": true, "target_amps": 8}},
+    {"now_monotonic": 100, "grid_power_w": 600, "battery_power_w": 500, "battery_soc": 60, "ev_power_w": 1920, "wall_voltage_v": 240, "vehicle": "rivian", "inputs_fresh": true, "expected": {"should_charge": false, "reason": "surplus_lost"}}
+  ]
+}

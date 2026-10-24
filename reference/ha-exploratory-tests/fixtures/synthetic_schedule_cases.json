@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "valid": {
+    "weekDays": ["Monday", "Friday"],
+    "startTime": 60,
+    "duration": 120,
+    "location": {"latitude": 1.0, "longitude": 2.0},
+    "amperage": 16,
+    "enabled": true,
+    "id": "server-assigned",
+    "owner": "integration"
+  },
+  "server_metadata_variant": {"id": "different-server-id", "radius": 150},
+  "full_list": [
+    {"weekDays": ["Monday", "Friday"], "startTime": 60, "duration": 120, "location": {"latitude": 1.0, "longitude": 2.0}, "amperage": 16, "enabled": true, "id": "first"},
+    {"weekDays": ["Saturday"], "startTime": 720, "duration": 60, "location": {"latitude": 1.0, "longitude": 2.0}, "amperage": 8, "enabled": false, "id": "second"}
+  ],
+  "invalid": [
+    {"field": "amperage", "value": 15},
+    {"field": "weekDays", "value": ["Monday", "Monday"]},
+    {"field": "startTime", "value": 1440}
+  ]
+}

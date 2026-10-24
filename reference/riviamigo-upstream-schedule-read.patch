@@ -1,0 +1,621 @@
+diff --git a/apps/api/src/ingestion/rivian_poll.rs b/apps/api/src/ingestion/rivian_poll.rs
+index c5152271..349974e9 100644
+--- a/apps/api/src/ingestion/rivian_poll.rs
++++ b/apps/api/src/ingestion/rivian_poll.rs
+@@ -1746,22 +1746,132 @@ struct VehicleChargingSchedules {
+     charging_schedules: Option<Vec<ChargePolicyItem>>,
+ }
+ 
+-#[derive(Debug, Deserialize)]
++#[derive(Debug, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+-struct ChargePolicyItem {
+-    enabled: Option<bool>,
+-    start_time: Option<i32>,
+-    duration: Option<i32>,
+-    amperage: Option<f64>,
+-    location: Option<ChargingScheduleLocation>,
+-    week_days: Option<Vec<String>>,
++pub struct ChargePolicyItem {
++    pub enabled: Option<bool>,
++    pub start_time: Option<i32>,
++    pub duration: Option<i32>,
++    pub amperage: Option<f64>,
++    pub location: Option<ChargingScheduleLocation>,
++    pub week_days: Option<Vec<String>>,
+ }
+ 
+-#[derive(Debug, Deserialize)]
++#[derive(Debug, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+-struct ChargingScheduleLocation {
+-    latitude: Option<f64>,
+-    longitude: Option<f64>,
++pub struct ChargingScheduleLocation {
++    pub latitude: Option<f64>,
++    pub longitude: Option<f64>,
++}
++
++#[derive(Debug, Serialize)]
++pub struct UpstreamChargingSchedule {
++    pub schedules: Vec<ChargePolicyItem>,
++    pub observed_at: DateTime<Utc>,
++}
++
++fn complete_charging_schedule(data: ChargingScheduleData) -> Result<Vec<ChargePolicyItem>> {
++    let schedules = data
++        .get_vehicle
++        .ok_or_else(|| anyhow!("Rivian charging schedule response omitted vehicle"))?
++        .charging_schedules
++        .ok_or_else(|| anyhow!("Rivian charging schedule response omitted schedule list"))?;
++
++    for schedule in &schedules {
++        let complete = schedule.enabled.is_some()
++            && schedule.start_time.is_some()
++            && schedule.duration.is_some()
++            && schedule.amperage.is_some()
++            && schedule
++                .location
++                .as_ref()
++                .and_then(|location| location.latitude)
++                .is_some()
++            && schedule
++                .location
++                .as_ref()
++                .and_then(|location| location.longitude)
++                .is_some()
++            && schedule
++                .week_days
++                .as_ref()
++                .is_some_and(|week_days| !week_days.is_empty());
++        if !complete {
++            return Err(anyhow!(
++                "Rivian charging schedule response contained a partial entry"
++            ));
++        }
++    }
++
++    Ok(schedules)
++}
++
++/// Read the complete charging schedule directly from Rivian without changing
++/// the local schedule row. Null provider fields are incomplete responses.
++pub async fn fetch_charging_schedule_upstream(
++    rivian_vehicle_id: &str,
++    vehicle_id: Uuid,
++    pool: &PgPool,
++    client: &reqwest::Client,
++    tokens: &RivianTokenBundle,
++) -> Result<UpstreamChargingSchedule> {
++    const Q: &str = r#"
++        query GetChargingSchedule($vehicleId: String!) {
++          getVehicle(id: $vehicleId) {
++            chargingSchedules {
++              enabled
++              startTime
++              duration
++              amperage
++              location {
++                latitude
++                longitude
++              }
++              weekDays
++            }
++          }
++        }
++    "#;
++
++    let vars = serde_json::json!({ "vehicleId": rivian_vehicle_id });
++    let data: ChargingScheduleData =
++        gql_request(client, GATEWAY_URL, tokens, "GetChargingSchedule", Q, vars).await?;
++    let schedules = complete_charging_schedule(data)?;
++    let observed_at = Utc::now();
++
++    increment_poll_counter(pool, vehicle_id).await;
++    Ok(UpstreamChargingSchedule {
++        schedules,
++        observed_at,
++    })
++}
++
++pub async fn fetch_charging_schedule_upstream_for_vehicle(
++    vehicle_id: Uuid,
++    pool: &PgPool,
++    client: &reqwest::Client,
++    age_key: &str,
++) -> Result<UpstreamChargingSchedule> {
++    with_vehicle_auth_retry(
++        vehicle_id,
++        pool,
++        client,
++        age_key,
++        "fetch_charging_schedule_upstream",
++        move |rivian_vehicle_id, tokens, pool, client| {
++            Box::pin(async move {
++                fetch_charging_schedule_upstream(
++                    rivian_vehicle_id,
++                    vehicle_id,
++                    pool,
++                    client,
++                    tokens,
++                )
++                .await
++            })
++        },
++    )
++    .await
+ }
+ 
+ /// Fetch the vehicle's charging schedule and upsert into `charging_schedules`.
+@@ -2001,14 +2111,23 @@ pub struct ChargingScheduleInput {
+     pub week_days: Option<Vec<String>>,
+ }
+ 
+-/// Mutation response — field received from Rivian but success is inferred from HTTP status.
++/// Mutation response — a non-null provider result is required; the subsequent
++/// provider readback verifies the stored fields.
+ #[derive(Debug, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+-#[allow(dead_code)]
+ struct MutateChargingScheduleData {
+     update_vehicle_charging_settings: Option<serde_json::Value>,
+ }
+ 
++fn require_mutation_result(data: MutateChargingScheduleData) -> Result<()> {
++    if data.update_vehicle_charging_settings.is_none() {
++        return Err(anyhow!(
++            "Rivian charging schedule mutation returned no result"
++        ));
++    }
++    Ok(())
++}
++
+ /// Send the `updateVehicleChargingSettings` mutation to Rivian and upsert
+ /// the result into `charging_schedules`.
+ pub async fn mutate_charging_schedule(
+@@ -2041,7 +2160,7 @@ pub async fn mutate_charging_schedule(
+         "chargePolicy": policy,
+     });
+ 
+-    let _: MutateChargingScheduleData = gql_request(
++    let data: MutateChargingScheduleData = gql_request(
+         client,
+         GATEWAY_URL,
+         tokens,
+@@ -2050,6 +2169,7 @@ pub async fn mutate_charging_schedule(
+         vars,
+     )
+     .await?;
++    require_mutation_result(data)?;
+ 
+     increment_poll_counter(pool, vehicle_id).await;
+ 
+@@ -2681,8 +2801,10 @@ pub(crate) async fn run_poll_loop(
+ #[cfg(test)]
+ mod tests {
+     use super::{
+-        live_session_redis_key, record_charge_payload_with_ref, unchanged_linked_session,
+-        ChargePayloadRecordOutcome, LIVE_SESSION_HISTORY_QUERY, LIVE_SESSION_TTL_SECONDS,
++        complete_charging_schedule, live_session_redis_key, record_charge_payload_with_ref,
++        require_mutation_result, unchanged_linked_session, ChargePayloadRecordOutcome,
++        ChargingScheduleData, MutateChargingScheduleData, LIVE_SESSION_HISTORY_QUERY,
++        LIVE_SESSION_TTL_SECONDS,
+     };
+     use crate::ingestion::parser::parse_charging_session_message;
+     use crate::ingestion::session_store::{decrypt_tokens, encrypt_tokens, RivianTokenBundle};
+@@ -2693,13 +2815,295 @@ mod tests {
+     use age::secrecy::ExposeSecret;
+     use axum::{extract::State, routing::post, Json, Router};
+     use chrono::Utc;
+-    use serde_json::json;
++    use serde_json::{json, Value};
+     use sqlx::{postgres::PgPoolOptions, Executor, PgPool};
+     use std::sync::{
+         atomic::{AtomicUsize, Ordering},
+-        Arc,
++        Arc, Mutex,
+     };
+ 
++    #[derive(Clone)]
++    struct GraphqlFixtureState {
++        request: Arc<Mutex<Option<Value>>>,
++        response: Value,
++    }
++
++    async fn graphql_fixture(
++        State(state): State<GraphqlFixtureState>,
++        Json(body): Json<Value>,
++    ) -> Json<Value> {
++        *state.request.lock().expect("fixture request mutex") = Some(body);
++        Json(state.response)
++    }
++
++    async fn spawn_graphql_fixture(
++        response: Value,
++    ) -> (
++        String,
++        Arc<Mutex<Option<Value>>>,
++        tokio::task::JoinHandle<()>,
++    ) {
++        let request = Arc::new(Mutex::new(None));
++        let state = GraphqlFixtureState {
++            request: request.clone(),
++            response,
++        };
++        let app = Router::new()
++            .route("/graphql", post(graphql_fixture))
++            .with_state(state);
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
++            .await
++            .expect("bind GraphQL fixture listener");
++        let address = listener.local_addr().expect("GraphQL fixture address");
++        let server = tokio::spawn(async move {
++            axum::serve(listener, app)
++                .await
++                .expect("serve GraphQL fixture");
++        });
++        (format!("http://{address}/graphql"), request, server)
++    }
++
++    fn fixture_tokens() -> RivianTokenBundle {
++        RivianTokenBundle {
++            access_token: "synthetic-access".into(),
++            refresh_token: "synthetic-refresh".into(),
++            app_session_token: "synthetic-app-session".into(),
++            user_session_token: "synthetic-user-session".into(),
++            csrf_token: "synthetic-csrf".into(),
++            created_at: Utc::now(),
++        }
++    }
++
++    #[tokio::test]
++    async fn charging_schedule_get_fixture_preserves_complete_list_and_metadata() {
++        let response = json!({
++            "data": {
++                "getVehicle": {
++                    "chargingSchedules": [
++                        {
++                            "enabled": false,
++                            "startTime": 90,
++                            "duration": 120,
++                            "amperage": 8.0,
++                            "location": {"latitude": 3.0, "longitude": 4.0},
++                            "weekDays": ["MONDAY"]
++                        },
++                        {
++                            "enabled": true,
++                            "startTime": 120,
++                            "duration": 600,
++                            "amperage": 32.0,
++                            "location": {"latitude": 1.0, "longitude": 2.0},
++                            "weekDays": ["MONDAY", "WEDNESDAY", "FRIDAY"]
++                        }
++                    ]
++                }
++            }
++        });
++        let (url, request, server) = spawn_graphql_fixture(response).await;
++        let parsed: ChargingScheduleData = super::gql_request(
++            &reqwest::Client::new(),
++            &url,
++            &fixture_tokens(),
++            "GetChargingSchedule",
++            "query GetChargingSchedule($vehicleId: String!) { getVehicle(id: $vehicleId) { chargingSchedules { enabled startTime duration amperage location { latitude longitude } weekDays } } }",
++            json!({"vehicleId": "synthetic-vehicle"}),
++        )
++        .await
++        .expect("synthetic charging schedule GET should parse");
++        server.abort();
++
++        let body = request
++            .lock()
++            .expect("fixture request mutex")
++            .clone()
++            .expect("fixture received a request");
++        assert_eq!(body["operationName"], "GetChargingSchedule");
++        assert_eq!(body["variables"]["vehicleId"], "synthetic-vehicle");
++
++        let schedules = complete_charging_schedule(parsed).expect("complete schedule list");
++        assert_eq!(schedules.len(), 2);
++        assert_eq!(schedules[0].enabled, Some(false));
++        assert_eq!(
++            schedules[0].week_days.as_deref(),
++            Some(["MONDAY".to_owned()].as_slice())
++        );
++        assert_eq!(schedules[1].amperage, Some(32.0));
++        assert_eq!(
++            schedules[1]
++                .location
++                .as_ref()
++                .and_then(|location| location.latitude),
++            Some(1.0)
++        );
++        assert_eq!(
++            schedules[1].week_days.as_deref(),
++            Some(
++                ["MONDAY", "WEDNESDAY", "FRIDAY"]
++                    .map(str::to_owned)
++                    .as_slice()
++            )
++        );
++    }
++
++    #[tokio::test]
++    async fn charging_schedule_get_fixture_accepts_zero_or_one_schedule() {
++        for schedules in [
++            json!([]),
++            json!([{
++                "enabled": true,
++                "startTime": 0,
++                "duration": 1_440,
++                "amperage": 8.0,
++                "location": {"latitude": 1.0, "longitude": 2.0},
++                "weekDays": ["MONDAY"]
++            }]),
++        ] {
++            let response = json!({
++                "data": { "getVehicle": { "chargingSchedules": schedules } }
++            });
++            let (url, _request, server) = spawn_graphql_fixture(response).await;
++            let parsed: ChargingScheduleData = super::gql_request(
++                &reqwest::Client::new(),
++                &url,
++                &fixture_tokens(),
++                "GetChargingSchedule",
++                "query GetChargingSchedule($vehicleId: String!) { getVehicle(id: $vehicleId) { chargingSchedules { enabled startTime duration amperage location { latitude longitude } weekDays } } }",
++                json!({"vehicleId": "synthetic-vehicle"}),
++            )
++            .await
++            .expect("zero or one schedule should parse");
++            server.abort();
++            let schedules = complete_charging_schedule(parsed).expect("schedule list");
++            assert!(schedules.len() <= 1);
++        }
++    }
++
++    #[tokio::test]
++    async fn charging_schedule_get_fixture_rejects_null_vehicle_or_schedule_list() {
++        for payload in [
++            json!({"data": {"getVehicle": null}}),
++            json!({"data": {"getVehicle": {"chargingSchedules": null}}}),
++            json!({
++                "data": {
++                    "getVehicle": {
++                        "chargingSchedules": [{"enabled": true}]
++                    }
++                }
++            }),
++        ] {
++            let (url, _request, server) = spawn_graphql_fixture(payload).await;
++            let parsed: ChargingScheduleData = super::gql_request(
++                &reqwest::Client::new(),
++                &url,
++                &fixture_tokens(),
++                "GetChargingSchedule",
++                "query GetChargingSchedule($vehicleId: String!) { getVehicle(id: $vehicleId) { chargingSchedules { enabled } } }",
++                json!({"vehicleId": "synthetic-vehicle"}),
++            )
++            .await
++            .expect("GraphQL envelope should parse before null validation");
++            server.abort();
++            assert!(complete_charging_schedule(parsed).is_err());
++        }
++    }
++
++    #[tokio::test]
++    async fn charging_schedule_put_fixture_accepts_success_envelope_and_policy_metadata() {
++        let response = json!({
++            "data": {
++                "updateVehicleChargingSettings": {"__typename": "Vehicle"}
++            }
++        });
++        let (url, request, server) = spawn_graphql_fixture(response).await;
++        let variables = json!({
++            "vehicleId": "synthetic-vehicle",
++            "chargePolicy": {
++                "enabled": false,
++                "startTime": 135,
++                "duration": 480,
++                "amperage": 24.0,
++                "latitude": 1.0,
++                "longitude": 2.0,
++                "weekDays": ["TUESDAY", "THURSDAY"]
++            }
++        });
++        let parsed: MutateChargingScheduleData = super::gql_request(
++            &reqwest::Client::new(),
++            &url,
++            &fixture_tokens(),
++            "updateVehicleChargingSettings",
++            "mutation updateVehicleChargingSettings($vehicleId: String!, $chargePolicy: ChargePolicyInput!) { updateVehicleChargingSettings(vehicleId: $vehicleId, chargePolicy: $chargePolicy) { __typename } }",
++            variables,
++        )
++        .await
++        .expect("synthetic charging schedule PUT should parse");
++        server.abort();
++
++        assert!(parsed.update_vehicle_charging_settings.is_some());
++        let body = request
++            .lock()
++            .expect("fixture request mutex")
++            .clone()
++            .expect("fixture received a request");
++        assert_eq!(body["operationName"], "updateVehicleChargingSettings");
++        assert_eq!(body["variables"]["chargePolicy"]["enabled"], false);
++        assert_eq!(
++            body["variables"]["chargePolicy"]["weekDays"],
++            json!(["TUESDAY", "THURSDAY"])
++        );
++        assert_eq!(body["variables"]["chargePolicy"]["latitude"], 1.0);
++        assert_eq!(body["variables"]["chargePolicy"]["longitude"], 2.0);
++    }
++
++    #[tokio::test]
++    async fn charging_schedule_put_fixture_rejects_missing_mutation_result() {
++        let response = json!({ "data": {} });
++        let (url, _request, server) = spawn_graphql_fixture(response).await;
++        let parsed: MutateChargingScheduleData = super::gql_request(
++            &reqwest::Client::new(),
++            &url,
++            &fixture_tokens(),
++            "updateVehicleChargingSettings",
++            "mutation updateVehicleChargingSettings { updateVehicleChargingSettings { __typename } }",
++            json!({}),
++        )
++        .await
++        .expect("synthetic mutation envelope should parse");
++        server.abort();
++
++        let error = require_mutation_result(parsed).expect_err("missing mutation result must fail");
++        assert!(error.to_string().contains("returned no result"));
++    }
++
++    #[tokio::test]
++    async fn charging_schedule_graphql_error_envelope_is_returned_without_partial_data() {
++        let response = json!({
++            "data": null,
++            "errors": [
++                {"message": "charging policy rejected", "extensions": {"code": "BAD_USER_INPUT"}},
++                {"message": "schedule is not supported"}
++            ]
++        });
++        let (url, _request, server) = spawn_graphql_fixture(response).await;
++        let error = super::gql_request::<MutateChargingScheduleData>(
++            &reqwest::Client::new(),
++            &url,
++            &fixture_tokens(),
++            "updateVehicleChargingSettings",
++            "mutation updateVehicleChargingSettings { updateVehicleChargingSettings { __typename } }",
++            json!({}),
++        )
++        .await
++        .expect_err("GraphQL error envelope must fail the request");
++        server.abort();
++
++        let message = error.to_string();
++        assert!(message.contains("charging policy rejected"));
++        assert!(message.contains("schedule is not supported"));
++        assert!(!message.contains("authentication required"));
++    }
++
+     fn recorded_payload(outcome: ChargePayloadRecordOutcome) -> (ChargeSessionPayloadRef, bool) {
+         match outcome {
+             ChargePayloadRecordOutcome::Recorded {
+diff --git a/apps/api/src/middleware/auth.rs b/apps/api/src/middleware/auth.rs
+index c563f9b2..ac808b39 100644
+--- a/apps/api/src/middleware/auth.rs
++++ b/apps/api/src/middleware/auth.rs
+@@ -322,6 +322,10 @@ mod tests {
+             &Method::GET,
+             "/v1/vehicles/live"
+         ));
++        assert!(!is_integration_read_request(
++            &Method::GET,
++            "/v1/vehicles/id/charging-schedule/upstream"
++        ));
+         assert!(!is_integration_read_request(
+             &Method::GET,
+             "/v1/admin/users"
+diff --git a/apps/api/src/routes/schedules.rs b/apps/api/src/routes/schedules.rs
+index 59ad063a..d8cfe2da 100644
+--- a/apps/api/src/routes/schedules.rs
++++ b/apps/api/src/routes/schedules.rs
+@@ -2,6 +2,7 @@
+ //!
+ //! Routes:
+ //!   GET  /v1/vehicles/{id}/charging-schedule
++//!   GET  /v1/vehicles/{id}/charging-schedule/upstream
+ //!   PUT  /v1/vehicles/{id}/charging-schedule
+ //!   GET  /v1/vehicles/{id}/departure-schedules
+ //!   POST /v1/vehicles/{id}/departure-schedules
+@@ -12,6 +13,7 @@
+ 
+ use axum::{
+     extract::{Path, State},
++    http::HeaderMap,
+     routing::{get, patch},
+     Json, Router,
+ };
+@@ -32,6 +34,10 @@ pub fn router() -> Router<AppState> {
+             "/vehicles/{id}/charging-schedule",
+             get(get_charging_schedule).put(put_charging_schedule),
+         )
++        .route(
++            "/vehicles/{id}/charging-schedule/upstream",
++            get(get_upstream_charging_schedule),
++        )
+         .route(
+             "/vehicles/{id}/departure-schedules",
+             get(list_departure_schedules).post(create_departure_schedule),
+@@ -106,6 +112,50 @@ async fn get_charging_schedule(
+     Ok(Json(row))
+ }
+ 
++async fn reject_demo_schedule_read(pool: &sqlx::PgPool, vehicle_id: Uuid) -> Result<(), AppError> {
++    let key = sqlx::query_scalar::<_, String>(
++        "SELECT rivian_vehicle_id FROM riviamigo.vehicles WHERE id=$1",
++    )
++    .bind(vehicle_id)
++    .fetch_optional(pool)
++    .await?
++    .ok_or(AppError::NotFound)?;
++    if key.starts_with("demo-") {
++        return Err(AppError::Validation(
++            "demo vehicles are historical examples and cannot perform upstream Rivian reads".into(),
++        ));
++    }
++    Ok(())
++}
++
++/// Read a fresh complete provider schedule. This is deliberately session-only
++/// and manager/owner scoped because it reaches Rivian directly.
++async fn get_upstream_charging_schedule(
++    auth: AuthUser,
++    State(state): State<AppState>,
++    Path(vehicle_id): Path<Uuid>,
++) -> Result<(HeaderMap, Json<rivian_poll::UpstreamChargingSchedule>), AppError> {
++    require_vehicle_manager_access(&state.pool, &auth, vehicle_id).await?;
++    reject_demo_schedule_read(&state.pool, vehicle_id).await?;
++
++    let client = http_client()?;
++    let snapshot = rivian_poll::fetch_charging_schedule_upstream_for_vehicle(
++        vehicle_id,
++        &state.pool,
++        &client,
++        &state.age_key,
++    )
++    .await
++    .map_err(|_| AppError::RivianApi("Rivian charging schedule read failed".into()))?;
++
++    let mut headers = HeaderMap::new();
++    headers.insert(
++        axum::http::header::CACHE_CONTROL,
++        "no-store".parse().unwrap(),
++    );
++    Ok((headers, Json(snapshot)))
++}
++
+ // ── PUT /v1/vehicles/{id}/charging-schedule ───────────────────────────────────
+ 
+ async fn put_charging_schedule(
+diff --git a/docs/api-access.md b/docs/api-access.md
+index 38c93eb2..2f835fb1 100644
+--- a/docs/api-access.md
++++ b/docs/api-access.md
+@@ -33,6 +33,16 @@ The API is intentionally not an automation or dashboard-management API.
+ Connecting a Rivian account, changing vehicle settings, creating dashboards,
+ and every administrative operation require a signed-in browser session.
+ 
++`GET /v1/vehicles/{id}/charging-schedule/upstream` is a session-only,
++owner/manager route for attended Rivian control experiments. It reads the
++complete charging-schedule array directly from Rivian and returns an
++`observed_at` timestamp. It never writes the local schedule row and sends
++`Cache-Control: no-store`; an omitted provider vehicle or schedule list is an
++error rather than an empty schedule. The response may include saved-location
++latitude and longitude; keep any retained response or recovery snapshot in
++restricted storage, and redact coordinates, VINs, account identifiers, and
++tokens from worksheets and logs. Integration keys are denied.
++
+ Chart management follows the same session-only boundary. The signed-in web app
+ uses `/v1/charts`, `/v1/charts/effective`, `/v1/chart-sources`, and the chart
+ clone, placement, enabled, reset, and admin restore routes. Integration keys do
