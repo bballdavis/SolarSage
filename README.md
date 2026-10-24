@@ -10,4 +10,3 @@ Start here:
 - [Research and harness implementation brief](docs/RIVIAN_SOLAR_CHARGING_RESEARCH_AND_HARNESS_BRIEF.md) — requirements and acceptance gates.
 
 The `reference/` tree is an archival snapshot of earlier work. Its Python harness and HA tests are not installed or run by this repository. No credentials, raw Rivian responses, or live charging proof are included.
-
