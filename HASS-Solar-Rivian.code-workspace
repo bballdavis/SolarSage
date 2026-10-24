@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "home-assistant-rivian",
+			"path": "../home-assistant-rivian"
+		}
+	],
+	"settings": {}
+}
