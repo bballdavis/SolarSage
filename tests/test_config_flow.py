@@ -1,0 +1,307 @@
+"""Tests for the config, reauth and options flows."""
+
+from __future__ import annotations
+
+from collections.abc import Generator
+from unittest.mock import AsyncMock, patch
+
+from conftest import (
+    CHARGER_STATE_ENTITY,
+    EMAIL,
+    LOCATION_ENTITY,
+    NEW_TOKENS,
+    OTP_CODE,
+    PASSWORD,
+    PLUGGED_ENTITY,
+    TOKENS,
+    VEHICLE_ID,
+    VEHICLE_NAME,
+    WALL_CONNECTOR_ENTITY,
+    FakeRivian,
+    make_entry,
+)
+import pytest
+from rivian.exceptions import (
+    RivianApiException,
+    RivianInvalidCredentials,
+    RivianTemporarilyLockedError,
+    RivianUnauthenticated,
+)
+
+from homeassistant.config_entries import SOURCE_USER
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+
+from custom_components.rivian_solar_adapter.const import (
+    CONF_CHARGER_STATE_ENTITY,
+    CONF_DRY_RUN,
+    CONF_EMAIL,
+    CONF_LEASE_MINUTES,
+    CONF_LOCATION_ENTITY,
+    CONF_OTP,
+    CONF_PASSWORD,
+    CONF_PLUGGED_ENTITY,
+    CONF_RENEW_BEFORE_MINUTES,
+    CONF_VEHICLE_ID,
+    CONF_WALL_CONNECTOR_ENTITY,
+    DEFAULT_OPTIONS,
+    DOMAIN,
+)
+
+SECOND_VEHICLE = {
+    "id": "test-vehicle-0002",
+    "name": None,
+    "vehicle": {"model": "R1T", "modelYear": 2024},
+}
+
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
+    """Load this repository's integration."""
+
+
+@pytest.fixture
+def mock_setup_entry() -> Generator[AsyncMock]:
+    """Do not set up the entry a flow creates or reloads."""
+    with patch(
+        "custom_components.rivian_solar_adapter.async_setup_entry", return_value=True
+    ) as mock:
+        yield mock
+
+
+async def _sign_in(hass: HomeAssistant) -> dict:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_EMAIL: EMAIL, CONF_PASSWORD: PASSWORD}
+    )
+
+
+async def _finish(hass: HomeAssistant, result: dict, vehicle_id: str = VEHICLE_ID) -> dict:
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "vehicle"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_VEHICLE_ID: vehicle_id}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "entities"
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLUGGED_ENTITY: PLUGGED_ENTITY,
+            CONF_LOCATION_ENTITY: LOCATION_ENTITY,
+            CONF_CHARGER_STATE_ENTITY: CHARGER_STATE_ENTITY,
+        },
+    )
+
+
+async def test_user_flow_without_otp(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """Sign in, pick the vehicle, map entities; the password is never stored."""
+    result = await _finish(hass, await _sign_in(hass))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == VEHICLE_NAME
+    assert result["result"].unique_id == VEHICLE_ID
+    assert result["data"] == {CONF_EMAIL: EMAIL, CONF_VEHICLE_ID: VEHICLE_ID, **TOKENS}
+    assert PASSWORD not in str(result["data"]) + str(result["options"])
+    assert result["options"] == {
+        CONF_PLUGGED_ENTITY: PLUGGED_ENTITY,
+        CONF_LOCATION_ENTITY: LOCATION_ENTITY,
+        CONF_CHARGER_STATE_ENTITY: CHARGER_STATE_ENTITY,
+        **DEFAULT_OPTIONS,
+    }
+    assert result["options"][CONF_DRY_RUN] is True
+    assert mock_rivian.init_kwargs[0]["request_timeout"] == 30
+    assert len(mock_setup_entry.mock_calls) == 1
+
+
+async def test_user_flow_with_otp(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """A login that needs a one-time code asks for it and retries a wrong one."""
+    mock_rivian.otp_required = True
+    mock_rivian.vehicles.append(SECOND_VEHICLE)
+    result = await _sign_in(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "otp"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_OTP: "000000"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "otp"
+    assert result["errors"] == {"base": "invalid_otp"}
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_OTP: OTP_CODE})
+    vehicle_options = result["data_schema"].schema[CONF_VEHICLE_ID].config["options"]
+    assert [option["value"] for option in vehicle_options] == [VEHICLE_ID, SECOND_VEHICLE["id"]]
+    assert vehicle_options[1]["label"] == "2024 R1T"
+
+    result = await _finish(hass, result, SECOND_VEHICLE["id"])
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "2024 R1T"
+    assert result["data"][CONF_VEHICLE_ID] == SECOND_VEHICLE["id"]
+    assert result["data"]["access_token"] == TOKENS["access_token"]
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (RivianInvalidCredentials(401, {}), "invalid_auth"),
+        (RivianUnauthenticated(401, {}), "invalid_auth"),
+        (RivianTemporarilyLockedError(429, {}), "locked"),
+        (RivianApiException("boom"), "cannot_connect"),
+        (KeyError("login"), "unknown"),
+    ],
+)
+async def test_user_flow_login_errors(
+    hass: HomeAssistant,
+    mock_rivian: FakeRivian,
+    mock_setup_entry: AsyncMock,
+    error: Exception,
+    reason: str,
+) -> None:
+    """Login errors are shown on the form, and the user can try again."""
+    mock_rivian.login_error = error
+    result = await _sign_in(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": reason}
+
+    mock_rivian.login_error = None
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_EMAIL: EMAIL, CONF_PASSWORD: PASSWORD}
+    )
+    result = await _finish(hass, result)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_user_flow_duplicate_vehicle(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """A vehicle that already has an adapter is not added twice."""
+    make_entry().add_to_hass(hass)
+    result = await _sign_in(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_VEHICLE_ID: VEHICLE_ID}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_user_flow_no_vehicles(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """An account without vehicles cannot be set up."""
+    mock_rivian.vehicles = []
+    result = await _sign_in(hass)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_vehicles"
+
+
+async def test_reauth_updates_tokens(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """Reauthentication stores the new session tokens and reloads the entry."""
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    mock_rivian.issued_tokens = dict(NEW_TOKENS)
+
+    result = await entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    mock_rivian.login_error = RivianInvalidCredentials(401, {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: "wrong"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+
+    mock_rivian.login_error = None
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: PASSWORD}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data == {CONF_EMAIL: EMAIL, CONF_VEHICLE_ID: VEHICLE_ID, **NEW_TOKENS}
+    assert len(mock_setup_entry.mock_calls) == 1
+
+
+async def test_reauth_with_otp(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """Reauthentication asks for a one-time code when Rivian requires one."""
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    mock_rivian.issued_tokens = dict(NEW_TOKENS)
+    mock_rivian.otp_required = True
+
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: PASSWORD}
+    )
+    assert result["step_id"] == "otp"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_OTP: OTP_CODE})
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data["user_session_token"] == NEW_TOKENS["user_session_token"]
+
+
+async def test_reauth_wrong_account(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """Signing in to an account without the vehicle does not replace the tokens."""
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    mock_rivian.vehicles = [SECOND_VEHICLE]
+    mock_rivian.issued_tokens = dict(NEW_TOKENS)
+
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: PASSWORD}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "wrong_account"
+    assert entry.data["access_token"] == TOKENS["access_token"]
+
+
+async def test_options_flow(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """Options are validated, stored as integers, and optional entities can be cleared."""
+    entry = make_entry()
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    base = {
+        CONF_PLUGGED_ENTITY: PLUGGED_ENTITY,
+        CONF_LOCATION_ENTITY: LOCATION_ENTITY,
+        CONF_WALL_CONNECTOR_ENTITY: WALL_CONNECTOR_ENTITY,
+        **DEFAULT_OPTIONS,
+    }
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], base | {CONF_LEASE_MINUTES: 15, CONF_RENEW_BEFORE_MINUTES: 15}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_RENEW_BEFORE_MINUTES: "renew_before_too_long"}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        base | {CONF_LEASE_MINUTES: 15.0, CONF_RENEW_BEFORE_MINUTES: 6.0, CONF_DRY_RUN: False},
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_LEASE_MINUTES] == 15
+    assert isinstance(entry.options[CONF_LEASE_MINUTES], int)
+    assert entry.options[CONF_RENEW_BEFORE_MINUTES] == 6
+    assert entry.options[CONF_DRY_RUN] is False
+    assert entry.options[CONF_WALL_CONNECTOR_ENTITY] == WALL_CONNECTOR_ENTITY
+    # The charger state entity was cleared, so it is no longer used.
+    assert CONF_CHARGER_STATE_ENTITY not in entry.options

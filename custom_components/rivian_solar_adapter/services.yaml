@@ -1,0 +1,31 @@
+release:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: rivian_solar_adapter
+
+clear_fault:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: rivian_solar_adapter
+
+abandon_ownership:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: rivian_solar_adapter
+
+read_schedules:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: rivian_solar_adapter
