@@ -9,6 +9,7 @@ coordinates and must not reach logs, attributes, or diagnostics.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 import logging
@@ -19,6 +20,7 @@ from rivian import Rivian
 from rivian.exceptions import (
     RivianApiException,
     RivianApiRateLimitError,
+    RivianBadRequestError,
     RivianExpiredTokenError,
     RivianTemporarilyLockedError,
     RivianUnauthenticated,
@@ -27,6 +29,10 @@ from rivian.exceptions import (
 _LOGGER = logging.getLogger(__name__)
 
 LOCKED_BACKOFF = timedelta(minutes=30)
+# Upper bound for one provider call, including reading the response body.
+REQUEST_TIMEOUT = 45
+# Error codes meaning Rivian refused the request as invalid; it was not applied.
+INVALID_INPUT_CODES = frozenset({"BAD_REQUEST_ERROR", "BAD_USER_INPUT", "INVALID_INPUT"})
 
 # Raised by the client library or our own decoding when a response is not the
 # JSON we expect: HTML error pages, truncated bodies, unexpected shapes.
@@ -57,16 +63,27 @@ class RateLimitedError(ScheduleApiError):
 
 
 class WriteRejectedError(ScheduleApiError):
-    """Rivian answered a write without reporting success."""
+    """Rivian definitely did not apply the request.
+
+    ``invalid_input`` means Rivian refused the content as invalid (for example a
+    schedule list it returned but will not accept back, upstream PR #308), so
+    repeating the same request cannot succeed.
+    """
+
+    def __init__(self, message: str, *, invalid_input: bool = False) -> None:
+        super().__init__(message)
+        self.invalid_input = invalid_input
 
 
 def error_codes(payload: dict[str, Any]) -> list[str]:
     """Return the GraphQL error codes in a response, in order."""
     codes = []
-    for error in payload.get("errors") or []:
+    errors = payload.get("errors")
+    for error in errors if isinstance(errors, list) else []:
         if isinstance(error, dict):
-            extensions = error.get("extensions") or {}
-            codes.append(str(extensions.get("code") or "UNKNOWN"))
+            extensions = error.get("extensions")
+            code = extensions.get("code") if isinstance(extensions, dict) else None
+            codes.append(str(code or "UNKNOWN"))
     return codes
 
 
@@ -86,7 +103,8 @@ class RivianScheduleApi:
         payload = await self._call(self._client.get_charging_schedules, self._vehicle_id)
         if codes := error_codes(payload):
             raise ScheduleApiError(f"Rivian returned errors reading schedules: {codes}")
-        vehicle = (payload.get("data") or {}).get("getVehicle")
+        data = payload.get("data")
+        vehicle = data.get("getVehicle") if isinstance(data, dict) else None
         if not isinstance(vehicle, dict):
             raise ScheduleApiError("No vehicle in the charging schedule response")
         schedules = vehicle.get("chargingSchedules")
@@ -106,8 +124,9 @@ class RivianScheduleApi:
         if codes := error_codes(payload):
             # Errors next to data: the outcome is unknown until a fresh read.
             raise ScheduleApiError(f"Rivian returned errors writing schedules: {codes}")
-        result = (payload.get("data") or {}).get("setChargingSchedules") or {}
-        if not result.get("success"):
+        data = payload.get("data")
+        result = data.get("setChargingSchedules") if isinstance(data, dict) else None
+        if not isinstance(result, dict) or not result.get("success"):
             raise WriteRejectedError("Rivian did not report success for the schedule write")
 
     async def _call(
@@ -116,8 +135,9 @@ class RivianScheduleApi:
         """Call the client, retrying once with a fresh app session if rejected."""
         for attempt in range(2):
             try:
-                response = await method(*args)
-                payload = await response.json() if decode else None
+                async with asyncio.timeout(REQUEST_TIMEOUT):
+                    response = await method(*args)
+                    payload = await response.json() if decode else None
             except (RivianUnauthenticated, RivianExpiredTokenError) as err:
                 if attempt == 0 and decode:
                     await self._refresh_session()
@@ -129,6 +149,10 @@ class RivianScheduleApi:
                 ) from err
             except RivianApiRateLimitError as err:
                 raise RateLimitedError("Rivian rate-limited the request") from err
+            except RivianBadRequestError as err:
+                raise WriteRejectedError(
+                    "Rivian rejected the request as invalid", invalid_input=True
+                ) from err
             except RivianApiException as err:
                 raise ScheduleApiError(f"Rivian request failed ({type(err).__name__})") from err
             except _DECODE_ERRORS as err:
@@ -150,6 +174,11 @@ class RivianScheduleApi:
                 raise RateLimitedError("Rivian temporarily locked the account", LOCKED_BACKOFF)
             if "RATE_LIMIT" in codes:
                 raise RateLimitedError("Rivian rate-limited the request")
+            if invalid := INVALID_INPUT_CODES.intersection(codes):
+                raise WriteRejectedError(
+                    f"Rivian rejected the request as invalid: {sorted(invalid)}",
+                    invalid_input=True,
+                )
             return payload
         raise AuthError("The Rivian session is unauthenticated")  # pragma: no cover
 

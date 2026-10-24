@@ -42,8 +42,9 @@ import logging
 import math
 from typing import Any, Protocol
 
-from .api import AuthError, RateLimitedError, ScheduleApiError
+from .api import AuthError, RateLimitedError, ScheduleApiError, WriteRejectedError
 from .schedule import (
+    AMPS_MAX,
     AMPS_MIN,
     Fingerprint,
     applied_amps,
@@ -160,7 +161,7 @@ class AdapterConfig:
     min_write_interval: timedelta = timedelta(seconds=30)
     transition_interval: timedelta = timedelta(seconds=5)
     increase_interval: timedelta = timedelta(minutes=2)
-    increase_margin_amps: float = 2.0
+    increase_margin_amps: float = 3.0
     release_delay: timedelta = timedelta(minutes=1)
     away_release_delay: timedelta = timedelta(minutes=10)
     settle_delay: timedelta = timedelta(seconds=30)
@@ -221,9 +222,13 @@ class Attempt:
     purpose: Purpose
     lease: Lease | None
     created_at: datetime
+    # unsent, sent (accepted or no answer yet), ambiguous (request failed), or
+    # rejected (Rivian definitely did not apply it)
+    outcome: str = "unsent"
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "outcome": self.outcome,
             "target": self.target.to_dict(),
             "previous": self.previous.to_dict() if self.previous else None,
             "purpose": self.purpose.value,
@@ -239,6 +244,7 @@ class Attempt:
             purpose=Purpose(data["purpose"]),
             lease=Lease.from_dict(data["lease"]) if data["lease"] else None,
             created_at=datetime.fromisoformat(data["created_at"]),
+            outcome=data.get("outcome", "sent"),
         )
 
 
@@ -382,6 +388,7 @@ class RivianScheduleController:
         self._ended_since: datetime | None = None
         self._away_since: datetime | None = None
         self._last_write_at: datetime | None = None
+        self._last_amps_change_at: datetime | None = None
         self._backoff_until: datetime | None = None
         self._failures = 0
         self.last_error: str | None = None
@@ -426,10 +433,11 @@ class RivianScheduleController:
             return False
         if journal.command_received and journal.desired_charge is charge and not self._releasing:
             return True
+        before = journal.to_dict()
         journal.desired_charge = charge
         journal.command_received = True
         journal.request_seq += 1
-        await self._save()
+        await self._save_or_rollback(before)
         return True
 
     async def async_request_amps(self, amps: float) -> bool:
@@ -449,12 +457,13 @@ class RivianScheduleController:
             and not self._releasing
         ):
             return True
+        before = journal.to_dict()
         journal.requested_amps = amps
         if journal.desired_charge is None:
             journal.desired_charge = True
         journal.command_received = True
         journal.request_seq += 1
-        await self._save()
+        await self._save_or_rollback(before)
         return True
 
     async def async_request_release(self, reason: str, *, hand_back: bool = True) -> ReleaseResult:
@@ -464,16 +473,17 @@ class RivianScheduleController:
         cannot immediately take the schedule over again.
         """
         journal = self._journal
+        before = journal.to_dict()
         journal.request_seq += 1
         if journal.phase is Phase.IDLE:
             journal.command_received = False
             journal.desired_charge = None
             journal.handed_back = hand_back and self.last_observation.plugged is not False
-            await self._save()
+            await self._save_or_rollback(before)
             return ReleaseResult.CANCELLED
         journal.release_requested = reason
         journal.release_hand_back = hand_back
-        await self._save()
+        await self._save_or_rollback(before)
         return (
             ReleaseResult.AFTER_FAULT if journal.phase is Phase.FAULT else ReleaseResult.RELEASING
         )
@@ -481,13 +491,18 @@ class RivianScheduleController:
     async def async_set_renewal(self, enabled: bool) -> None:
         """Enable or disable lease renewal (persisted)."""
         if self._journal.renewal_enabled is not enabled:
+            before = self._journal.to_dict()
             self._journal.renewal_enabled = enabled
-            await self._save()
+            await self._save_or_rollback(before)
 
     # Periodic work --------------------------------------------------------
 
-    async def async_tick(self, now: datetime, obs: Observation) -> None:
-        """Advance the state machine. AuthError propagates for reauthentication."""
+    async def async_tick(self, now: datetime, obs: Observation, *, force: bool = False) -> None:
+        """Advance the state machine. AuthError propagates for reauthentication.
+
+        ``force`` ignores an error backoff; use it for an explicit, bounded
+        restore (integration disabled or removed), not for routine ticks.
+        """
         async with self._lock:
             now = now.astimezone(UTC)
             self.last_observation = obs
@@ -495,7 +510,7 @@ class RivianScheduleController:
             self._away_since = (self._away_since or now) if obs.home is False else None
             if self._journal.phase is Phase.FAULT:
                 return
-            if self._backoff_until and now < self._backoff_until:
+            if self._backoff_until and now < self._backoff_until and not force:
                 return
             try:
                 await self._step(now, obs)
@@ -548,8 +563,9 @@ class RivianScheduleController:
             await self._drive(now, obs)
             return
         # Idle.
-        if journal.command_received and obs.known_ineligible:
-            # A request for a car that is not here does not carry over to a later plug-in.
+        if journal.command_received and obs.session_ended:
+            # A request for an unplugged car does not carry over to a later plug-in.
+            # (Away while still plugged in is kept: evcc may not repeat it.)
             journal.command_received = False
             journal.desired_charge = None
             await self._save()
@@ -560,7 +576,7 @@ class RivianScheduleController:
             self.dry_run_target = self._dry_run_target(now)
             return
         await self._take_ownership(now, obs)
-        if journal.phase is Phase.OWNED:
+        if journal.phase is Phase.OWNED and not journal.release_requested:
             await self._drive(now, obs)
 
     # Ownership ------------------------------------------------------------
@@ -579,7 +595,10 @@ class RivianScheduleController:
             return
         self.provider_schedule_count = len(original)
         original_fp = fingerprint(original)
-        if any(original_fp.matches(state) for state in journal.adapter_states):
+        if any(original_fp.matches(state) for state in journal.adapter_states) or (
+            (journal.adapter_states or journal.archived_original)
+            and self._looks_like_adapter_window(original)
+        ):
             self._fault(
                 now,
                 "adapter_window_present",
@@ -606,12 +625,29 @@ class RivianScheduleController:
 
     async def _drive(self, now: datetime, obs: Observation) -> None:
         journal = self._journal
+        if journal.release_requested:
+            return  # the next tick restores; write no lease in between
+        if obs.controller_alive is False and journal.command_received:
+            # evcc is down, so its last request is stale. After a restart evcc
+            # asks again if it still wants charging.
+            journal.command_received = False
+            journal.desired_charge = None
+            journal.request_seq += 1
+            await self._save()
         lease = journal.lease
         local_now = now.astimezone(self.config.time_zone)
         offset = int(local_now.utcoffset().total_seconds() // 60)
-        may_extend = obs.eligible and obs.controller_alive is not False and journal.renewal_enabled
-        amps_down = applied_amps(journal.requested_amps)
-        amps_up = applied_amps(journal.requested_amps - self.config.increase_margin_amps)
+        may_extend = self._may_extend(obs)
+        requested = journal.requested_amps
+        amps_down = applied_amps(requested)
+        # Increases keep a margin below evcc's request: evcc adds up to 2 A for
+        # measured-current lag and truncates, so following it exactly makes the
+        # two loops chase each other. At evcc's ceiling there is no lag to absorb.
+        amps_up = (
+            AMPS_MAX
+            if requested >= AMPS_MAX
+            else applied_amps(requested - self.config.increase_margin_amps)
+        )
         live = (
             lease is not None
             and lease.active
@@ -622,25 +658,16 @@ class RivianScheduleController:
         active = False
         amps = AMPS_MIN
         extend = False
-        if journal.desired_charge is not True:
-            if lease is None or lease.active:
-                reason = "pause"
-            elif lease.utc_offset_minutes != offset:
-                reason = "dst"
-            elif now - lease.written_at >= self.config.repark_after:
-                reason = "repark"
-        elif not live:
-            if may_extend:
-                reason, active, amps, extend = "start", True, amps_down, True
-        else:
-            assert lease is not None
+        if journal.desired_charge is True and (live or may_extend):
             active = True
-            if amps_down < lease.amps:
+            if not live:
+                reason, amps, extend = "start", amps_down, True
+            elif amps_down < lease.amps:
                 reason, amps, extend = "decrease", amps_down, may_extend
             elif (
                 may_extend
                 and amps_up > lease.amps
-                and self._since_last_write(now) >= self.config.increase_interval
+                and self._since(self._last_amps_change_at, now) >= self.config.increase_interval
             ):
                 reason, amps, extend = "increase", amps_up, True
             elif may_extend and lease.expires_at - now <= timedelta(
@@ -649,14 +676,22 @@ class RivianScheduleController:
                 reason, amps, extend = "renew", lease.amps, True
             elif lease.utc_offset_minutes != offset:
                 reason, amps, extend = "dst", lease.amps, may_extend
+        elif lease is None or lease.active:
+            # Charging is not requested, or a lease can no longer be extended:
+            # no window may cover now. A lapsed lease would recur in a week.
+            reason = "lapse" if lease is not None and lease.active and not live else "pause"
+        elif lease.utc_offset_minutes != offset:
+            reason = "dst"
+        elif now - lease.written_at >= self.config.repark_after:
+            reason = "repark"
         if reason is None:
             return
         spacing = (
             self.config.transition_interval
-            if reason in ("start", "pause", "dst")
+            if reason in ("start", "pause", "lapse", "dst")
             else self.config.min_write_interval
         )
-        if self._since_last_write(now) < spacing:
+        if self._since(self._last_write_at, now) < spacing:
             return
         if active and extend:
             lease_minutes = self.config.lease_minutes
@@ -680,6 +715,8 @@ class RivianScheduleController:
             location=self._lease_location(),
         )
         new_lease = Lease(active, amps, now, expires_at, offset)
+        if active and (lease is None or not lease.active or amps != lease.amps):
+            self._last_amps_change_at = now
         _LOGGER.debug("Schedule write for %s at %d A", reason, amps)
         await self._write(now, [window], Purpose.LEASE, new_lease, strict=True)
 
@@ -743,10 +780,15 @@ class RivianScheduleController:
                 -self.config.adapter_history :
             ]
         await self._save()
-        current = await self._read_fp(now)
+        try:
+            current = await self._read_fp(now)
+        except ScheduleApiError:
+            self._withdraw(attempt)  # nothing was sent
+            await self._save()
+            raise
         if current is None:
             return
-        outstanding = [a for a in journal.attempts if a is not attempt]
+        outstanding = [a for a in self._outstanding() if a is not attempt]
         if purpose is Purpose.RESTORE and current.matches(attempt.target) and not outstanding:
             self._confirm(attempt)
             await self._save()
@@ -778,13 +820,27 @@ class RivianScheduleController:
             return
         # Send immediately after the guard read, with nothing awaited in between.
         self._last_write_at = now
+        attempt.outcome = "sent"
+        error: ScheduleApiError | None = None
         try:
             await self._api.set_schedules(to_provider_input(normalized))
         except AuthError, RateLimitedError:
-            raise  # still pending; a later read resolves it
+            # Refused before it was processed: withdraw without counting it.
+            attempt.outcome = "rejected"
+            self._withdraw(attempt)
+            await self._save()
+            raise
+        except WriteRejectedError as err:
+            attempt.outcome = "invalid" if err.invalid_input else "rejected"
+            error = err
         except ScheduleApiError as err:
-            self._record_error(now, err)  # rejected or unknown: reads decide
+            attempt.outcome = "ambiguous"
+            error = err
+        if error is not None:
+            self._record_error(now, error)
         await self._resolve_pending(now)
+        if error is not None and journal.phase is not Phase.FAULT:
+            raise error  # back off before the next write
 
     async def _resolve_pending(self, now: datetime) -> None:
         journal = self._journal
@@ -796,26 +852,48 @@ class RivianScheduleController:
         current = await self._read_fp(now)
         if current is None:
             return
-        if current.matches(pending.target):
+        others = [a for a in self._outstanding() if a is not pending]
+        landed = next((a for a in reversed(others) if current.matches(a.target)), None)
+        # A restore sent only because earlier writes are outstanding: Rivian
+        # already showed the owner's list, so a matching read proves nothing.
+        unproven_restore = (
+            pending.purpose is Purpose.RESTORE
+            and pending.previous is not None
+            and pending.previous.matches(pending.target)
+            and bool(others)
+        )
+        if pending.outcome == "unsent":
+            # Saved as intent but never sent (or the process stopped first).
+            if current.matches(pending.target) and not unproven_restore:
+                self._confirm(pending)
+            elif landed is not None:
+                self._adopt(landed)
+            else:
+                self._withdraw(pending)
+        elif current.matches(pending.target) and not unproven_restore:
             self._confirm(pending)
+        elif current.matches(pending.target):
+            if pending.outcome == "invalid":
+                self._restore_rejected(now)
+            elif pending.outcome != "sent":
+                self._withdraw(pending)  # the restore itself failed: send it again
+            elif now - pending.created_at < self.config.settle_delay:
+                return  # read again later, in case an earlier write lands
+            else:
+                # Keep a copy: an earlier write could still land after this.
+                journal.archived_original = journal.original
+                self._confirm(pending)
         elif pending.previous is not None and current.matches(pending.previous):
-            if now - pending.created_at < self.config.settle_delay:
+            if pending.outcome in ("rejected", "invalid"):
+                if pending.purpose is Purpose.RESTORE and pending.outcome == "invalid":
+                    self._restore_rejected(now)
+                else:
+                    self._count_unapplied(now, pending, "write_rejected")
+            elif now - pending.created_at < self.config.settle_delay:
                 return  # stay pending; read again on a later tick
-            journal.phase = Phase.OWNED if journal.original is not None else Phase.IDLE
-            journal.pending = None
-            journal.unapplied_writes += 1
-            _LOGGER.warning(
-                "Schedule write not applied (%d of %d)",
-                journal.unapplied_writes,
-                self.config.max_unapplied_writes,
-            )
-            if journal.unapplied_writes >= self.config.max_unapplied_writes:
-                self._fault(
-                    now, "write_not_applied", "Rivian repeatedly applied no schedule change."
-                )
-        elif landed := next(
-            (a for a in reversed(journal.attempts) if current.matches(a.target)), None
-        ):
+            else:
+                self._count_unapplied(now, pending, "write_not_applied")
+        elif landed is not None:
             self._adopt(landed)
         elif pending.purpose is Purpose.RESTORE and current.matches(journal.original_fp):
             self._confirm(pending)
@@ -827,6 +905,52 @@ class RivianScheduleController:
                 "previous state; it was not overwritten.",
             )
         await self._save()
+
+    def _count_unapplied(self, now: datetime, attempt: Attempt, code: str) -> None:
+        journal = self._journal
+        self._withdraw(attempt, keep=attempt.outcome in ("sent", "ambiguous"))
+        journal.unapplied_writes += 1
+        _LOGGER.warning(
+            "Schedule write not applied (%d of %d)",
+            journal.unapplied_writes,
+            self.config.max_unapplied_writes,
+        )
+        if journal.unapplied_writes >= self.config.max_unapplied_writes:
+            self._fault(
+                now,
+                code,
+                "Rivian repeatedly rejected the schedule write."
+                if code == "write_rejected"
+                else "Rivian repeatedly applied no schedule change.",
+            )
+
+    def _restore_rejected(self, now: datetime) -> None:
+        self._fault(
+            now,
+            "restore_rejected",
+            "Rivian refused the owner's schedule list when it was written back. Some "
+            "accounts return entries that Rivian will not accept back as one list "
+            "(upstream PR #308). The adapter's window is still on the car: recreate the "
+            "owner's schedule in the Rivian app, then clear the fault.",
+        )
+
+    def _withdraw(self, attempt: Attempt, *, keep: bool = False) -> None:
+        """Drop a pending write that did not take effect.
+
+        ``keep`` leaves it in the attempt list so it is still recognized if it
+        lands late (only for writes that reached Rivian without a definite no).
+        """
+        journal = self._journal
+        if journal.pending is attempt:
+            journal.pending = None
+        if not keep:
+            journal.attempts = [a for a in journal.attempts if a is not attempt]
+        if journal.phase is Phase.WRITING:
+            journal.phase = Phase.OWNED if journal.original is not None else Phase.IDLE
+
+    def _outstanding(self) -> list[Attempt]:
+        """Writes that reached Rivian and could still land."""
+        return [a for a in self._journal.attempts if a.outcome in ("sent", "ambiguous")]
 
     def _confirm(self, attempt: Attempt) -> None:
         journal = self._journal
@@ -906,27 +1030,59 @@ class RivianScheduleController:
         """While faulted, write the owner's snapshot whatever Rivian holds now.
 
         An explicit operator action for when the provider state is unknown.
-        Returns True once a readback shows the owner's list.
+        An archived snapshot (from an earlier abandon) is used only while Rivian
+        holds a window this adapter wrote, so a stale archive never replaces a
+        list the owner has since set up. Returns True once a readback shows the
+        owner's list.
         """
         async with self._lock:
             now = now.astimezone(UTC)
             journal = self._journal
-            target = journal.original if journal.original is not None else journal.archived_original
-            if journal.phase is not Phase.FAULT or target is None:
+            if journal.phase is not Phase.FAULT:
                 return False
+            target = journal.original
+            if target is None:
+                target = journal.archived_original
+                if target is None:
+                    return False
+                current = await self._api.get_schedules()
+                try:
+                    current_list = normalize_schedules(current, strict=False)
+                except TypeError, ValueError:
+                    return False
+                current_fp = fingerprint(current_list)
+                if not (
+                    any(current_fp.matches(state) for state in journal.adapter_states)
+                    or self._looks_like_adapter_window(current_list)
+                ):
+                    return False
             normalized = normalize_schedules(target, strict=False)
             target_fp = fingerprint(normalized)
-            journal.pending = Attempt(target_fp, None, Purpose.RESTORE, None, now)
+            attempt = Attempt(target_fp, None, Purpose.RESTORE, None, now, outcome="sent")
+            journal.pending = attempt
+            journal.attempts = [*journal.attempts, attempt][-self.config.attempt_history :]
             await self._save()
             self._last_write_at = now
             try:
                 await self._api.set_schedules(to_provider_input(normalized))
             except AuthError, RateLimitedError:
+                self._withdraw(attempt)
+                await self._save()
                 raise
             except ScheduleApiError as err:
                 self._record_error(now, err)
-            current = await self._api.get_schedules()
-            if not fingerprint(normalize_schedules(current, strict=False)).matches(target_fp):
+            try:
+                current = await self._api.get_schedules()
+                verified = fingerprint(normalize_schedules(current, strict=False)).matches(
+                    target_fp
+                )
+            except TypeError, ValueError:
+                verified = False
+            except ScheduleApiError:
+                journal.pending = None
+                await self._save()
+                raise
+            if not verified:
                 journal.pending = None
                 journal.fault = Fault(
                     "force_restore_unverified",
@@ -1032,6 +1188,7 @@ class RivianScheduleController:
             "last_write_at": _iso(self._last_write_at),
             "backoff_until": _iso(self._backoff_until),
             "observation": asdict(self.last_observation),
+            "start_blocked_by": self._start_blocked_by(),
             "dry_run_target": self.dry_run_target,
         }
 
@@ -1060,10 +1217,42 @@ class RivianScheduleController:
         ]
         return candidates[0] if candidates else home
 
-    def _since_last_write(self, now: datetime) -> timedelta:
-        if self._last_write_at is None:
-            return timedelta.max
-        return now - self._last_write_at
+    @staticmethod
+    def _since(moment: datetime | None, now: datetime) -> timedelta:
+        return timedelta.max if moment is None else now - moment
+
+    def _may_extend(self, obs: Observation) -> bool:
+        """Whether a lease may be started, renewed or increased now."""
+        return obs.eligible and obs.controller_alive is not False and self._journal.renewal_enabled
+
+    def _start_blocked_by(self) -> list[str]:
+        """Why charging that is requested cannot be extended (for diagnostics)."""
+        obs = self.last_observation
+        if self._journal.desired_charge is not True:
+            return []
+        reasons = []
+        if obs.plugged is None or obs.home is None:
+            reasons.append("vehicle_state_unknown")
+        elif not obs.eligible:
+            reasons.append("vehicle_not_at_charger")
+        if obs.controller_alive is False:
+            reasons.append("evcc_unavailable")
+        if not self._journal.renewal_enabled:
+            reasons.append("renewal_off")
+        return reasons
+
+    def _looks_like_adapter_window(self, schedules: list[dict[str, Any]]) -> bool:
+        """A single short single-day window at home, as this adapter writes."""
+        if len(schedules) != 1:
+            return False
+        schedule = schedules[0]
+        lease, skew = self.config.lease_minutes, self.config.clock_skew_minutes
+        return (
+            schedule["enabled"] is True
+            and len(schedule["weekDays"]) == 1
+            and schedule["duration"] in (lease, lease + 2 * skew)
+            and _distance_km(schedule["location"], self.config.home_location) <= HOME_MATCH_KM
+        )
 
     def _fault(self, now: datetime, code: str, message: str) -> None:
         journal = self._journal
@@ -1076,6 +1265,14 @@ class RivianScheduleController:
         self.last_error = str(err)
         self.last_error_at = now
         _LOGGER.warning("Rivian schedule request failed: %s", err)
+
+    async def _save_or_rollback(self, before: dict[str, Any]) -> None:
+        """Save a request; if that fails, undo it so memory matches the disk."""
+        try:
+            await self._save()
+        except JournalSaveError:
+            self._journal = Journal.from_dict(before)
+            raise
 
     async def _save(self) -> None:
         try:

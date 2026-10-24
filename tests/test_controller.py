@@ -136,13 +136,23 @@ async def test_no_command_means_no_provider_access():
     assert controller.state(T0) is ControlState.IDLE
 
 
-async def test_command_for_an_absent_car_is_discarded():
+async def test_command_for_an_unplugged_car_is_discarded():
     controller, provider, _ = make()
     await controller.async_request_charge(True)
-    await controller.async_tick(T0, Observation(plugged=True, home=False))
+    await controller.async_tick(T0, UNPLUGGED)
     assert controller.journal.command_received is False
     await controller.async_tick(at(minutes=60), PLUGGED)
     assert provider.gets == 0
+
+
+async def test_command_survives_an_away_glitch_while_plugged():
+    controller, provider, _ = make()
+    await controller.async_request_amps(16)
+    await controller.async_tick(T0, AWAY_PLUGGED)
+    assert controller.journal.command_received is True
+    assert provider.gets == 0
+    await controller.async_tick(at(minutes=1), PLUGGED)
+    assert controller.state(at(minutes=1)) is ControlState.LEASE_ACTIVE
 
 
 async def test_command_with_unknown_state_waits():
@@ -254,7 +264,34 @@ async def test_decrease_is_prompt_increase_keeps_a_margin():
     await controller.async_tick(at(seconds=70), CHARGING)
     assert len(provider.sets) == 2  # increase interval not yet elapsed
     await controller.async_tick(at(seconds=152), CHARGING)
-    assert provider.sets[-1][0]["amperage"] == 22  # 24 A requested, minus the 2 A margin
+    assert provider.sets[-1][0]["amperage"] == 20  # 24 A requested, minus the 3 A margin
+
+
+async def test_increase_reaches_the_ceiling_without_a_margin():
+    controller, provider, _ = make()
+    await start(controller, amps=16)
+    await controller.async_request_amps(48)
+    await controller.async_tick(at(minutes=3), CHARGING)
+    assert provider.sets[-1][0]["amperage"] == 48
+
+
+async def test_band_just_below_an_even_step_does_not_increase():
+    # evcc asks 20 A for a car at 16 A whose real headroom is about 17.9 A.
+    controller, provider, _ = make()
+    await start(controller, amps=16)
+    await controller.async_request_amps(20)
+    await controller.async_tick(at(minutes=3), CHARGING)
+    assert len(provider.sets) == 1
+
+
+async def test_renewals_do_not_reset_the_increase_timer():
+    controller, provider, _ = make(increase_interval=timedelta(minutes=15))
+    await start(controller, amps=10)
+    await controller.async_request_amps(40)
+    await controller.async_tick(at(minutes=12), CHARGING)  # renewal at 10 A
+    assert provider.sets[-1][0]["amperage"] == 10
+    await controller.async_tick(at(minutes=16), CHARGING)
+    assert provider.sets[-1][0]["amperage"] == 36
 
 
 async def test_requests_hovering_near_the_lease_do_not_cycle():
@@ -306,26 +343,34 @@ async def test_decrease_with_renewal_disabled_keeps_the_lease_end():
     assert controller.journal.lease.expires_at == T0.astimezone(UTC) + timedelta(minutes=20)
 
 
-async def test_unknown_vehicle_state_stops_renewals_but_does_not_release():
+async def test_unknown_vehicle_state_stops_renewals_parks_but_does_not_release():
     controller, provider, _ = make()
-    await start(controller)
+    await start(controller, amps=32)
     await controller.async_tick(at(minutes=13), UNKNOWN)
-    await controller.async_tick(at(minutes=30), UNKNOWN)
-    assert len(provider.sets) == 1
+    assert len(provider.sets) == 1  # no renewal
+    await controller.async_tick(at(minutes=21), UNKNOWN)
+    # The lapsed lease is parked so it cannot recur a week later at 32 A.
+    [parked] = provider.sets[-1]
+    assert len(provider.sets) == 2 and parked["amperage"] == 8
     assert controller.journal.phase is Phase.OWNED
-    assert controller.state(at(minutes=30)) is ControlState.LEASE_LAPSED
+    assert controller.state(at(minutes=21)) is ControlState.PAUSED
+    await controller.async_tick(at(minutes=25), CHARGING)
+    assert controller.state(at(minutes=25)) is ControlState.LEASE_ACTIVE  # resumes when known
 
 
-async def test_evcc_down_stops_renewals():
+async def test_evcc_down_clears_its_request_and_parks():
     controller, provider, _ = make()
     await start(controller, obs=Observation(plugged=True, home=True, controller_alive=True))
     dead = Observation(plugged=True, home=True, charging=True, controller_alive=False)
-    await controller.async_tick(at(minutes=13), dead)
-    await controller.async_tick(at(minutes=25), dead)
-    assert len(provider.sets) == 1
-    alive = Observation(plugged=True, home=True, charging=True, controller_alive=True)
-    await controller.async_tick(at(minutes=26), alive)
-    assert len(provider.sets) == 2  # evcc is back and still wants charging
+    await controller.async_tick(at(minutes=1), dead)
+    assert controller.journal.command_received is False
+    assert provider.sets[-1][0]["amperage"] == 8  # parked
+    alive = Observation(plugged=True, home=True, charging=False, controller_alive=True)
+    await controller.async_tick(at(minutes=30), alive)
+    assert len(provider.sets) == 2  # no stale restart: evcc must ask again
+    await controller.async_request_charge(True)
+    await controller.async_tick(at(minutes=31), alive)
+    assert controller.state(at(minutes=31)) is ControlState.LEASE_ACTIVE
 
 
 # Session boundaries -------------------------------------------------------------
@@ -533,21 +578,83 @@ async def test_ambiguous_write_that_landed_is_confirmed():
     assert controller.state(T0) is ControlState.LEASE_ACTIVE
 
 
-async def test_unapplied_write_settles_before_counting_and_faults_after_three():
+async def test_accepted_but_invisible_write_settles_before_counting():
     controller, provider, _ = make()
     provider.apply_set = False
-    provider.set_error = WriteRejectedError("no")
     await start(controller)
     assert controller.journal.phase is Phase.WRITING  # first readback only
     await controller.async_tick(at(seconds=31), PLUGGED)
     assert controller.journal.unapplied_writes == 1
-    for second in (40, 75, 110, 145, 180):
+    for second in (62, 93, 124, 155, 186):
         await controller.async_tick(at(seconds=second), PLUGGED)
     assert controller.journal.fault.code == "write_not_applied"
     assert provider.schedules == OWNER
 
 
-async def test_release_with_an_outstanding_write_still_sends_the_restore():
+async def test_rejected_writes_count_at_once_back_off_and_fault():
+    controller, provider, _ = make()
+    provider.apply_set = False
+    provider.set_error = WriteRejectedError("no")
+    await start(controller)
+    assert controller.journal.unapplied_writes == 1
+    assert controller.journal.phase is Phase.OWNED
+    for second in range(5, 600, 5):
+        await controller.async_tick(at(seconds=second), PLUGGED)
+    assert controller.journal.fault.code == "write_rejected"
+    assert len(provider.sets) == 3
+
+
+async def test_rate_limited_restore_is_not_counted_and_retries():
+    controller, provider, _ = make()
+    await start(controller)
+    provider.set_error = RateLimitedError("slow down")
+    provider.apply_set = False
+    for minute in range(1, 40, 2):
+        await controller.async_tick(at(minutes=minute), UNPLUGGED)
+    assert controller.journal.phase is not Phase.FAULT
+    assert controller.journal.unapplied_writes == 0
+    provider.set_error = None
+    provider.apply_set = True
+    await controller.async_tick(at(minutes=50), UNPLUGGED)
+    assert provider.schedules == OWNER
+
+
+async def test_failed_guard_read_withdraws_the_unsent_write():
+    controller, provider, _ = make()
+    await start(controller)
+    await controller.async_request_amps(10)
+    provider.get_error = ScheduleApiError("502")
+    await controller.async_tick(at(seconds=31), CHARGING)
+    assert controller.journal.phase is Phase.OWNED
+    assert controller.journal.unapplied_writes == 0
+    assert controller.journal.attempts == []
+
+
+async def test_invalid_restore_faults_with_restore_rejected():
+    controller, provider, _ = make()
+    await start(controller)
+    provider.set_error = WriteRejectedError("bad", invalid_input=True)
+    provider.apply_set = False
+    await controller.async_request_release("manual")
+    await controller.async_tick(at(minutes=1), CHARGING)
+    assert controller.journal.fault.code == "restore_rejected"
+    assert controller.journal.original == OWNER  # snapshot kept
+
+
+async def test_failed_write_backs_off():
+    controller, provider, _ = make()
+    await start(controller, amps=20)
+    provider.set_error = ScheduleApiError("timeout")
+    provider.apply_set = False
+    await controller.async_request_amps(10)
+    await controller.async_tick(at(seconds=31), CHARGING)
+    sets = len(provider.sets)
+    await controller.async_tick(at(seconds=40), CHARGING)
+    assert len(provider.sets) == sets
+    assert controller.snapshot(at(seconds=40))["backoff_until"] is not None
+
+
+async def test_release_with_an_outstanding_write_sends_restore_and_settles_before_confirming():
     controller, provider, _ = make()
     provider.apply_set = False
     await start(controller)  # write A: Rivian accepts it but shows no change yet
@@ -557,7 +664,21 @@ async def test_release_with_an_outstanding_write_still_sends_the_restore():
     await controller.async_tick(at(seconds=31), PLUGGED)
     assert len(provider.sets) == 2
     assert provider.sets[-1] == OWNER
+    assert controller.journal.phase is Phase.WRITING  # a matching read proves nothing yet
+    await controller.async_tick(at(seconds=62), PLUGGED)
     assert controller.journal.phase is Phase.IDLE
+    assert controller.journal.archived_original == OWNER  # kept in case A lands later
+
+
+async def test_failed_restore_with_outstanding_write_is_not_confirmed():
+    controller, provider, _ = make()
+    provider.apply_set = False
+    await start(controller)
+    await controller.async_request_release("manual")
+    provider.set_error = ScheduleApiError("timeout")
+    await controller.async_tick(at(seconds=31), PLUGGED)
+    assert controller.journal.phase is Phase.OWNED
+    assert controller.journal.original == OWNER
 
 
 async def test_an_older_write_landing_late_is_adopted_not_a_conflict():
@@ -603,8 +724,8 @@ async def test_reordered_readback_is_the_same_list():
 async def test_restart_mid_write_resolves_from_journal():
     store = FakeStore()
     controller, provider, _ = make(store=store)
-    provider.set_error = AuthError("expired")
-    with pytest.raises(AuthError):
+    provider.set_error = RuntimeError("process stopped")  # the write lands, then the crash
+    with pytest.raises(RuntimeError):
         await start(controller)
     assert store.data["phase"] == "writing"
     restarted = RivianScheduleController(provider, store, controller.config)
@@ -616,6 +737,88 @@ async def test_restart_mid_write_resolves_from_journal():
     await restarted.async_tick(at(minutes=3), UNPLUGGED)
     await restarted.async_tick(at(minutes=5), UNPLUGGED)
     assert provider.schedules == OWNER
+
+
+async def test_release_during_the_takeover_save_writes_no_lease():
+    controller, provider, store = make()
+    await controller.async_request_charge(True)
+    original_save = store.async_save
+    calls = 0
+
+    async def save_and_release(data):
+        nonlocal calls
+        await original_save(data)
+        calls += 1
+        if data["phase"] == "owned" and calls == 1:
+            store.async_save = original_save
+            await controller.async_request_release("manual")
+
+    store.async_save = save_and_release
+    await controller.async_tick(T0, PLUGGED)
+    assert provider.sets == []
+
+
+async def test_owner_edited_adapter_window_is_refused_after_abandon():
+    controller, provider, _ = make()
+    await start(controller)
+    provider.schedules[0]["amperage"] = 40  # the owner edits the adapter's window
+    await controller.async_request_amps(10)
+    await controller.async_tick(at(minutes=1), CHARGING)
+    assert await controller.async_abandon()
+    await controller.async_request_charge(True)
+    await controller.async_tick(at(minutes=2), CHARGING)
+    assert controller.journal.fault.code == "adapter_window_present"
+    assert await controller.async_force_restore(at(minutes=3))
+    assert provider.schedules == OWNER
+
+
+async def test_force_restore_refuses_a_stale_archive_over_a_live_owner_list():
+    controller, provider, _ = make()
+    await start(controller)
+    provider.schedules[0]["amperage"] = 40
+    await controller.async_request_amps(10)
+    await controller.async_tick(at(minutes=1), CHARGING)
+    assert await controller.async_abandon()
+    # Later the owner sets up new schedules, and a takeover hits an unsupported entry.
+    new_owner = [OWNER[0] | {"amperage": 24}, OWNER[0] | {"weekDays": ["Someday"]}]
+    provider.schedules = deepcopy(new_owner)
+    await controller.async_request_charge(True)
+    await controller.async_tick(at(minutes=24 * 60), CHARGING)
+    assert controller.journal.fault.code == "unsupported_schedule"
+    assert await controller.async_force_restore(at(minutes=24 * 60 + 1)) is False
+    assert provider.schedules == new_owner
+
+
+async def test_forced_tick_ignores_the_backoff():
+    controller, provider, _ = make()
+    await start(controller)
+    provider.get_error = ScheduleApiError("502")
+    await controller.async_request_amps(10)
+    await controller.async_tick(at(seconds=31), CHARGING)
+    provider.get_error = None
+    await controller.async_request_release("integration disabled", hand_back=False)
+    await controller.async_tick(at(seconds=33), Observation(), force=True)
+    assert provider.schedules == OWNER
+
+
+async def test_failed_request_save_rolls_back():
+    controller, _, store = make()
+    store.fail = True
+    with pytest.raises(JournalSaveError):
+        await controller.async_request_charge(True)
+    assert controller.journal.command_received is False
+    assert controller.journal.desired_charge is None
+
+
+async def test_snapshot_explains_what_blocks_a_start():
+    controller, _, _ = make()
+    await start(controller)
+    await controller.async_set_renewal(False)
+    await controller.async_tick(at(minutes=1), Observation(plugged=True, home=None))
+    assert controller.snapshot(at(minutes=1))["start_blocked_by"] == [
+        "vehicle_state_unknown",
+        "renewal_off",
+    ]
 
 
 async def test_failed_journal_save_sends_nothing():
