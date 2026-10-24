@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from conftest import (
     CHARGER_STATE_ENTITY,
     EMAIL,
+    LIVENESS_ENTITY,
     LOCATION_ENTITY,
     NEW_TOKENS,
     OTP_CODE,
+    OVERRIDE_ENTITY,
     PASSWORD,
     PLUGGED_ENTITY,
     TOKENS,
@@ -22,7 +26,7 @@ from conftest import (
 )
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 import pytest
 from rivian.exceptions import (
     RivianApiException,
@@ -36,8 +40,10 @@ from custom_components.rivian_solar_adapter.const import (
     CONF_DRY_RUN,
     CONF_EMAIL,
     CONF_LEASE_MINUTES,
+    CONF_LIVENESS_ENTITY,
     CONF_LOCATION_ENTITY,
     CONF_OTP,
+    CONF_OVERRIDE_ENTITY,
     CONF_PASSWORD,
     CONF_PLUGGED_ENTITY,
     CONF_RENEW_BEFORE_MINUTES,
@@ -46,6 +52,8 @@ from custom_components.rivian_solar_adapter.const import (
     DEFAULT_OPTIONS,
     DOMAIN,
 )
+
+INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "rivian_solar_adapter"
 
 SECOND_VEHICLE = {
     "id": "test-vehicle-0002",
@@ -290,6 +298,8 @@ async def test_options_flow(
         CONF_PLUGGED_ENTITY: PLUGGED_ENTITY,
         CONF_LOCATION_ENTITY: LOCATION_ENTITY,
         CONF_WALL_CONNECTOR_ENTITY: WALL_CONNECTOR_ENTITY,
+        CONF_LIVENESS_ENTITY: LIVENESS_ENTITY,
+        CONF_OVERRIDE_ENTITY: OVERRIDE_ENTITY,
         **DEFAULT_OPTIONS,
     }
     result = await hass.config_entries.options.async_configure(
@@ -309,5 +319,75 @@ async def test_options_flow(
     assert entry.options[CONF_RENEW_BEFORE_MINUTES] == 6
     assert entry.options[CONF_DRY_RUN] is False
     assert entry.options[CONF_WALL_CONNECTOR_ENTITY] == WALL_CONNECTOR_ENTITY
+    assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
+    assert entry.options[CONF_OVERRIDE_ENTITY] == OVERRIDE_ENTITY
     # The charger state entity was cleared, so it is no longer used.
     assert CONF_CHARGER_STATE_ENTITY not in entry.options
+
+
+async def test_location_accepts_only_device_trackers(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """A person is home without the car, so only a device tracker is accepted."""
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    selector = result["data_schema"].schema[CONF_LOCATION_ENTITY]
+    assert selector.config["domain"] == ["device_tracker"]
+
+    options = {
+        CONF_PLUGGED_ENTITY: PLUGGED_ENTITY,
+        CONF_LOCATION_ENTITY: "person.owner",
+        **DEFAULT_OPTIONS,
+    }
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(result["flow_id"], options)
+
+    # The vehicle override takes an input select or a select, nothing else.
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            options | {CONF_LOCATION_ENTITY: LOCATION_ENTITY, CONF_OVERRIDE_ENTITY: "sensor.x"},
+        )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        options | {CONF_LOCATION_ENTITY: LOCATION_ENTITY, CONF_LIVENESS_ENTITY: "sensor.evcc"},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_LIVENESS_ENTITY] == "sensor.evcc"
+
+
+async def test_second_flow_for_same_vehicle_aborts(
+    hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
+) -> None:
+    """Two flows for one vehicle: the second aborts with a translated reason."""
+    first = await _sign_in(hass)
+    second = await _sign_in(hass)
+    first = await hass.config_entries.flow.async_configure(
+        first["flow_id"], {CONF_VEHICLE_ID: VEHICLE_ID}
+    )
+    assert first["step_id"] == "entities"
+    second = await hass.config_entries.flow.async_configure(
+        second["flow_id"], {CONF_VEHICLE_ID: VEHICLE_ID}
+    )
+    assert second["type"] is FlowResultType.ABORT
+    assert second["reason"] == "already_in_progress"
+    strings = json.loads((INTEGRATION_DIR / "strings.json").read_text())
+    assert strings["config"]["abort"]["already_in_progress"]
+
+
+def test_translations_match_strings() -> None:
+    """The English translation is the source strings, and every key is translated."""
+    strings = json.loads((INTEGRATION_DIR / "strings.json").read_text())
+    english = json.loads((INTEGRATION_DIR / "translations" / "en.json").read_text())
+    assert english == strings
+    for key in ("already_configured", "already_in_progress", "no_vehicles", "wrong_account"):
+        assert key in strings["config"]["abort"]
+    options = strings["options"]["step"]["init"]
+    for key in (CONF_LIVENESS_ENTITY, CONF_OVERRIDE_ENTITY):
+        assert key in options["data"]
+        assert key in options["data_description"]
+        assert key in strings["config"]["step"]["entities"]["data"]
+    assert "handed_back" in strings["entity"]["sensor"]["control_state"]["state"]
+    assert "force_restore" in strings["services"]
+    assert "restored" in options["data_description"][CONF_DRY_RUN]

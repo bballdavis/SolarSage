@@ -6,9 +6,10 @@ from unittest.mock import patch
 
 from conftest import (
     CHARGER_STATE_ENTITY,
+    LIVENESS_ENTITY,
     LOCATION_ENTITY,
     PLUGGED_ENTITY,
-    FakeResponse,
+    WALL_CONNECTOR_ENTITY,
     FakeRivian,
     make_entry,
 )
@@ -35,6 +36,7 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
         ("off", "not_home", "charging_ready", Observation(False, False, False)),
         ("on", "Work", "charging_active", Observation(True, False, True)),
         ("unavailable", "unknown", "unavailable", Observation(None, None, None)),
+        ("bogus", "home", "", Observation(None, True, None)),
         (None, None, None, Observation(None, None, None)),
     ],
 )
@@ -102,30 +104,47 @@ async def test_attribute_changes_do_not_tick(
         assert tick.call_args.args[1].home is False
 
 
-async def test_unexpected_error_is_logged_and_ticking_continues(
+@pytest.mark.parametrize(
+    ("wall_connector", "liveness", "at_charger", "alive"),
+    [
+        ("on", "pv", True, True),
+        ("off", "off", False, True),
+        ("unavailable", "unavailable", None, False),
+        ("unknown", "unknown", None, False),
+        (None, None, None, False),
+    ],
+)
+async def test_observation_wall_connector_and_liveness(
     hass: HomeAssistant,
-    loaded_entry: MockConfigEntry,
     mock_rivian: FakeRivian,
-    caplog: pytest.LogCaptureFixture,
+    wall_connector: str | None,
+    liveness: str | None,
+    at_charger: bool | None,
+    alive: bool,
 ) -> None:
-    """A malformed response is logged; later requests are still handled."""
-    good = mock_rivian.get_charging_schedules
-
-    async def malformed(vehicle_id: str) -> FakeResponse:
-        return FakeResponse(["not", "a", "dict"])  # type: ignore[arg-type]
-
-    runtime = loaded_entry.runtime_data
-    mock_rivian.get_charging_schedules = malformed
-    await runtime.async_request_charge(True)
+    """The Wall Connector maps on/off/unknown; liveness is False unless available."""
+    for entity_id, value in ((WALL_CONNECTOR_ENTITY, wall_connector), (LIVENESS_ENTITY, liveness)):
+        if value is not None:
+            hass.states.async_set(entity_id, value)
+    entry = make_entry(
+        wall_connector_entity=WALL_CONNECTOR_ENTITY, evcc_liveness_entity=LIVENESS_ENTITY
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert "Unexpected error while driving the Rivian charging schedule" in caplog.text
-    assert mock_rivian.writes == []
 
-    mock_rivian.get_charging_schedules = good
-    runtime.request_tick()
-    await hass.async_block_till_done(wait_background_tasks=True)
-    assert len(mock_rivian.writes) == 1
-    assert runtime.controller.state(runtime.last_tick_at).value == "lease_active"
+    obs = entry.runtime_data.observation()
+    assert obs.at_charger is at_charger
+    assert obs.controller_alive is alive
+
+
+async def test_unconfigured_liveness_is_unknown(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry
+) -> None:
+    """Without a liveness entity, evcc's liveness is not known, so it does not block."""
+    obs = loaded_entry.runtime_data.observation()
+    assert obs.controller_alive is None
+    assert obs.at_charger is None
 
 
 def test_describe_schedules() -> None:
@@ -133,7 +152,8 @@ def test_describe_schedules() -> None:
     text = describe_schedules(
         {
             "count": 1,
-            "hash": "0123456789ab",
+            "fingerprint": "0123456789ab",
+            "written_by_adapter": True,
             "schedules": [
                 {
                     "weekDays": ["Sunday"],
@@ -146,6 +166,6 @@ def test_describe_schedules() -> None:
         }
     )
     assert text.splitlines() == [
-        "Rivian reports 1 charging schedule (hash 0123456789ab).",
+        "Rivian reports 1 charging schedule (fingerprint 0123456789ab, written by this adapter).",
         "1. Sunday from 01:15 for 45 min at 40 A, enabled",
     ]

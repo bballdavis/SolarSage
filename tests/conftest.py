@@ -240,9 +240,7 @@ def hass_config_dir(hass_tmp_config_dir: str) -> str:
 @pytest.fixture
 def fast_restore() -> Generator[None]:
     """Do not wait for a restore to settle when disabling or removing."""
-    with patch(
-        "custom_components.rivian_solar_adapter.RESTORE_SETTLE_WAIT", new=timedelta(0)
-    ):
+    with patch("custom_components.rivian_solar_adapter.RESTORE_SETTLE_WAIT", new=timedelta(0)):
         yield
 
 

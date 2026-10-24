@@ -175,9 +175,7 @@ async def test_remove_warns_about_unreadable_journal(
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    notification = hass.data["persistent_notification"][
-        restore_failed_notification_id(VEHICLE_ID)
-    ]
+    notification = hass.data["persistent_notification"][restore_failed_notification_id(VEHICLE_ID)]
     assert "unreadable" in notification["message"]
     assert journal_key(VEHICLE_ID) in notification["message"]
     assert path.exists()
