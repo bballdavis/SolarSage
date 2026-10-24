@@ -1,0 +1,120 @@
+# DRAFT Home Assistant package: glue between HA, evcc, and the two vehicles.
+#
+# Status: untested against this installation. See docs/SOLAR_CHARGING_ARCHITECTURE.md
+# and docs/ROADMAP.md (phase 0 validates the status sensors; phase 2 enables the watchdog).
+#
+# Install: enable packages (homeassistant: packages: !include_dir_named packages),
+# copy this file to /config/packages/ev_solar_glue.yaml, and replace every <placeholder>.
+#
+# Contents:
+#   1. A manual override for which car is on the Wall Connector.
+#   2. Location- and charger-aware status sensors for evcc vehicle detection (a/b/c).
+#      evcc identifies vehicles by status only. These sensors report "a" unless the car
+#      is home and plugged in while the Wall Connector reports a vehicle, so evcc never
+#      commands a car that is charging somewhere else.
+#   3. A stale-input sensor and a watchdog. evcc keeps the last value of an unavailable
+#      meter, and nothing stops a car if evcc itself stops.
+
+input_select:
+  twc3_vehicle_override:
+    name: Wall Connector vehicle
+    options:
+      - auto
+      - tesla
+      - rivian
+    initial: auto
+    icon: mdi:ev-station
+
+template:
+  - sensor:
+      - name: evcc_tesla_status
+        unique_id: evcc_tesla_status
+        # Teslemetry entity names depend on the car's name in HA; copy them from its device page.
+        state: >
+          {%- set override = states('input_select.twc3_vehicle_override') -%}
+          {%- set home = is_state('<device_tracker.tesla_location>', 'home') -%}
+          {%- set plugged = is_state('<binary_sensor.tesla_charge_cable>', 'on') -%}
+          {%- set twc = is_state('binary_sensor.tesla_wall_connector_vehicle_connected', 'on') -%}
+          {%- set charging = states('<sensor.tesla_charging>') in ['starting', 'charging'] -%}
+          {{ 'a' if override == 'rivian' or not (home and plugged and twc)
+             else ('c' if charging else 'b') }}
+
+      - name: evcc_rivian_status
+        unique_id: evcc_rivian_status
+        # Rivian entities from home-assistant-rivian 2.x; check names on the device page.
+        state: >
+          {%- set override = states('input_select.twc3_vehicle_override') -%}
+          {%- set home = is_state('device_tracker.r1s_location', 'home') -%}
+          {%- set plugged = is_state('binary_sensor.r1s_charger_connection', 'on') -%}
+          {%- set twc = is_state('binary_sensor.tesla_wall_connector_vehicle_connected', 'on') -%}
+          {%- set active = states('<sensor.r1s_charger_state>') in
+             ['charging_active', 'charging_connecting', 'smart_charging_active'] -%}
+          {{ 'a' if override == 'tesla' or not (home and plugged and twc)
+             else ('c' if active else 'b') }}
+
+  - binary_sensor:
+      - name: ev_solar_inputs_stale
+        unique_id: ev_solar_inputs_stale
+        device_class: problem
+        # last_reported changes on every report, even an unchanged value. Grid power from
+        # the Sol-Ark normally reports within seconds; 120 s matches the prototype's gate.
+        state: >
+          {%- set grid = states.sensor.sol_ark_inverter_grid_power -%}
+          {%- set batt = states.sensor.sol_ark_inverter_battery_power -%}
+          {{ grid is none or batt is none
+             or grid.state in ['unknown', 'unavailable']
+             or batt.state in ['unknown', 'unavailable']
+             or (now() - grid.last_reported).total_seconds() > 120
+             or (now() - batt.last_reported).total_seconds() > 120 }}
+
+automation:
+  - alias: EV solar watchdog - stale site inputs stop solar charging
+    id: ev_solar_watchdog_stale_inputs
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.ev_solar_inputs_stale
+        to: "on"
+        for: "00:01:00"
+    conditions:
+      # ha-evcc names entities <type>.<installation name>_<loadpoint id>_<key>; check yours.
+      - condition: state
+        entity_id: <select.evcc_lp1_mode>
+        state: smart
+    actions:
+      - action: select.select_option
+        target:
+          entity_id: <select.evcc_lp1_mode>
+        data:
+          option: "off"
+      - action: persistent_notification.create
+        data:
+          title: EV solar charging stopped
+          message: >
+            Site power readings are stale, so evcc was switched off. Check the Sol-Ark
+            feed, then set the evcc mode back to smart by hand.
+
+  - alias: EV solar watchdog - evcc unavailable stops the Tesla
+    id: ev_solar_watchdog_evcc_down
+    mode: single
+    # Only the Tesla can be stopped directly. The Rivian charge adapter (roadmap phase 4A)
+    # must release its own lease when evcc stops renewing it.
+    triggers:
+      - trigger: state
+        entity_id: <select.evcc_lp1_mode>
+        to: unavailable
+        for: "00:05:00"
+    conditions:
+      - condition: state
+        entity_id: sensor.evcc_tesla_status
+        state: c
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id: <switch.tesla_charge>
+      - action: persistent_notification.create
+        data:
+          title: evcc unavailable
+          message: >
+            evcc has been unavailable for 5 minutes, so Tesla charging at the Wall
+            Connector was stopped. Restart the evcc add-on, then resume from evcc.

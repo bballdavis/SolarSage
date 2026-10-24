@@ -1,5 +1,7 @@
 # Rivian solar charging: research and standalone schedule harness brief
 
+> **Update, October 24, 2026.** The [solar charging architecture decision](SOLAR_CHARGING_ARCHITECTURE.md) makes evcc the policy engine for both vehicles. It changes decision 2 below: evcc, not a separate custom integration, owns solar policy and the primary UI. It relaxes decision 4: with exactly one Rivian schedule, the attended trial can run through upstream `home-assistant-rivian` 2.x entities, with this CLI as the fallback. This brief remains the acceptance contract for Rivian control evidence; see [roadmap phase 3](ROADMAP.md#phase-3--rivian-attended-control-trial).
+
 Status: planning and proof of control. Updated October 23, 2026. This document preserves the decisions from the “Rivian Solar Charging Integration” discussion and the local feasibility work. Historical observations below need a fresh check before any live test.
 
 ## Decisions and ownership

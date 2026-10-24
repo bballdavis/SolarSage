@@ -1,0 +1,135 @@
+# DRAFT evcc configuration for the Tesla + Rivian + Tesla Wall Connector Gen 3 site.
+#
+# Status: untested against this installation. Read docs/SOLAR_CHARGING_ARCHITECTURE.md
+# and follow docs/ROADMAP.md phase by phase before enabling any control.
+#
+# Target: evcc >= 0.316 ("smart" mode naming) running as the Home Assistant add-on.
+# Add-on config path: /addon_configs/49686a9f_evcc/evcc.yaml
+#
+# - Replace every <placeholder> and check each entity ID in Developer Tools > States.
+# - Loadpoint phases / minCurrent / maxCurrent are NOT read from YAML (ignored since
+#   0.2xx). Set them in the evcc UI or through ha-evcc: phases = 1, min 6 A, max = TWC3 limit.
+# - Site battery settings (prioritySoc / bufferSoc / bufferStartSoc) are also set in the UI.
+
+interval: 30s # evcc treats values below 30 s as unsupported
+
+log: info
+levels:
+  site: debug
+  lp-1: debug
+
+site:
+  title: Home
+  meters:
+    grid: grid
+    pv:
+      - pv
+    battery:
+      - battery
+  # evcc models power with a fixed 230 V; this is a 240 V split-phase service.
+  # A small positive residual biases the loop toward slight export.
+  residualPower: 150 # W
+
+meters:
+  # uri http://supervisor/core uses the add-on's supervisor token; no long-lived token needed.
+  - name: grid
+    type: template
+    template: homeassistant
+    usage: grid
+    uri: http://supervisor/core
+    power: sensor.sol_ark_inverter_grid_power # Sol-Ark: + import / - export (same as evcc)
+
+  - name: pv
+    type: template
+    template: homeassistant
+    usage: pv
+    uri: http://supervisor/core
+    power: sensor.sol_ark_inverter_pv_power
+
+  - name: battery
+    type: template
+    template: homeassistant
+    usage: battery
+    uri: http://supervisor/core
+    # Sol-Ark reports + charging / - discharging; evcc expects + discharging.
+    # The leading "-" inverts the sign.
+    power: -sensor.sol_ark_inverter_battery_power
+    soc: sensor.sol_ark_inverter_battery_state_of_charge
+    capacity: 31 # kWh usable (estimate from sensor.sol_ark_battery_capacity_estimate)
+
+chargers:
+  # evcc polls the Wall Connector's local /api/1/vitals itself. Start/stop and current
+  # are delegated to whichever vehicle evcc has identified on this loadpoint.
+  - name: twc3
+    type: template
+    template: twc3
+    host: <twc3-ip-or-hostname> # use a DHCP reservation
+
+vehicles:
+  # Tesla: entities from HA core Teslemetry (Bluetooth sub-entry preferred).
+  # Entity names depend on the vehicle name in HA; copy them from the device page.
+  - name: tesla
+    type: template
+    template: homeassistant
+    title: Tesla
+    uri: http://supervisor/core
+    capacity: <usable-kWh>
+    phases: 1
+    minCurrent: 6 # stay above the 5 A boundary; stop below it instead of trickling
+    maxCurrent: 48
+    soc: <sensor.tesla_battery_level>
+    limitSoc: <number.tesla_charge_limit>
+    status: sensor.evcc_tesla_status # from config/homeassistant/packages/ev_solar_glue.example.yaml
+    # Phase 1 (observe only): leave the next lines commented out.
+    # Phase 2: enable them. A switch alone provides both start and stop.
+    # start_charging: <switch.tesla_charge>
+    # setMaxCurrent: <number.tesla_charge_current>
+    # wakeup: <button.tesla_wake>
+
+  # Rivian R1S (Gen 2): read-only until the attended trial (roadmap phase 3) passes
+  # and the Rivian charge adapter (phase 4A) exists.
+  - name: rivian
+    type: template
+    template: homeassistant
+    title: Rivian R1S
+    uri: http://supervisor/core
+    capacity: <usable-kWh>
+    phases: 1
+    minCurrent: 8 # Rivian schedule amperage range is 8-48 A in 2 A steps
+    maxCurrent: 48
+    # Until the adapter exists, evcc cannot stop or modulate the Rivian. "now" makes
+    # evcc ignore missing current control on the TWC3. The car follows its own
+    # schedule, and evcc logs "vehicle not capable of start/stop" while it is plugged in.
+    mode: now
+    soc: sensor.r1s_battery_state_of_charge
+    limitSoc: sensor.r1s_battery_state_of_charge_limit
+    status: sensor.evcc_rivian_status # from the glue package
+    # Phase 4A only:
+    # start_charging: switch.rivian_solar_charging
+    # setMaxCurrent: number.rivian_solar_current
+
+loadpoints:
+  - title: Garage
+    charger: twc3
+    # No "vehicle:" line on purpose. A default vehicle disables detection, and evcc
+    # would then command that car even when the other one is plugged in.
+    mode: "off" # phase 1 observes only; switch to smart from the UI/ha-evcc in phase 2
+    enable:
+      delay: 2m
+    disable:
+      delay: 5m # fewer cloud commands; the house battery buffer bridges clouds
+
+tariffs:
+  currency: USD
+  grid:
+    type: fixed
+    price: <0.00> # $/kWh; use zones if a time-of-use tariff applies
+  feedin:
+    type: fixed
+    price: <0.00>
+  solar:
+    # Reads the solar forecast configured in the HA Energy dashboard (Solcast),
+    # without spending Solcast API calls. Display-only unless the sponsor optimizer is used.
+    - type: template
+      template: homeassistant
+      uri: http://supervisor/core
