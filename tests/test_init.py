@@ -236,36 +236,35 @@ async def test_evcc_current_then_start(
 async def test_requests_do_not_wait_for_rivian(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
 ) -> None:
-    """evcc's switch call returns while the provider read is still pending."""
+    """evcc's calls return while the provider read is still pending."""
     controller = loaded_entry.runtime_data.controller
-    tick = patch.object(controller, "async_tick", wraps=controller.async_tick).start()
     mock_rivian.read_gate = asyncio.Event()
-    await hass.services.async_call(
-        SWITCH_DOMAIN,
-        SERVICE_TURN_ON,
-        {ATTR_ENTITY_ID: entity_id(hass, "switch", "solar_charging")},
-        blocking=True,
-    )
-    assert state(hass, "switch", "solar_charging") == "on"
-    assert mock_rivian.reads == 1
-    assert mock_rivian.writes == []
-
-    # More requests while the tick waits are coalesced into one follow-up tick.
-    for amps in (10, 12, 14):
+    with patch.object(controller, "async_tick", wraps=controller.async_tick) as tick:
         await hass.services.async_call(
-            NUMBER_DOMAIN,
-            SERVICE_SET_VALUE,
-            {ATTR_ENTITY_ID: entity_id(hass, "number", "solar_current"), ATTR_VALUE: amps},
+            SWITCH_DOMAIN,
+            SERVICE_TURN_ON,
+            {ATTR_ENTITY_ID: entity_id(hass, "switch", "solar_charging")},
             blocking=True,
         )
-    assert state(hass, "number", "solar_current") == "14"
+        assert state(hass, "switch", "solar_charging") == "on"
+        assert mock_rivian.reads == 1
+        assert mock_rivian.writes == []
 
-    assert tick.call_count == 1
+        # Requests while the tick waits are coalesced into one follow-up tick.
+        for amps in (10, 12, 14):
+            await hass.services.async_call(
+                NUMBER_DOMAIN,
+                SERVICE_SET_VALUE,
+                {ATTR_ENTITY_ID: entity_id(hass, "number", "solar_current"), ATTR_VALUE: amps},
+                blocking=True,
+            )
+        assert state(hass, "number", "solar_current") == "14"
+        assert tick.call_count == 1
 
-    mock_rivian.read_gate.set()
-    await hass.async_block_till_done(wait_background_tasks=True)
-    assert tick.call_count == 2
-    patch.stopall()
+        mock_rivian.read_gate.set()
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert tick.call_count == 2
+
     assert len(mock_rivian.writes) == 1
     assert mock_rivian.writes[0][0]["amperage"] == 14
     assert state(hass, "sensor", "control_state") == "lease_active"
