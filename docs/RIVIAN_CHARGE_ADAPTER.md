@@ -10,10 +10,11 @@
 | --- | --- | --- |
 | Charging on, at N A | A **lease**: one window from 5 minutes ago to `lease_minutes` + 5 minutes from now, at N A rounded down to an even 8–48 A. The 5-minute padding absorbs clock differences. | Charges at N A |
 | A lower current | The same lease at the lower amperage, at the next allowed write | Current drops |
-| A higher current | Only once N − 2 A reaches the next even step, and at most every increase interval. This compensates for evcc's own +2 A allowance, so the two loops do not chase each other. | Current rises |
+| A higher current | Only once N − 3 A reaches the next even step (48 A goes straight to 48), and at most once per increase interval after the last current change. The margin absorbs evcc's +2 A allowance and its rounding, so the two loops do not chase each other. | Current rises |
 | Charging off | A **parked window** at 8 A that ended 5 minutes ago, so no window covers now | Waits |
 | Nothing new | Renews the lease when 8 minutes remain, but **only** while the car is known plugged in at home and evcc is alive | Keeps charging |
-| Nothing (evcc down, HA down, or the car's state unknown) | Nothing; the lease lapses on its own within `lease_minutes` + 5 minutes | Stops at lease end |
+| Nothing new, and the lease cannot be extended (evcc down, the car's state unknown, or renewal off) | Nothing until the lease lapses within `lease_minutes` + 5 minutes. Then a parked window replaces it, so it cannot recur a week later. If evcc is down, its last request is also dropped, and evcc must ask again after it restarts. | Stops at lease end |
+| Nothing (Home Assistant itself down) | Nothing; the lease lapses on its own within `lease_minutes` + 5 minutes | Stops at lease end |
 
 **Ownership rules:**
 
@@ -21,12 +22,19 @@
    - It refuses if Rivian holds a window this adapter itself wrote earlier. That protects against restoring the adapter's own window as if it were the owner's.
    - Commands sent while the car is away are discarded, not saved for later.
 2. **Persist, guard, then write.** Every write is recorded in the journal before anything is sent, and a failed save sends nothing. A fresh read then checks that Rivian still holds what the adapter last verified, or one of its own unverified writes. If it holds anything else, such as an edit in the Rivian app, the adapter **faults and writes nothing**.
-3. **Readback decides.** A write counts only when a fresh read shows it. A write that reads back unchanged is re-read 30 seconds later before it counts as not applied. Unverified writes are remembered, so one that lands late is recognized as the adapter's own.
+3. **Readback decides.** A write counts only when a fresh read shows it.
+   - **Settling:** a write that reads back unchanged is re-read 30 seconds later before it counts as not applied.
+   - **Never counted:** writes Rivian definitely refused (rate limit, expired login) or never received are withdrawn without counting.
+   - **Late landings:** unverified writes are remembered, so one that lands late is recognized as the adapter's own.
+   - **Restore while writes are outstanding:** it is still sent and confirmed only after a settled re-read, and the owner's list is also archived in case an earlier write lands afterwards.
 4. **Exact restore.**
    - **When it happens:** the owner's original list is written back on unplug (after `release_delay_s`), on away (after 10 minutes), on the **Restore owner schedule** button or service, when dry run is turned on, and when the integration is disabled or removed.
    - **How it is compared:** list order, weekday order and location rounding of a few metres don't count as differences.
    - **Hand-back:** a manual restore hands control back to the owner until the next unplug, so evcc can't immediately take the schedule over again.
-5. **Restarts resume.** The journal is stored per vehicle (it survives a remove and re-add), written atomically, and resumed after a restart. An interrupted write is resolved by reading Rivian.
+5. **Restarts resume.**
+   - **The journal** is stored per vehicle at `.storage/rivian_solar_adapter.<hash of the vehicle id>`, so it survives a remove and re-add. It is written atomically and resumed after a restart.
+   - **An interrupted write** is resolved by reading Rivian.
+   - **If setup fails while the adapter owns the schedule**, for example because Rivian is unreachable, a persistent repair issue says so. Removing the integration restores the schedule.
 
 **While the adapter owns the schedule, the owner's own schedules are suspended.** If the Rivian normally charges overnight on its own schedule, give it an evcc **repeating plan** (target SoC by a time) instead. evcc `off` mode means "never charge" while the car is plugged in at home.
 
@@ -84,7 +92,7 @@ Services:
 | `rivian_solar_adapter.release` | Same as the restore button |
 | `.clear_fault` | Same as the clear-fault button |
 | `.read_schedules` | Returns the list summary |
-| `.force_restore` | **Faulted only.** Writes the snapshotted owner list whatever Rivian holds now, then verifies it. |
+| `.force_restore` | **Faulted only.** Writes the snapshotted owner list whatever Rivian holds now, then verifies it. An archived list from an earlier abandon is used only while Rivian holds an adapter window, so it never replaces schedules the owner has set up since. |
 | `.abandon_ownership` | **Faulted only.** Forgets ownership without writing. The owner's list is archived, not deleted, and shown in a notification so it can be recreated or force-restored. |
 
 evcc vehicle (see [`config/evcc/evcc.example.yaml`](../config/evcc/evcc.example.yaml)):
@@ -121,10 +129,10 @@ The adapter is also the safest tool for the [attended Gen 2 trial](ROADMAP.md#ph
 | --- | --- | --- |
 | Inventory | Press **Read schedules**. | Note the count and fields. Rivian can return entries that it then refuses to accept back as one list ([upstream PR #308](https://github.com/bretterer/home-assistant-rivian/pull/308)), so T1 restores your actual list before any charging test. |
 | T1 Write and readback (no charging possible) | The adapter only acts while the car is plugged in at home. First set the Rivian's charge limit at or below its current SoC so no session can start. Set current 16, turn **Solar charging** on, then off, then press **Restore owner schedule**. | `control_state` goes `lease_active` → `paused` → `handed_back` with no fault. The Rivian app shows each change, and its displayed times match Home Assistant's local time. **Read schedules** shows the original list. Restore the charge limit afterwards. |
-| T2 Amps mid-session | While charging under a lease: 16 → 10 A, then 10 → 18 A. Because of the 2 A margin, an 18 A request yields a 16 A lease. | Wall Connector current follows each step. Record latency. |
+| T2 Amps mid-session | While charging under a lease: 16 → 10 A, then 10 → 20 A. Because of the 3 A margin, a 20 A request yields a 16 A lease. | Wall Connector current follows each step. Record latency. |
 | T2b Continuity | Keep charging through at least two renewals (about every 12 minutes) and two current changes. | The Wall Connector contactor stays closed and the current never drops to 0 during a rewrite |
 | T3 Window off now | Turn **Solar charging** off. | Charging stops. Record latency. |
-| T4 Lease expiry | Turn **Solar charging** on, and once charging, turn **Lease renewal** off. Wait `lease_minutes` + clock skew. | `control_state` becomes `lease_lapsed`, and charging stops at the window end |
+| T4 Lease expiry | Turn **Solar charging** on, and once charging, turn **Lease renewal** off. Wait `lease_minutes` + clock skew. | Charging stops at the window end, without any write. Afterwards the adapter parks the lapsed window (`control_state` `paused`). |
 | T5 Window back on now | Turn **Lease renewal** back on. **Solar charging** is still on, so the adapter writes a new lease covering now. | Charging resumes. Record latency. |
 | T6 Plug in while parked | With the window parked, unplug and replug within the release delay. Then try "charge now" in the Rivian app. | Car waits after replugging. Record what "charge now" does, and whether it changes the schedule, which would make the adapter fault with `external_edit`. |
 | T7 Exact restore | **Restore owner schedule** (or unplug for the release delay). | **Read schedules** matches the inventory |
@@ -140,8 +148,10 @@ Entering a fault posts a Home Assistant notification. While faulted, the adapter
 | --- | --- | --- |
 | `external_edit` | The schedule changed outside the adapter; nothing was overwritten | Check the Rivian app. Once the owner's schedule is back, **Clear fault**. Or use `force_restore` to write the snapshot over whatever is there. |
 | `conflict_after_write` | A readback matched neither the write nor the previous state | Same as above |
-| `write_not_applied` | Rivian accepted no change after repeated writes | Check the vehicle and account, then **Clear fault** |
-| `adapter_window_present` | Rivian holds a window this adapter wrote, so it will not snapshot it as the owner's | Recreate the owner's schedule in the Rivian app, or `force_restore` an archived snapshot |
+| `write_not_applied` | Rivian accepted writes but showed no change, repeatedly | Check the vehicle and account, then **Clear fault** |
+| `write_rejected` | Rivian rejected the adapter's window, repeatedly | Check the account and the Rivian app's schedule screen, then **Clear fault** |
+| `restore_rejected` | Rivian refused the owner's list when it was written back. Some accounts return entries that cannot be written back together ([upstream PR #308](https://github.com/bretterer/home-assistant-rivian/pull/308)). The snapshot is kept. | Recreate the owner's schedule in the Rivian app, then **Clear fault** |
+| `adapter_window_present` | Rivian holds a window this adapter wrote, or one shaped like it, so it will not snapshot it as the owner's | Recreate the owner's schedule in the Rivian app, or `force_restore` the archived snapshot |
 | `unsupported_schedule` | Rivian returned a schedule shape the adapter does not understand | Nothing was written. Report the redacted shape from **Read schedules**. |
 | `force_restore_unverified` | A forced restore could not be confirmed by a readback | Check the Rivian app |
 
