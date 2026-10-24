@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release_zip_file:
+    name: Prepare release asset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Set release version
+        run: |
+          sed -i '/VERSION = /c\VERSION = "${FORGEJO_REF_NAME}"' "${FORGEJO_WORKSPACE}/custom_components/rivian/const.py"
+          sed -i '/"version"/c\  "version": "${FORGEJO_REF_NAME}"' "${FORGEJO_WORKSPACE}/custom_components/rivian/manifest.json"
+
+      - name: Build HACS integration archive
+        run: |
+          mkdir -p "${FORGEJO_WORKSPACE}/dist/release"
+          cd "${FORGEJO_WORKSPACE}/custom_components/rivian"
+          zip "${FORGEJO_WORKSPACE}/dist/release/rivian.zip" -r ./
+
+      - name: Upload zip to Forgejo release
+        uses: https://code.forgejo.org/actions/forgejo-release@v2.9.1
+        with:
+          direction: upload
+          release-dir: dist/release
+          token: ${{ forge.token }}
+          override: true

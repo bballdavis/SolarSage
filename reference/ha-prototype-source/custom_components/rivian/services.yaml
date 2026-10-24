@@ -1,0 +1,42 @@
+get_charging_schedules:
+  name: Get charging schedules
+  description: Read all charging schedules for a Rivian vehicle.
+  response:
+    optional: false
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: Rivian vehicle identifier.
+      required: true
+      selector:
+        text:
+set_charging_schedules:
+  name: Set charging schedules
+  description: Replace all charging schedules for a Rivian vehicle.
+  response:
+    optional: false
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: Rivian vehicle identifier.
+      required: true
+      selector:
+        text:
+    schedules:
+      name: Schedules
+      description: Complete charging schedule list.
+      required: true
+      selector:
+        object:
+    expected_hash:
+      name: Expected hash
+      description: Optional hash from a fresh read to detect concurrent changes.
+      required: false
+      selector:
+        text:
+    reason:
+      name: Reason
+      description: Optional caller-provided reason for the schedule replacement.
+      required: false
+      selector:
+        text:

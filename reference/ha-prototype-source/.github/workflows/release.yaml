@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release_zip_file:
+    name: Prepare release asset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set release version
+        run: |
+          sed -i '/VERSION = /c\VERSION = "${GITHUB_REF_NAME}"' "${GITHUB_WORKSPACE}/custom_components/rivian/const.py"
+          sed -i '/"version"/c\  "version": "${GITHUB_REF_NAME}"' "${GITHUB_WORKSPACE}/custom_components/rivian/manifest.json"
+
+      - name: Build HACS integration archive
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/dist/release"
+          cd "${GITHUB_WORKSPACE}/custom_components/rivian"
+          zip "${GITHUB_WORKSPACE}/dist/release/rivian.zip" -r ./
+
+      - name: Upload zip to GitHub release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ github.workspace }}/dist/release/rivian.zip
+          asset_name: rivian.zip
+          tag: ${{ github.ref }}
+          overwrite: true

@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solar charging preview</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        color-scheme: light;
+        --primary-text-color: #1c2430;
+        --secondary-text-color: #596776;
+        --primary-color: #1473a7;
+        --primary-background-color: #ffffff;
+        --card-background-color: #fff;
+        --ha-card-background: #fff;
+        --secondary-background-color: #f2f6f8;
+        --divider-color: #c9d3dc;
+        --success-color: #26734d;
+        --warning-color: #996600;
+        --error-color: #ad2b2b;
+        --ha-card-border-radius: 12px;
+        --focus-color: #075f94;
+      }
+      body {
+        margin: 0;
+        background: #eaf0f3;
+      }
+      .preview {
+        max-width: 1080px;
+        margin: 12px auto;
+        padding: 10px 16px;
+        border-radius: 9px;
+        background: #fff5cb;
+        font:
+          14px system-ui,
+          sans-serif;
+        color: #493b00;
+      }
+      main {
+        max-width: 700px;
+        margin: 20px auto;
+        padding: 0 12px;
+      }
+      .switcher {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .switcher a {
+        padding: 7px 10px;
+        border-radius: 8px;
+        background: #fff;
+        color: #075f94;
+        font:
+          13px system-ui,
+          sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --primary-text-color: #e6edf4;
+          --secondary-text-color: #a7b6c4;
+          --primary-color: #6cc8f2;
+          --primary-background-color: #061820;
+          --card-background-color: #18232d;
+          --ha-card-background: #18232d;
+          --secondary-background-color: #22313d;
+          --divider-color: #3b4d5b;
+          --success-color: #79d19b;
+          --warning-color: #efbd62;
+          --error-color: #ff9292;
+          --focus-color: #85dcff;
+        }
+        body {
+          background: #101820;
+        }
+        .preview {
+          background: #403817;
+          color: #fff8d3;
+        }
+        .switcher a {
+          background: #18232d;
+          color: #85dcff;
+        }
+      }
+      html.preview-dark {
+        color-scheme: dark;
+        --primary-text-color: #e6edf4;
+        --secondary-text-color: #a7b6c4;
+        --primary-color: #6cc8f2;
+        --primary-background-color: #061820;
+        --card-background-color: #18232d;
+        --ha-card-background: #18232d;
+        --secondary-background-color: #22313d;
+        --divider-color: #3b4d5b;
+        --success-color: #79d19b;
+        --warning-color: #efbd62;
+        --error-color: #ff9292;
+        --focus-color: #85dcff;
+      }
+      html.preview-dark body {
+        background: #101820;
+      }
+      html.preview-dark .preview {
+        background: #403817;
+        color: #fff8d3;
+      }
+      html.preview-dark .switcher a {
+        background: #18232d;
+        color: #85dcff;
+      }
+    </style>
+    <script
+      type="module"
+      src="../custom_components/rivian/solar_ev_charging/frontend/solar-panel.js"
+    ></script>
+  </head>
+  <body>
+    <div class="preview">
+      <strong>Simulated preview:</strong> actions use a mock Home Assistant
+      service and never reach a vehicle.
+      <div class="switcher">
+        <a href="?card">Card</a><a href="?editor">Editor</a
+        ><a href="?empty">Empty</a><a href="?fault">Fault</a
+        ><a href="?stale">Stale</a><a href="?cloud">Cooldown</a
+        ><a href="?dry">Dry-run</a><a href="?card&error">Flow error</a
+        ><a href="?card&race">Cancel race</a><a href="?dark">Dark</a>
+      </div>
+    </div>
+    <main id="mount"></main>
+    <script>
+      const q = new URLSearchParams(location.search),
+        empty = q.has("empty"),
+        fault = q.has("fault"),
+        stale = q.has("stale"),
+        cloud = q.has("cloud"),
+        dry = q.has("dry");
+      const mockMenu = {
+        type: "menu",
+        flow_id: "preview-flow",
+        menu_options: [
+          "solar_setup",
+          "solar_vehicles",
+          "solar_forecast",
+          "solar_tuning",
+        ],
+      };
+      const forecastForm = {
+        type: "form",
+        flow_id: "preview-flow",
+        step_id: "solar_forecast",
+        description:
+          "Simulated forecast mapping. Choose existing energy sensors and their source update timestamp.",
+        data_schema: [
+          {
+            name: "forecast_mode",
+            default: "off",
+            selector: { select: { options: ["off", "advisory", "protect"] } },
+          },
+          {
+            name: "forecast_remaining_entity",
+            value: "sensor.preview_solar_remaining_today",
+            selector: { entity: { domain: "sensor" } },
+          },
+          {
+            name: "forecast_next_hour_entity",
+            value: "sensor.preview_solar_next_hour",
+            selector: { entity: { domain: "sensor" } },
+          },
+          {
+            name: "forecast_value_field",
+            default: "state",
+            selector: {
+              select: {
+                options: ["state", "estimate", "estimate10", "estimate90"],
+              },
+            },
+          },
+          {
+            name: "forecast_source_updated_entity",
+            value: "sensor.preview_solar_last_polled",
+            selector: { entity: { domain: "sensor" } },
+          },
+          {
+            name: "forecast_source_max_age_hours",
+            default: 6,
+            selector: {
+              number: {
+                min: 0.25,
+                max: 48,
+                step: 0.25,
+                unit_of_measurement: "h",
+              },
+            },
+          },
+        ],
+      };
+      if (!customElements.get("ha-form")) {
+        customElements.define(
+          "ha-form",
+          class PreviewHaForm extends HTMLElement {
+            set schema(value) {
+              this._schema = value || [];
+              this.render();
+            }
+            set data(value) {
+              this._data = value || {};
+              this.render();
+            }
+            set error(value) {
+              this._error = value || {};
+              this.render();
+            }
+            get data() {
+              return this._data;
+            }
+            render() {
+              if (!this._schema) return;
+              this.innerHTML = this._schema
+                .map((field) => {
+                  const error = this._error?.[field.name];
+                  const label = this.computeLabel?.(field) || field.name;
+                  const errorText = error
+                    ? this.computeError?.(error) || error
+                    : "";
+                  return `<label style="display:grid;gap:6px;margin:10px 0"><span>${label}</span><input data-key="${field.name}" value="${this._data?.[field.name] ?? ""}">${errorText ? `<small data-field-error="${field.name}" style="color:#ad2b2b">${errorText}</small>` : ""}</label>`;
+                })
+                .join("");
+              this.querySelectorAll("input").forEach((input) =>
+                input.addEventListener("change", () =>
+                  this.dispatchEvent(
+                    new CustomEvent("value-changed", {
+                      detail: {
+                        value: {
+                          ...this._data,
+                          [input.dataset.key]: input.value,
+                        },
+                      },
+                    }),
+                  ),
+                ),
+              );
+            }
+          },
+        );
+      }
+      if (q.has("dark")) document.documentElement.classList.add("preview-dark");
+      const status = {
+        state: fault
+          ? "fault"
+          : stale
+            ? "blocked"
+            : cloud
+              ? "waiting_for_surplus"
+              : "solar_active",
+        enabled: true,
+        dry_run: dry,
+        vehicle_mode: "rivian",
+        active_vehicle: "rivian",
+        target_amps: cloud ? 0 : 16,
+        available_watts: cloud ? 1500 : 3920,
+        observed_power_w: stale ? null : 3700,
+        observed_amps: stale ? null : 15.4,
+        restart_remaining_seconds: cloud ? 180 : 0,
+        pending_cleanup: fault,
+        reason: fault
+          ? "Schedule changed externally; cleanup needs attention."
+          : stale
+            ? "Sensor feedback is stale. Charging is blocked."
+            : cloud
+              ? "Waiting for the restart cooldown after a brief cloud."
+              : "Charging from measured surplus.",
+        fault: fault ? "Vehicle schedule changed externally" : null,
+        control_phase: fault ? "cleanup_pending" : "charging_confirmed",
+        command_acknowledged: !fault,
+        last_feedback_at: stale ? "25 minutes ago" : "just now",
+        transient_deficit_wh: cloud ? 1.8 : 0,
+        capability_reason:
+          "Preview only. This does not prove real hardware control.",
+        inputs: {
+          measurements: [
+            {
+              label: "Wall power",
+              entity_id: "sensor.preview_wall_power",
+              unit: "W",
+              age_seconds: 10,
+              max_age_seconds: 90,
+              status: stale ? "stale" : "ok",
+            },
+            {
+              label: "Battery SOC",
+              entity_id: "sensor.preview_battery_soc",
+              unit: "%",
+              age_seconds: 2220,
+              max_age_seconds: 900,
+              status: stale ? "stale" : "ok",
+            },
+          ],
+        },
+        forecast: {
+          status: "protect",
+          reason:
+            "Forecast budget permits a new session. Live power still sets the limit.",
+          next_hour_wh: 3400,
+          remaining_kwh: 8.1,
+          ev_budget_kwh: 2.075,
+          source_age_seconds: 420,
+        },
+      };
+      const states = empty
+        ? {}
+        : {
+            "sensor.preview_solar_controller": {
+              state: status.state,
+              attributes: {
+                solar_controller: true,
+                entry_id: "preview-entry",
+                entry_title: "Preview controller",
+                status,
+                controls: {
+                  enabled: "switch.preview_solar_enabled",
+                  charge_now: "button.preview_charge_now",
+                  resume: "button.preview_resume",
+                  probe: "button.preview_probe",
+                  commission_stop: "button.preview_commission_stop",
+                  safe_release: "button.preview_safe_release",
+                  clear_fault: "button.preview_clear_fault",
+                },
+              },
+            },
+          };
+      const hass = {
+        states,
+        user: { is_admin: true },
+        localize(key) {
+          const labels = {
+            "component.rivian.options.error.solar_forecast_required":
+              "Add both forecast sensors, the source timestamp, and a positive source-age limit.",
+            "component.rivian.options.step.solar_forecast.data.forecast_mode":
+              "Forecast policy",
+            "component.rivian.options.step.solar_forecast.data.forecast_remaining_entity":
+              "Solar energy forecast remaining today",
+            "component.rivian.options.step.solar_forecast.data.forecast_next_hour_entity":
+              "Solar energy forecast for the next hour",
+            "component.rivian.options.step.solar_forecast.data.forecast_value_field":
+              "Forecast value or confidence attribute",
+            "component.rivian.options.step.solar_forecast.data.forecast_source_updated_entity":
+              "Forecast source update timestamp",
+            "component.rivian.options.step.solar_forecast.data.forecast_source_max_age_hours":
+              "Maximum forecast source age",
+            "component.rivian.selector.forecast_value_field.options.estimate10":
+              "Conservative estimate (P10)",
+          };
+          return labels[key] || key;
+        },
+        callService(domain, service, data, target) {
+          console.info("simulated command", { domain, service, data, target });
+          if (target.entity_id === "switch.preview_solar_enabled")
+            status.enabled = service === "turn_on";
+          if (target.entity_id === "button.preview_charge_now") {
+            status.manual_override = true;
+            status.reason = "Manual charge requested (simulated).";
+          }
+          if (target.entity_id === "button.preview_safe_release") {
+            status.target_amps = 0;
+            status.reason = "Safe release complete (simulated).";
+          }
+          return Promise.resolve();
+        },
+        callApi(method, path, data) {
+          console.info("simulated options flow", { method, path, data });
+          if (method === "GET")
+            return Promise.resolve([{ entry_id: "preview-entry" }]);
+          if (path.endsWith("/flow"))
+            return q.has("race")
+              ? new Promise((resolve) =>
+                  setTimeout(() => resolve(mockMenu), 1500),
+                )
+              : Promise.resolve(mockMenu);
+          if (data.next_step_id === "solar_forecast")
+            return Promise.resolve(forecastForm);
+          if (data.next_step_id)
+            return Promise.resolve({
+              type: "form",
+              flow_id: "preview-flow",
+              step_id: data.next_step_id,
+              data_schema: [
+                {
+                  name: "solar_ev_charging_enabled",
+                  default: false,
+                  selector: { boolean: {} },
+                },
+              ],
+            });
+          return Promise.resolve(
+            q.has("error")
+              ? {
+                  type: "form",
+                  flow_id: "preview-flow",
+                  step_id: "solar_forecast",
+                  errors: {
+                    base: "solar_forecast_required",
+                    forecast_source_updated_entity: "solar_forecast_required",
+                  },
+                  ...forecastForm,
+                }
+              : { type: "create_entry" },
+          );
+        },
+      };
+      customElements.whenDefined("solar-charging-panel").then(() => {
+        const panel = q.has("editor")
+          ? document.createElement("solar-charging-card-editor")
+          : q.has("card")
+            ? document.createElement("solar-charging-card")
+            : document.createElement("solar-charging-panel");
+        if ((q.has("card") || q.has("editor")) && !q.has("unconfigured"))
+          panel.setConfig({
+            type: "custom:solar-charging-card",
+            controller: "sensor.preview_solar_controller",
+          });
+        panel.hass = hass;
+        document.querySelector("#mount").append(panel);
+      });
+    </script>
+  </body>
+</html>

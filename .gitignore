@@ -1,0 +1,7 @@
+.rivian-test-auth.json
+tmp/
+*.log
+*raw-response*.json
+*schedule-before*.json
+*schedule-after*.json
+*mutation-response*.json

@@ -1,0 +1,14 @@
+{
+  "domain": "rivian",
+  "name": "Rivian (Unofficial)",
+  "after_dependencies": ["bluetooth_adapters"],
+  "codeowners": ["@bretterer"],
+  "config_flow": true,
+  "documentation": "https://git.davisho.me/philipdavis/HASS-Solar-Rivian",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://git.davisho.me/philipdavis/HASS-Solar-Rivian/issues",
+  "loggers": ["custom_components.rivian", "rivian"],
+  "requirements": ["rivian-python-client[ble]==2.0.0"],
+  "version": "1.7.0b2"
+}
