@@ -5,3 +5,6 @@ tmp/
 *schedule-before*.json
 *schedule-after*.json
 *mutation-response*.json
+__pycache__/
+.pytest_cache/
+.ruff_cache/
