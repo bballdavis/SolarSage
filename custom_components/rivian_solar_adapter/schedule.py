@@ -7,6 +7,7 @@ This module has no Home Assistant imports so it can be tested on its own.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -31,8 +32,9 @@ MINUTES_PER_DAY = 1440
 # Provider schedules are read leniently: they are restored exactly as read.
 PROVIDER_MAX_DURATION = 7 * MINUTES_PER_DAY
 PROVIDER_MAX_AMPS = 80
-# Coordinates are compared at about 1 m so provider rounding is not a "change".
-HASH_COORD_DIGITS = 5
+# Locations within this many degrees (about 10 m) are the same place, so
+# provider rounding or float storage is never mistaken for a change.
+LOCATION_TOLERANCE_DEG = 1e-4
 # Coordinates written in a lease window.
 WRITE_COORD_DIGITS = 6
 
@@ -97,28 +99,64 @@ def normalize_schedules(schedules: Any, *, strict: bool) -> list[dict[str, Any]]
     return [normalize_schedule(schedule, strict=strict) for schedule in schedules]
 
 
-def contract_hash(schedules: list[dict[str, Any]]) -> str:
-    """Hash the caller-controlled fields of an already normalized list.
+@dataclass(frozen=True)
+class Fingerprint:
+    """Identity of a schedule list for comparing provider states.
 
-    Server-managed extras are ignored, so a readback that adds metadata still
-    matches the write. Order is significant.
+    ``key`` hashes every controlled field except location, with weekdays and
+    the list itself in canonical order, so neither order nor coordinates can
+    be recovered from it or make two equal lists differ. Locations are kept
+    separately, in the same canonical order, and compared within
+    ``LOCATION_TOLERANCE_DEG``.
     """
-    controlled = [
-        {
-            "weekDays": schedule["weekDays"],
+
+    key: str
+    locations: tuple[tuple[float, float], ...]
+
+    def matches(self, other: Fingerprint | None) -> bool:
+        """Whether two lists describe the same schedules."""
+        if other is None or self.key != other.key or len(self.locations) != len(other.locations):
+            return False
+        return all(
+            abs(a[0] - b[0]) <= LOCATION_TOLERANCE_DEG
+            and abs(a[1] - b[1]) <= LOCATION_TOLERANCE_DEG
+            for a, b in zip(self.locations, other.locations, strict=True)
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"key": self.key, "locations": [list(location) for location in self.locations]}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Fingerprint:
+        return cls(data["key"], tuple((float(lat), float(lon)) for lat, lon in data["locations"]))
+
+
+def fingerprint(schedules: list[dict[str, Any]]) -> Fingerprint:
+    """Fingerprint an already normalized list."""
+    items = []
+    for schedule in schedules:
+        controlled = {
+            "weekDays": sorted(schedule["weekDays"], key=WEEK_DAYS.index),
             "startTime": schedule["startTime"],
             "duration": schedule["duration"],
-            "location": {
-                "latitude": round(float(schedule["location"]["latitude"]), HASH_COORD_DIGITS),
-                "longitude": round(float(schedule["location"]["longitude"]), HASH_COORD_DIGITS),
-            },
             "amperage": schedule["amperage"],
             "enabled": schedule["enabled"],
         }
-        for schedule in schedules
-    ]
-    payload = json.dumps(controlled, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode()).hexdigest()
+        location = (
+            float(schedule["location"]["latitude"]),
+            float(schedule["location"]["longitude"]),
+        )
+        items.append((json.dumps(controlled, sort_keys=True, separators=(",", ":")), location))
+    items.sort()
+    payload = json.dumps([item[0] for item in items], separators=(",", ":"))
+    return Fingerprint(
+        hashlib.sha256(payload.encode()).hexdigest(), tuple(item[1] for item in items)
+    )
+
+
+def provider_fingerprint(schedules: Any) -> Fingerprint:
+    """Normalize a provider list leniently and fingerprint it."""
+    return fingerprint(normalize_schedules(schedules, strict=False))
 
 
 def to_provider_input(schedules: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -139,11 +177,6 @@ def to_provider_input(schedules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def provider_hash(schedules: Any) -> str:
-    """Normalize a provider list leniently and return its contract hash."""
-    return contract_hash(normalize_schedules(schedules, strict=False))
-
-
 def applied_amps(requested: float | int) -> int:
     """Map a requested current to a schedule amperage: even, 8-48 A, rounded down."""
     amps = int(math.floor(requested))
@@ -152,7 +185,7 @@ def applied_amps(requested: float | int) -> int:
 
 
 def lease_window(
-    now: datetime,
+    local_now: datetime,
     *,
     active: bool,
     lease_minutes: int,
@@ -162,25 +195,27 @@ def lease_window(
 ) -> dict[str, Any]:
     """Build the single schedule the adapter writes while it owns the vehicle.
 
-    ``now`` must be timezone-aware in the vehicle's local time, because the
-    provider schedule uses local weekday and minutes after midnight.
+    ``local_now`` must be timezone-aware in the vehicle's local time, because
+    the provider schedule uses the local weekday and minutes after midnight.
+    Arithmetic on it is wall-clock arithmetic, which is what the vehicle uses.
 
-    An active lease covers now: it starts ``skew_minutes`` ago (tolerating a
-    vehicle clock that runs behind) and ends ``lease_minutes`` from now. If it is
-    not renewed it lapses, and its next occurrence is a week later.
+    An active lease covers now with ``skew_minutes`` to spare at both ends, so a
+    vehicle clock that differs from Home Assistant's by up to that much still
+    sees it cover now. It ends ``lease_minutes`` plus the skew from now. If it
+    is not renewed it lapses, and its next occurrence is a week later.
 
     A parked window ended ``skew_minutes`` ago, so no window covers now and the
     vehicle waits. It also recurs only a week later.
     """
-    if now.tzinfo is None:
-        raise ValueError("now must be timezone-aware")
-    now = now.replace(second=0, microsecond=0)
+    if local_now.tzinfo is None:
+        raise ValueError("local_now must be timezone-aware")
+    local_now = local_now.replace(second=0, microsecond=0)
     if active:
-        start = now - timedelta(minutes=skew_minutes)
-        duration = skew_minutes + lease_minutes
+        start = local_now - timedelta(minutes=skew_minutes)
+        duration = lease_minutes + 2 * skew_minutes
     else:
         duration = lease_minutes
-        start = now - timedelta(minutes=skew_minutes + duration)
+        start = local_now - timedelta(minutes=skew_minutes + duration)
     return {
         "weekDays": [WEEK_DAYS[start.weekday()]],
         "startTime": start.hour * 60 + start.minute,

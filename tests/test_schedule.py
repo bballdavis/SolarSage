@@ -8,11 +8,11 @@ import pytest
 
 from custom_components.rivian_solar_adapter.schedule import (
     applied_amps,
-    contract_hash,
+    fingerprint,
     lease_window,
     normalize_schedule,
     normalize_schedules,
-    provider_hash,
+    provider_fingerprint,
     to_provider_input,
 )
 
@@ -80,26 +80,45 @@ def test_normalize_copies_and_keeps_extras():
     assert result["id"] == "server"
 
 
-def test_hash_ignores_extras_and_key_order_but_not_list_order():
+def test_fingerprint_ignores_extras_key_order_list_order_and_weekday_order():
     a, b = schedule(), schedule(weekDays=["Saturday"], amperage=8)
     with_extra = dict(reversed(list((a | {"id": "x"}).items())))
-    assert provider_hash([a, b]) == provider_hash([with_extra, b])
-    assert provider_hash([a, b]) != provider_hash([b, a])
-    assert provider_hash([a]) != provider_hash([a | {"amperage": 18}])
+    days_reordered = a | {"weekDays": ["Friday", "Monday"]}
+    reference = provider_fingerprint([a, b])
+    assert reference.matches(provider_fingerprint([with_extra, b]))
+    assert reference.matches(provider_fingerprint([b, a]))
+    assert reference.matches(provider_fingerprint([days_reordered, b]))
+    assert not provider_fingerprint([a]).matches(provider_fingerprint([a | {"amperage": 18}]))
+    assert not provider_fingerprint([a]).matches(provider_fingerprint([a, b]))
 
 
-def test_hash_tolerates_provider_coordinate_rounding():
-    precise = schedule(location={"latitude": 30.1234561, "longitude": -97.7654321})
-    rounded = schedule(location={"latitude": 30.123456, "longitude": -97.765432})
-    assert provider_hash([precise]) == provider_hash([rounded])
-    moved = schedule(location={"latitude": 30.1244, "longitude": -97.7654321})
-    assert provider_hash([precise]) != provider_hash([moved])
+def test_fingerprint_compares_locations_with_tolerance():
+    def at(lat, lon):
+        return provider_fingerprint([schedule(location={"latitude": lat, "longitude": lon})])
+
+    # Values straddling a rounding boundary still match (about 1 m apart).
+    assert at(30.123455, -97.7654321).matches(at(30.12346, -97.765432))
+    assert at(30.123455, -97.7654321).matches(at(30.123455047607422, -97.7654321))
+    # About 100 m away is a different place.
+    assert not at(30.1234, -97.7654).matches(at(30.1244, -97.7654))
+
+
+def test_fingerprint_key_contains_no_location():
+    near = provider_fingerprint([schedule(location={"latitude": 1.0, "longitude": 2.0})])
+    far = provider_fingerprint([schedule(location={"latitude": 40.0, "longitude": -80.0})])
+    assert near.key == far.key
+    assert not near.matches(far)
+
+
+def test_fingerprint_round_trips_through_dict():
+    fp = provider_fingerprint([schedule(), schedule(amperage=8)])
+    assert type(fp).from_dict(fp.to_dict()) == fp
 
 
 def test_to_provider_input_strips_extras():
     normalized = normalize_schedules([schedule(id="x")], strict=False)
     assert to_provider_input(normalized) == [schedule()]
-    assert contract_hash(normalized) == provider_hash(to_provider_input(normalized))
+    assert fingerprint(normalized).matches(provider_fingerprint(to_provider_input(normalized)))
 
 
 @pytest.mark.parametrize(
@@ -118,7 +137,7 @@ def test_active_lease_covers_now():
     assert window == {
         "weekDays": ["Saturday"],
         "startTime": 13 * 60 + 2,
-        "duration": 25,
+        "duration": 30,
         "location": HOME,
         "amperage": 16,
         "enabled": True,
