@@ -51,6 +51,6 @@ The `fix/upstream-charging-schedule-read` worktree is at base `f99f1e75d37f188f4
 
 ## Upstream research snapshot (October 24, 2026)
 
-The [ecosystem survey](ECOSYSTEM_SURVEY.md#snapshot-of-sources) lists the upstream commits read for the [architecture decision](SOLAR_CHARGING_ARCHITECTURE.md). They include evcc, `ha-evcc`, `home-assistant-rivian` 2.0.0, `rivian-python-client` 2.3.1, the HA core Tesla and OpenEVSE integrations, Tesla BLE projects, and Wall Connector meter-emulation projects. No upstream source was copied into this repository; citations are permalinks to those commits.
+The [ecosystem survey](ECOSYSTEM_SURVEY.md#snapshot-of-sources) lists the upstream commits read for the [architecture decision](SOLAR_CHARGING_ARCHITECTURE.md). They include evcc, `ha-evcc`, `home-assistant-rivian` 2.0.0, `rivian-python-client` (head just after 2.3.1; the cited code is identical to 2.3.1), the HA core Tesla and OpenEVSE integrations, Tesla BLE projects, and Wall Connector meter-emulation projects. No upstream source was copied into this repository; citations are permalinks to those commits.
 
 

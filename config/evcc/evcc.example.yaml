@@ -3,12 +3,14 @@
 # Status: untested against this installation. Read docs/SOLAR_CHARGING_ARCHITECTURE.md
 # and follow docs/ROADMAP.md phase by phase before enabling any control.
 #
-# Target: evcc >= 0.316 ("smart" mode naming) running as the Home Assistant add-on.
+# Target: evcc 0.318.0 running as the Home Assistant add-on (add-on version 0.318.0).
+# Needs evcc >= 0.316 for the off/smart/now mode names.
 # Add-on config path: /addon_configs/49686a9f_evcc/evcc.yaml
 #
 # - Replace every <placeholder> and check each entity ID in Developer Tools > States.
-# - Loadpoint phases / minCurrent / maxCurrent are NOT read from YAML (ignored since
-#   0.2xx). Set them in the evcc UI or through ha-evcc: phases = 1, min 6 A, max = TWC3 limit.
+# - Loadpoint phases / minCurrent / maxCurrent in YAML are not applied. evcc only logs a
+#   startup warning ("ignoring deprecated ..., please configure via UI"). Set them in the
+#   evcc UI or through ha-evcc: phases = 1, min 6 A, max = TWC3 limit.
 # - Site battery settings (prioritySoc / bufferSoc / bufferStartSoc) are also set in the UI.
 
 interval: 30s # evcc treats values below 30 s as unsupported
@@ -31,7 +33,8 @@ site:
   residualPower: 150 # W
 
 meters:
-  # uri http://supervisor/core uses the add-on's supervisor token; no long-lived token needed.
+  # uri http://supervisor/core uses the add-on's supervisor token. Do not add a token: key;
+  # evcc ignores it and logs a warning.
   - name: grid
     type: template
     template: homeassistant
@@ -86,8 +89,10 @@ vehicles:
     # setMaxCurrent: <number.tesla_charge_current>
     # wakeup: <button.tesla_wake>
 
-  # Rivian R1S (Gen 2): read-only until the attended trial (roadmap phase 3) passes
-  # and the Rivian charge adapter (phase 4A) exists.
+  # Rivian R1S (Gen 2): read-only until the attended trial (roadmap phase 3) passes and
+  # phase 4A wires the Rivian charge adapter (custom_components/rivian_solar_adapter) in.
+  # Adapter entity IDs follow its config entry title; these assume the title "R1S".
+  # Copy the real IDs from the adapter's device page.
   - name: rivian
     type: template
     template: homeassistant
@@ -95,25 +100,34 @@ vehicles:
     uri: http://supervisor/core
     capacity: <usable-kWh>
     phases: 1
-    minCurrent: 8 # Rivian schedule amperage range is 8-48 A in 2 A steps
+    # The adapter applies even 8-48 A and never less than 8 A. A lower minimum would make
+    # evcc see more current than it offered and re-send the current every cycle.
+    minCurrent: 8
     maxCurrent: 48
-    # Until the adapter exists, evcc cannot stop or modulate the Rivian. "now" makes
-    # evcc ignore missing current control on the TWC3. The car follows its own
-    # schedule, and evcc logs "vehicle not capable of start/stop" while it is plugged in.
+    # Remove when enabling adapter control in phase 4A.
+    # Until then evcc cannot stop or modulate the Rivian. "now" makes evcc ignore the
+    # missing current control on the TWC3. The car follows its own schedule, and evcc
+    # logs "vehicle not capable of start/stop" while it is plugged in.
     mode: now
     soc: sensor.r1s_battery_state_of_charge
     limitSoc: sensor.r1s_battery_state_of_charge_limit
-    status: sensor.evcc_rivian_status # from the glue package
-    # Phase 4A only:
-    # start_charging: switch.rivian_solar_charging
-    # setMaxCurrent: number.rivian_solar_current
+    # The adapter's status sensor: "a" unless the car is known plugged in at home, the
+    # Wall Connector (if mapped) does not report "no vehicle", and the adapter's override
+    # option (input_select.twc3_vehicle_override) does not name the Tesla. It works in
+    # dry run too.
+    status: sensor.r1s_solar_adapter_evcc_status
+    # Phase 4A only (after the trial; remove "mode: now" above at the same time):
+    # start_charging: switch.r1s_solar_adapter_solar_charging
+    # setMaxCurrent: number.r1s_solar_adapter_solar_current
 
 loadpoints:
   - title: Garage
     charger: twc3
     # No "vehicle:" line on purpose. A default vehicle disables detection, and evcc
     # would then command that car even when the other one is plugged in.
-    mode: "off" # phase 1 observes only; switch to smart from the UI/ha-evcc in phase 2
+    # Default mode: evcc re-applies it at every unplug. Phase 1 observes only ("off").
+    # From phase 2 set it to smart here; a mode set only in the UI lasts one session.
+    mode: "off"
     enable:
       delay: 2m
     disable:
@@ -129,7 +143,8 @@ tariffs:
     price: <0.00>
   solar:
     # Reads the solar forecast configured in the HA Energy dashboard (Solcast),
-    # without spending Solcast API calls. Display-only unless the sponsor optimizer is used.
+    # without spending Solcast API calls. Display-only unless the sponsor-only,
+    # experimental optimizer is enabled.
     - type: template
       template: homeassistant
       uri: http://supervisor/core

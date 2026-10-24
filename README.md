@@ -12,7 +12,7 @@ Seamless "charge on solar" in Home Assistant for **both** household EVs, a Tesla
 Start here:
 
 - [Architecture decision](docs/SOLAR_CHARGING_ARCHITECTURE.md): the chosen design, what we build versus reuse, the Rivian adapter contract, evcc pitfalls, the safety model, and open questions for the owner.
-- [Roadmap](docs/ROADMAP.md): phased plan with evidence gates. Tesla first, then an attended Rivian trial, then the adapter or the hardware path.
+- [Roadmap](docs/ROADMAP.md): phased plan with evidence gates. Tesla first, then an attended Rivian trial using the adapter, then wiring the adapter into evcc or taking the hardware path.
 - [Ecosystem survey](docs/ECOSYSTEM_SURVEY.md): what evcc, the Tesla integrations, the Rivian integration and client, charger-side options, and other orchestrators actually do, with source permalinks.
 - [Draft evcc config](config/evcc/evcc.example.yaml) and [draft HA glue package](config/homeassistant/packages/ev_solar_glue.example.yaml): starting points with placeholders, untested against the live installation.
 

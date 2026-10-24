@@ -1,29 +1,52 @@
 # DRAFT Home Assistant package: glue between HA, evcc, and the two vehicles.
 #
 # Status: untested against this installation. See docs/SOLAR_CHARGING_ARCHITECTURE.md
-# and docs/ROADMAP.md (phase 0 validates the status sensors; phase 2 enables the watchdog).
+# and docs/ROADMAP.md (phase 0 validates the status sensors; phase 2 enables the
+# watchdogs and the Tesla amp restore).
 #
 # Install: enable packages (homeassistant: packages: !include_dir_named packages),
 # copy this file to /config/packages/ev_solar_glue.yaml, and replace every <placeholder>.
 #
 # Contents:
-#   1. A manual override for which car is on the Wall Connector.
-#   2. Location- and charger-aware status sensors for evcc vehicle detection (a/b/c).
-#      evcc identifies vehicles by status only. These sensors report "a" unless the car
-#      is home and plugged in while the Wall Connector reports a vehicle, so evcc never
-#      commands a car that is charging somewhere else.
-#   3. A stale-input sensor and a watchdog. evcc keeps the last value of an unavailable
-#      meter, and nothing stops a car if evcc itself stops.
+#   1. A manual override for which car is on the Wall Connector, and the Tesla's normal
+#      charging amps.
+#   2. A location- and charger-aware Tesla status sensor for evcc vehicle detection
+#      (a/b/c). evcc identifies vehicles by status only. The sensor reports "a" unless
+#      the Tesla is home and plugged in while the Wall Connector reports a vehicle, so
+#      evcc never commands a car that is charging somewhere else.
+#      The Rivian's status sensor comes from the Rivian charge adapter
+#      (sensor.<title>_solar_adapter_evcc_status, e.g. sensor.r1s_solar_adapter_evcc_status).
+#      Point the adapter's vehicle override option at input_select.twc3_vehicle_override
+#      so both sensors honor the same override.
+#   3. A stale-input sensor and two watchdogs. evcc keeps the last value of an
+#      unavailable meter, and nothing stops a car if evcc itself stops.
+#   4. A Tesla amp restore at unplug. The Tesla keeps the last current evcc set, so a
+#      later manual charge would otherwise start at that current, possibly 6 A.
 
 input_select:
   twc3_vehicle_override:
     name: Wall Connector vehicle
+    # "auto" lets both status sensors work normally. Choosing a car forces the other
+    # car's status to "a". The adapter treats "auto" and "rivian" as no override.
     options:
       - auto
       - tesla
       - rivian
     initial: auto
     icon: mdi:ev-station
+
+input_number:
+  tesla_normal_charge_amps:
+    name: Tesla normal charging amps
+    # Restored when the Tesla unplugs at home. "initial" resets it at every HA restart,
+    # so change the value here; a change in the UI lasts until the next restart.
+    min: 6
+    max: 48
+    step: 1
+    initial: 32
+    unit_of_measurement: A
+    mode: box
+    icon: mdi:current-ac
 
 template:
   - sensor:
@@ -38,19 +61,6 @@ template:
           {%- set charging = states('<sensor.tesla_charging>') in ['starting', 'charging'] -%}
           {{ 'a' if override == 'rivian' or not (home and plugged and twc)
              else ('c' if charging else 'b') }}
-
-      - name: evcc_rivian_status
-        unique_id: evcc_rivian_status
-        # Rivian entities from home-assistant-rivian 2.x; check names on the device page.
-        state: >
-          {%- set override = states('input_select.twc3_vehicle_override') -%}
-          {%- set home = is_state('device_tracker.r1s_location', 'home') -%}
-          {%- set plugged = is_state('binary_sensor.r1s_charger_connection', 'on') -%}
-          {%- set twc = is_state('binary_sensor.tesla_wall_connector_vehicle_connected', 'on') -%}
-          {%- set active = states('<sensor.r1s_charger_state>') in
-             ['charging_active', 'charging_connecting', 'smart_charging_active'] -%}
-          {{ 'a' if override == 'tesla' or not (home and plugged and twc)
-             else ('c' if active else 'b') }}
 
   - binary_sensor:
       - name: ev_solar_inputs_stale
@@ -82,6 +92,8 @@ automation:
         entity_id: <select.evcc_lp1_mode>
         state: smart
     actions:
+      # evcc then stops whichever car it has identified; for the Rivian the adapter
+      # parks its charging window.
       - action: select.select_option
         target:
           entity_id: <select.evcc_lp1_mode>
@@ -94,27 +106,66 @@ automation:
             Site power readings are stale, so evcc was switched off. Check the Sol-Ark
             feed, then set the evcc mode back to smart by hand.
 
-  - alias: EV solar watchdog - evcc unavailable stops the Tesla
+  - alias: EV solar watchdog - evcc unavailable stops both cars
     id: ev_solar_watchdog_evcc_down
     mode: single
-    # Only the Tesla can be stopped directly. The Rivian charge adapter (roadmap phase 4A)
-    # must release its own lease when evcc stops renewing it.
     triggers:
       - trigger: state
         entity_id: <select.evcc_lp1_mode>
         to: unavailable
         for: "00:05:00"
-    conditions:
-      - condition: state
-        entity_id: sensor.evcc_tesla_status
-        state: c
     actions:
-      - action: switch.turn_off
-        target:
-          entity_id: <switch.tesla_charge>
+      - if:
+          - condition: state
+            entity_id: sensor.evcc_tesla_status
+            state: c
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: <switch.tesla_charge>
+      # Belt and braces: the adapter already stops renewing its lease while its evcc
+      # liveness entity is unavailable, so the lease lapses on its own. Turning the switch
+      # off parks the window now instead. Only turn it off while it is on: an "off"
+      # command to an idle adapter while the car is plugged in at home would take
+      # ownership of the schedule just to park it.
+      - if:
+          - condition: state
+            entity_id: switch.r1s_solar_adapter_solar_charging
+            state: "on"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.r1s_solar_adapter_solar_charging
       - action: persistent_notification.create
         data:
           title: evcc unavailable
           message: >
-            evcc has been unavailable for 5 minutes, so Tesla charging at the Wall
-            Connector was stopped. Restart the evcc add-on, then resume from evcc.
+            evcc has been unavailable for 5 minutes. A Tesla charging at the Wall
+            Connector was stopped, and the Rivian charge adapter's Solar charging switch,
+            if on, was turned off. Restart the evcc add-on, then resume from evcc.
+
+  - alias: Tesla - restore normal charging amps at unplug
+    id: tesla_restore_normal_charge_amps
+    mode: single
+    # evcc leaves the Tesla at the last current it set. Restore the normal value when the
+    # Tesla unplugs at home, so a later manual or app start does not begin at 6 A.
+    triggers:
+      - trigger: state
+        entity_id: <binary_sensor.tesla_charge_cable>
+        from: "on"
+        to: "off"
+    conditions:
+      - condition: state
+        entity_id: <device_tracker.tesla_location>
+        state: home
+      # Skip the command (and a possible wake) when the value is already right.
+      - condition: template
+        value_template: >
+          {{ states('<number.tesla_charge_current>') | int(0)
+             != states('input_number.tesla_normal_charge_amps') | int(32) }}
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: <number.tesla_charge_current>
+        data:
+          value: "{{ states('input_number.tesla_normal_charge_amps') | int(32) }}"

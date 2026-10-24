@@ -119,7 +119,7 @@ The adapter is also the safest tool for the [attended Gen 2 trial](ROADMAP.md#ph
 
 | Test | Steps with the adapter | Pass condition |
 | --- | --- | --- |
-| Inventory | Press **Read schedules**. | Note the count and fields. Any count is restored exactly. |
+| Inventory | Press **Read schedules**. | Note the count and fields. Rivian can return entries that it then refuses to accept back as one list ([upstream PR #308](https://github.com/bretterer/home-assistant-rivian/pull/308)), so T1 restores your actual list before any charging test. |
 | T1 Write and readback (no charging possible) | The adapter only acts while the car is plugged in at home. First set the Rivian's charge limit at or below its current SoC so no session can start. Set current 16, turn **Solar charging** on, then off, then press **Restore owner schedule**. | `control_state` goes `lease_active` → `paused` → `handed_back` with no fault. The Rivian app shows each change, and its displayed times match Home Assistant's local time. **Read schedules** shows the original list. Restore the charge limit afterwards. |
 | T2 Amps mid-session | While charging under a lease: 16 → 10 A, then 10 → 18 A. Because of the 2 A margin, an 18 A request yields a 16 A lease. | Wall Connector current follows each step. Record latency. |
 | T2b Continuity | Keep charging through at least two renewals (about every 12 minutes) and two current changes. | The Wall Connector contactor stays closed and the current never drops to 0 during a rewrite |

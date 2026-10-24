@@ -58,7 +58,7 @@ flowchart LR
 | Layer | Choice | Reason | Held in reserve |
 | --- | --- | --- | --- |
 | Policy engine | evcc add-on (0.316+ "smart" mode) with `ha-evcc` | Mature solar loop, battery buffer, per-vehicle settings, plans, UI; sponsor-free for this setup | [`flashg1/SolarCharger`](https://github.com/flashg1/SolarCharger) (HA-native, supports generic HA chargers) |
-| Site meters | evcc `homeassistant` meter template over the existing Sol-Ark HA entities | HA already has the data. A leading `-` inverts the battery sign. evcc has no Sol-Ark template; its single/split-phase Deye/Sunsynk [`deye-storage`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/templates/definition/meter/deye-storage.yaml) Modbus template probably matches the Deye-based Sol-Ark, but needs direct RS485 or TCP access (low: inference). | Direct Modbus (`deye-storage`) only if HA latency proves inadequate |
+| Site meters | evcc `homeassistant` meter template over the existing Sol-Ark HA entities | HA already has the data. A leading `-` inverts the battery sign. evcc has no Sol-Ark template. Its non-three-phase Deye/Sunsynk hybrid template [`deye-storage`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/templates/definition/meter/deye-storage.yaml) probably matches the Deye-based Sol-Ark, but it needs direct RS485 or TCP Modbus access (low: inference; see the [survey](ECOSYSTEM_SURVEY.md#energy-site)). | Direct Modbus (`deye-storage`) only if HA latency proves inadequate |
 | Charger telemetry | evcc `twc3` charger polling the TWC3 locally | Independent of the HA `tesla_wall_connector` integration, which showed timeouts and stale values | HA sensors remain for dashboards and diagnosis |
 | Solar forecast | evcc `homeassistant` solar tariff, which reads the HA Energy-dashboard forecast (Solcast) | No extra Solcast API calls. Display-only by default. Only the sponsor-only, experimental optimizer consumes it. Its docs call it advisory, but 0.318.0 code adds an opt-in automatic level that can start and stop Smart-mode loadpoints ([`core/site.go#L1157-L1165`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/core/site.go#L1157-L1165), [`core/loadpoint_optimizer.go#L74-L100`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/core/loadpoint_optimizer.go#L74-L100)). | evcc optimizer later, if wanted |
 | Tesla actuation | HA core **Teslemetry** with the Bluetooth vehicle sub-entry, via an ESPHome Bluetooth proxy | Local commands at no per-command cost, per-command cloud fallback, streamed charge data | `esphome-tesla-ble` or `tesla_fleet`; evcc `tesla-ble` with TeslaBleHttpProxy |
@@ -118,7 +118,7 @@ flowchart LR
 | `switch.r1s_solar_adapter_solar_charging` | `start_charging` | **On:** take ownership and write a charging **lease** covering now at the requested amperage; renew it while on. Taking ownership first snapshots the owner's **complete** schedule list. **Off:** write a **parked window** that ended a few minutes ago, so the car waits. Off does not release ownership. A repeated on or off is recorded once and causes no extra write. |
 | `number.r1s_solar_adapter_solar_current` | `setMaxCurrent` | Accepts 0–80; applied as an even 8–48 A, rounded down. Decreases apply at the next allowed write. An increase applies only when the request minus 2 A rounds to a higher even step, at most every 120 s, which absorbs evcc's +2 A measured-current allowance. A current command counts as "charging requested" unless evcc explicitly turned charging off. |
 | `sensor.r1s_solar_adapter_evcc_status` | `status` | `a` unless the car is eligible and the optional override entity does not name the other car; then `c` when the charger state is active, else `b`. |
-| `sensor.r1s_solar_adapter_control_state` | — | `idle`, `waiting_for_vehicle`, `lease_active`, `lease_lapsed`, `paused`, `writing`, `fault` or `dry_run`, with diagnostic attributes. |
+| `sensor.r1s_solar_adapter_control_state` | — | `idle`, `waiting_for_vehicle`, `handed_back`, `lease_active`, `lease_lapsed`, `paused`, `writing`, `fault` or `dry_run`, with diagnostic attributes. |
 | Release | — | Restore the owner's snapshotted list exactly, but only if the provider still holds the adapter's last verified write; otherwise fault and write nothing. Triggers: 60 s of continuous known unplug, including the Wall Connector reporting no vehicle (the window is parked at once), 10 minutes of continuous known away while plugged in, the **Restore owner schedule** button or `release` service, or disabling or removing the integration. A manual release also hands control back to the owner until the next unplug, and evcc commands are ignored until then. |
 
 Every write is preceded by a fresh read, and counts only when a later read shows it. Schedule writes are at least 30 s apart; start and pause transitions are at least 5 s apart. An edit the adapter did not make is never overwritten: it faults, posts a notification, and writes nothing until the owner clears the fault. The [adapter guide](RIVIAN_CHARGE_ADAPTER.md) has the full behavior, options and fault codes.
@@ -180,21 +180,21 @@ The EVSE swap is the single biggest lever toward "flawless for both". The softwa
 2. **Accepted is not physical.** Judge results by TWC3 measurements, never by a command response.
 3. **The vehicle charge limit is the final backstop** for both cars.
 4. **Persist ownership before side effects** (Rivian adapter). Never overwrite a schedule edit the adapter did not make.
-5. **A watchdog covers evcc's gaps**: stale site meters, evcc unavailable, Rivian lease renewal failures.
+5. **Watchdogs cover evcc's gaps**: stale site meters and evcc unavailable. The adapter also stops renewing on its own when its evcc liveness entity is unavailable, and it posts a notification for every fault.
 
 | Failure | Tesla | Rivian (lease adapter, if the trial passes) | With OpenEVSE |
 | --- | --- | --- | --- |
-| evcc stops | Charges at last current to its limit unless the watchdog stops it | Lease lapses within 15 minutes; the car stops if T4 passes | EVSE holds its last claim; the watchdog can pause it locally |
-| HA host down | Same as evcc (the add-on runs on HA) | Lease lapses | EVSE keeps its last state; OpenEVSE's own solar divert is a possible local fallback |
-| Internet down | Bluetooth commands still work; no cloud fallback | Writes fail; the lease lapses | Unaffected |
-| Rivian cloud or rate limit | n/a | Adapter faults; the lease lapses | Unaffected for control |
+| evcc stops | Charges at last current to its limit unless the watchdog stops it | Renewal stops once the evcc liveness entity is unavailable, and the lease lapses within 25 minutes of the last write (20-minute lease plus the 5-minute clock margin). The car stops if T4 passes. After 5 minutes the glue watchdog also turns the adapter's switch off, which parks the window if Rivian's cloud is reachable. | EVSE holds its last claim; the watchdog can pause it locally |
+| HA host down | Same as evcc (the add-on runs on HA) | Nothing renews; the lease lapses within 25 minutes | EVSE keeps its last state; OpenEVSE's own solar divert is a possible local fallback |
+| Internet down | Bluetooth commands keep working only while the Teslemetry entry is already loaded and the charge entities are streaming. Polling entities go unavailable, and HA skips unavailable entities in a service call, so evcc's command would do nothing. After an HA restart during an outage Teslemetry cannot load ([`entity.py#L70-L74`](https://github.com/home-assistant/core/blob/3902d41667731e9a2cb911d73b023b859ba5b299/homeassistant/components/teslemetry/entity.py#L70-L74), [`__init__.py#L177-L196`](https://github.com/home-assistant/core/blob/3902d41667731e9a2cb911d73b023b859ba5b299/homeassistant/components/teslemetry/__init__.py#L177-L196)). Verify this during commissioning. | Writes fail and the adapter backs off; the lease lapses | Unaffected |
+| Rivian cloud or rate limit | n/a | A rate limit pauses writes for 5 minutes; other errors back off from 15 s to 15 minutes. The lease lapses meanwhile. An expired login starts HA's re-authentication. | Unaffected for control |
 
 ## Alternatives considered
 
 | Alternative | Verdict |
 | --- | --- |
 | Continue the prototype's custom engine as the policy layer | **Rejected.** It duplicates evcc's surplus/battery/hysteresis/plans/UI and leaves this project maintaining a control loop. Its Rivian safety discipline is ported into the adapter. |
-| [`flashg1/SolarCharger`](https://github.com/flashg1/SolarCharger) (HA integration, 0.13.4) | **Reserve.** HA-native, actively developed, has a `user_custom` charger for generic HA entities. Single maintainer, "work in progress", and a single net-power feedback loop with simpler battery handling than evcc. |
+| [`flashg1/SolarCharger`](https://github.com/flashg1/SolarCharger) (HA integration; manifest 0.13.4, latest tag v0.13.3) | **Reserve.** HA-native, actively developed, has a `user_custom` charger for generic HA entities. Single maintainer, "work in progress", and a single net-power feedback loop with simpler battery handling than evcc. |
 | [TeslaSolarCharger](https://github.com/pkuehnel/TeslaSolarCharger) | **Rejected.** Proprietary licence with paid activation. Controls non-Tesla cars only through an OCPP charger, so it cannot drive the Rivian on the TWC3. |
 | [`rchav/rivian_solar_charge_ha`](https://github.com/rchav/rivian_solar_charge_ha) | **Ideas only.** Rivian-only. Replaces the whole schedule list with no restore. Its all-day charging window fails open. |
 | TWC3 meter emulation | **Not recommended** for this US single-phase site (see the table above). |
@@ -207,10 +207,10 @@ The EVSE swap is the single biggest lever toward "flawless for both". The softwa
   - **evcc** now owns the solar policy and primary charging UI.
   - **This project** owns the Rivian adapter, the HA glue configuration, and commissioning evidence.
   - **HA** still owns the automation surface and data, through `ha-evcc`.
-- **Relaxed:** brief decision 4, "standalone CLI first". When the car has **exactly one** schedule, the attended Rivian trial can run through upstream 2.x entities in HA Developer Tools. The CLI harness remains the fallback for multiple schedules, or if the HA path is blocked.
+- **Relaxed:** brief decision 4, "standalone CLI first". The attended Rivian trial runs through the adapter itself. Like the planned CLI, it authenticates to Rivian independently. It also journals every step and snapshots the complete schedule list before its first write. The CLI harness remains the fallback if the adapter path is blocked.
 - **Unchanged:**
   - decision 1: HA owns automation;
-  - the no-private-`hass.data` rule: the adapter consumes only public HA entities and services;
+  - the rule against copying another integration's tokens or depending on its private `hass.data`: the adapter reads only public HA entities and holds its own Rivian session;
   - decision 5: Gen 2 physical behavior is unproven, and a schedule window is not a guaranteed stop until measured.
 
 ## Open questions for the owner
@@ -218,7 +218,7 @@ The EVSE swap is the single biggest lever toward "flawless for both". The softwa
 1. **Hardware.** If the Rivian trial disappoints, is a roughly $600–700 EVSE swap (plus electrician) acceptable? Or should the Rivian stay on manual and schedule-only charging?
 2. **Tesla.** What model and year is the Tesla (BLE phone-key support)? How far is its parking spot from the HA host? Can an ESPHome Bluetooth proxy go in the garage?
 3. **`tesla_custom` proxy.** Does `tesla_custom` currently send commands through the unmaintained Tesla HTTP Proxy add-on?
-4. **Rivian schedules.** How many charging schedules does the R1S have today, and what are they (off-peak window, location)?
-5. **Rivian adapter.** Which NACS-to-J1772 adapter does the Rivian use on the TWC3? Does the TWC3 report it as connected?
+4. **Rivian schedules.** How many charging schedules does the R1S have today, and what are they (off-peak window, location)? The adapter's **Read schedules** button lists them without coordinates, including any inactive entries.
+5. **Rivian plug adapter.** Which NACS-to-J1772 adapter does the Rivian use on the TWC3? Does the TWC3 report it as connected?
 6. **Tariff.** Is there a time-of-use tariff? evcc plans and night charging use it.
 7. **Export limits.** Does the Sol-Ark ever curtail PV through an export limit? evcc only sees surplus that appears as export or battery charging.
