@@ -29,13 +29,16 @@ async def async_setup_entry(
 
 
 class ReleaseButton(RivianSolarAdapterEntity, ButtonEntity):
-    """Restore the owner's schedule now."""
+    """Restore the owner's schedule and hand control back until the next unplug."""
 
     def __init__(self, runtime: AdapterRuntime) -> None:
         super().__init__(runtime, "release")
 
     async def async_press(self) -> None:
-        """Ask the next tick to restore the owner's schedule."""
+        """Ask the next tick to restore the owner's schedule.
+
+        During a fault the release is recorded and runs once the fault clears.
+        """
         await self.runtime.async_request_release("manual")
 
 

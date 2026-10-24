@@ -32,18 +32,22 @@
       },
       "entities": {
         "title": "Vehicle entities",
-        "description": "Choose the Home Assistant entities that tell the adapter whether the vehicle is plugged in at home. Schedule writes stay off (dry run) until you turn dry run off in the options.",
+        "description": "Choose the Home Assistant entities that tell the adapter whether the vehicle is plugged in at home. Dry run stays on, so nothing is written to the vehicle's charging schedule, until you turn it off in the options.",
         "data": {
           "plugged_entity": "Charger connected",
           "location_entity": "Vehicle location",
           "charger_state_entity": "Charger state",
-          "wall_connector_entity": "Wall Connector vehicle connected"
+          "wall_connector_entity": "Wall Connector vehicle connected",
+          "evcc_liveness_entity": "evcc liveness",
+          "vehicle_override_entity": "Wall Connector vehicle override"
         },
         "data_description": {
-          "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle.",
-          "location_entity": "Device tracker or person whose state is home while the vehicle is at home.",
+          "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle. Unknown or unavailable is never treated as unplugged or plugged in.",
+          "location_entity": "The vehicle's device tracker; its state is home while the vehicle is at home. A person entity cannot be used: a person can be home without the car.",
           "charger_state_entity": "Optional. Rivian charger state sensor; charging_active, charging_connecting and smart_charging_active count as charging.",
-          "wall_connector_entity": "Optional. Wall Connector binary sensor that is on while a vehicle is connected. The evcc status is a unless it is on."
+          "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the evcc status a; unknown is ignored. It does not tell which vehicle is connected.",
+          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, ideally from the ha-evcc integration (for example the loadpoint mode select). While it is unknown or unavailable, the adapter stops renewing the charging window, so charging stops when it ends.",
+          "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector, such as auto, tesla or rivian. While its state is anything other than auto or rivian, the evcc status is a."
         }
       }
     },
@@ -56,6 +60,7 @@
     },
     "abort": {
       "already_configured": "This vehicle already has a solar adapter.",
+      "already_in_progress": "A solar adapter for this vehicle is already being set up.",
       "no_vehicles": "No vehicles were found in this Rivian account.",
       "reauth_successful": "Reauthentication was successful.",
       "wrong_account": "This Rivian account does not have the adapter's vehicle. Sign in with the account used to set it up."
@@ -65,12 +70,14 @@
     "step": {
       "init": {
         "title": "Solar adapter options",
-        "description": "Turn dry run off only when you are ready for the adapter to write the vehicle's charging schedule.",
+        "description": "Turn dry run off only when you are ready for the adapter to write the vehicle's charging schedule. While dry run is on, nothing is written, except that the owner's schedules are restored if the adapter still controls them.",
         "data": {
           "plugged_entity": "Charger connected",
           "location_entity": "Vehicle location",
           "charger_state_entity": "Charger state",
           "wall_connector_entity": "Wall Connector vehicle connected",
+          "evcc_liveness_entity": "evcc liveness",
+          "vehicle_override_entity": "Wall Connector vehicle override",
           "lease_minutes": "Lease length",
           "renew_before_minutes": "Renew before expiry",
           "clock_skew_minutes": "Vehicle clock tolerance",
@@ -80,17 +87,19 @@
           "dry_run": "Dry run"
         },
         "data_description": {
-          "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle.",
-          "location_entity": "Device tracker or person whose state is home while the vehicle is at home.",
+          "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle. Unknown or unavailable is never treated as unplugged or plugged in.",
+          "location_entity": "The vehicle's device tracker; its state is home while the vehicle is at home. A person entity cannot be used: a person can be home without the car.",
           "charger_state_entity": "Optional. Rivian charger state sensor; charging_active, charging_connecting and smart_charging_active count as charging.",
-          "wall_connector_entity": "Optional. Wall Connector binary sensor that is on while a vehicle is connected.",
+          "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the evcc status a; unknown is ignored. It does not tell which vehicle is connected.",
+          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, ideally from the ha-evcc integration (for example the loadpoint mode select). While it is unknown or unavailable, the adapter stops renewing the charging window, so charging stops when it ends.",
+          "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector, such as auto, tesla or rivian. While its state is anything other than auto or rivian, the evcc status is a.",
           "lease_minutes": "How far ahead each charging window reaches. If renewals stop, charging stops when it ends.",
           "renew_before_minutes": "Renew an active lease this long before it ends. Must be shorter than the lease.",
-          "clock_skew_minutes": "Each window starts this much before now, in case the vehicle's clock runs behind.",
-          "min_write_interval_s": "Schedule writes are at least this far apart.",
+          "clock_skew_minutes": "Each window starts this much before now and ends this much after the lease, in case the vehicle's clock differs from Home Assistant's.",
+          "min_write_interval_s": "Schedule writes are at least this far apart; starting and pausing only wait 5 seconds.",
           "increase_interval_s": "A higher current is written at most this often; lower currents are written right away.",
-          "release_delay_s": "How long the vehicle must be unplugged or away before the owner's schedule is restored.",
-          "dry_run": "Compute what would be written without writing anything to Rivian."
+          "release_delay_s": "How long the vehicle must be unplugged before the owner's schedules are restored.",
+          "dry_run": "Compute what would be written without writing it. Nothing is written to Rivian, except that the owner's schedules are restored if the adapter still controls them."
         }
       }
     },
@@ -121,6 +130,7 @@
         "state": {
           "idle": "Idle",
           "waiting_for_vehicle": "Waiting for vehicle",
+          "handed_back": "Handed back",
           "lease_active": "Lease active",
           "lease_lapsed": "Lease lapsed",
           "paused": "Paused",
@@ -154,8 +164,11 @@
     "journal_unreadable": {
       "message": "The adapter's ownership journal at {path} could not be read ({error}). It was left unchanged because it may hold the owner's original charging schedules. Check the schedules in the Rivian app, then repair or remove the file."
     },
-    "journal_corrupt": {
-      "message": "The adapter's ownership journal could not be parsed, so Home Assistant moved it to {path} and started without it. It may hold the owner's original charging schedules. Check the schedules in the Rivian app and restore them if needed, then delete the moved file to start the adapter again."
+    "legacy_journal": {
+      "message": "An ownership journal from an earlier version of the adapter was found at {path}. It may hold the owner's original charging schedules. Check the schedules in the Rivian app and restore them if needed, then delete the file to start the adapter."
+    },
+    "journal_save_failed": {
+      "message": "The adapter could not save its ownership journal at {path}, so the request was not accepted and nothing was sent to Rivian. Check the disk space and permissions of the configuration directory."
     },
     "entry_not_found": {
       "message": "No Rivian solar adapter has the config entry ID {entry_id}."
@@ -164,10 +177,19 @@
       "message": "The Rivian solar adapter {title} is not loaded."
     },
     "clear_fault_refused": {
-      "message": "The fault was not cleared: Rivian holds a charging schedule this adapter did not write. Check the Rivian app, then restore the schedule by hand or use abandon ownership."
+      "message": "The fault was not cleared: Rivian holds a charging schedule this adapter did not write. Check the Rivian app; then restore the owner's schedule there and clear the fault, use force restore to write the saved schedules, or use abandon ownership."
     },
-    "release_blocked_by_fault": {
-      "message": "The adapter is in a fault and writes nothing until it is cleared. Clear the fault first; if that is refused, restore the schedule in the Rivian app and use abandon ownership."
+    "abandon_not_faulted": {
+      "message": "Abandon ownership is only available while the adapter is in a fault. To give the vehicle back to its owner's schedules, use Restore owner schedule (release)."
+    },
+    "force_restore_not_faulted": {
+      "message": "Force restore is only available while the adapter is in a fault. To give the vehicle back to its owner's schedules, use Restore owner schedule (release)."
+    },
+    "force_restore_no_snapshot": {
+      "message": "Force restore needs a saved copy of the owner's charging schedules, and the adapter has none."
+    },
+    "force_restore_unverified": {
+      "message": "The owner's charging schedules were sent to Rivian, but reading them back did not show them. Check the Rivian app; the adapter stays in a fault."
     },
     "reauth_required": {
       "message": "Rivian rejected the session. Sign in again from the integration's repair notice."
@@ -182,7 +204,7 @@
   "services": {
     "release": {
       "name": "Restore owner schedule",
-      "description": "Restores the owner's original charging schedules and gives up control of the vehicle.",
+      "description": "Restores the owner's original charging schedules and hands control back to the owner until the vehicle is unplugged; evcc's requests are ignored meanwhile. During a fault, the release runs once the fault is cleared.",
       "fields": {
         "config_entry_id": {
           "name": "Adapter",
@@ -192,7 +214,7 @@
     },
     "clear_fault": {
       "name": "Clear fault",
-      "description": "Resumes after a fault when Rivian holds a charging schedule the adapter knows.",
+      "description": "Resumes after a fault when Rivian holds a charging schedule the adapter knows: its own window or the owner's schedules.",
       "fields": {
         "config_entry_id": {
           "name": "Adapter",
@@ -202,7 +224,17 @@
     },
     "abandon_ownership": {
       "name": "Abandon ownership",
-      "description": "Forgets the adapter's ownership and the saved original schedules without writing anything to Rivian. Use it only after restoring the schedules by hand.",
+      "description": "Only while the adapter is in a fault: stops controlling the vehicle without writing anything to Rivian. The saved owner schedules are archived, not deleted, and listed in a notification.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Adapter",
+          "description": "The solar adapter to act on."
+        }
+      }
+    },
+    "force_restore": {
+      "name": "Force restore",
+      "description": "Only while the adapter is in a fault: writes the saved owner schedules to Rivian, overwriting whatever Rivian holds now, and checks them by reading them back.",
       "fields": {
         "config_entry_id": {
           "name": "Adapter",
@@ -219,6 +251,16 @@
           "description": "The solar adapter to act on."
         }
       }
+    }
+  },
+  "issues": {
+    "missing_plugged_entity": {
+      "title": "Solar adapter plug entity is missing",
+      "description": "The solar adapter for {title} uses {entity_id} to know whether the vehicle is plugged in, but that entity does not exist. Until it does, the adapter treats the plug state as unknown: evcc sees the vehicle as not connected and the owner's schedules are not restored on unplug. Map an existing entity in the adapter's options, or restore the entity."
+    },
+    "missing_location_entity": {
+      "title": "Solar adapter location entity is missing",
+      "description": "The solar adapter for {title} uses {entity_id} to know whether the vehicle is at home, but that entity does not exist. Until it does, the adapter treats the location as unknown: evcc sees the vehicle as not connected and the owner's schedules are not restored when the vehicle leaves. Map an existing entity in the adapter's options, or restore the entity."
     }
   }
 }

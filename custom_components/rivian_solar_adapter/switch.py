@@ -52,7 +52,7 @@ class SolarChargingSwitch(RivianSolarAdapterEntity, SwitchEntity):
 class LeaseRenewalSwitch(RivianSolarAdapterEntity, SwitchEntity):
     """Lease renewal; turn off only for the attended lease-expiry trial.
 
-    It is not persisted and is on again after every restart.
+    The setting is kept in the journal, so it survives restarts.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -67,8 +67,8 @@ class LeaseRenewalSwitch(RivianSolarAdapterEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Renew the lease."""
-        self.runtime.async_set_renewal(True)
+        await self.runtime.async_set_renewal(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Let the lease lapse."""
-        self.runtime.async_set_renewal(False)
+        await self.runtime.async_set_renewal(False)

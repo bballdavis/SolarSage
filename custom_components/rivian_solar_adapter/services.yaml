@@ -22,6 +22,14 @@ abandon_ownership:
         config_entry:
           integration: rivian_solar_adapter
 
+force_restore:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: rivian_solar_adapter
+
 read_schedules:
   fields:
     config_entry_id:

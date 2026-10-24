@@ -11,13 +11,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Generator
 from copy import deepcopy
+from datetime import timedelta
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from aiohttp import ContentTypeError, RequestInfo
 from homeassistant.core import HomeAssistant
+from multidict import CIMultiDict, CIMultiDictProxy
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from rivian.exceptions import RivianInvalidOTP
+from yarl import URL
 
 from custom_components.rivian_solar_adapter.const import (
     CONF_ACCESS_TOKEN,
@@ -31,6 +37,7 @@ from custom_components.rivian_solar_adapter.const import (
     CONF_VEHICLE_ID,
     DEFAULT_OPTIONS,
     DOMAIN,
+    journal_key,
 )
 
 # Test data only: no real account, vehicle, token or location.
@@ -54,6 +61,8 @@ PLUGGED_ENTITY = "binary_sensor.test_r1s_charger_connection"
 LOCATION_ENTITY = "device_tracker.test_r1s_location"
 CHARGER_STATE_ENTITY = "sensor.test_r1s_charger_state"
 WALL_CONNECTOR_ENTITY = "binary_sensor.test_wall_connector_vehicle_connected"
+LIVENESS_ENTITY = "select.test_evcc_loadpoint_mode"
+OVERRIDE_ENTITY = "input_select.test_wall_connector_vehicle"
 
 # The pytest Home Assistant instance is at a fictional test location
 # (32.87336, -117.22743); the owner's home schedule is near it, a second one
@@ -77,6 +86,13 @@ OWNER_SCHEDULES: list[dict[str, Any]] = [
     },
 ]
 COORDINATE_FRAGMENTS = ("32.87", "-117.22", "33.5", "-116.5")
+
+
+def content_type_error() -> ContentTypeError:
+    """What aiohttp raises when Rivian answers with an HTML error page."""
+    url = URL("https://rivian.invalid/graphql")
+    info = RequestInfo(url, "POST", CIMultiDictProxy(CIMultiDict()), url)
+    return ContentTypeError(info, (), status=502, message="Attempt to decode JSON with text/html")
 
 
 class FakeResponse:
@@ -209,6 +225,46 @@ def make_entry(**option_overrides: Any) -> MockConfigEntry:
         data={CONF_EMAIL: EMAIL, CONF_VEHICLE_ID: VEHICLE_ID, **TOKENS},
         options=entry_options(**option_overrides),
     )
+
+
+@pytest.fixture
+def hass_config_dir(hass_tmp_config_dir: str) -> str:
+    """Give each Home Assistant test its own configuration directory.
+
+    The adapter writes its journal straight to ``.storage``, not through the
+    storage mock, so each test needs an empty directory.
+    """
+    return hass_tmp_config_dir
+
+
+@pytest.fixture
+def fast_restore() -> Generator[None]:
+    """Do not wait for a restore to settle when disabling or removing."""
+    with patch(
+        "custom_components.rivian_solar_adapter.RESTORE_SETTLE_WAIT", new=timedelta(0)
+    ):
+        yield
+
+
+def journal_path(hass: HomeAssistant) -> Path:
+    """Where the test vehicle's journal is stored."""
+    return Path(hass.config.path(".storage", journal_key(VEHICLE_ID)))
+
+
+def read_journal(hass: HomeAssistant) -> dict[str, Any] | None:
+    """The test vehicle's journal as saved on disk, or None if there is none."""
+    path = journal_path(hass)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())["data"]
+
+
+def write_journal_file(hass: HomeAssistant, text: str, key: str | None = None) -> Path:
+    """Place a raw journal file, as a crash or an earlier version might leave it."""
+    path = Path(hass.config.path(".storage", key or journal_key(VEHICLE_ID)))
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(text)
+    return path
 
 
 @pytest.fixture

@@ -50,8 +50,10 @@ from .const import (
     CONF_DRY_RUN,
     CONF_EMAIL,
     CONF_LEASE_MINUTES,
+    CONF_LIVENESS_ENTITY,
     CONF_LOCATION_ENTITY,
     CONF_OTP,
+    CONF_OVERRIDE_ENTITY,
     CONF_PASSWORD,
     CONF_PLUGGED_ENTITY,
     CONF_REFRESH_TOKEN,
@@ -89,9 +91,13 @@ OTP_SCHEMA = vol.Schema(
 
 ENTITY_SELECTORS: dict[str, EntitySelector] = {
     CONF_PLUGGED_ENTITY: EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
-    CONF_LOCATION_ENTITY: EntitySelector(EntitySelectorConfig(domain=["device_tracker", "person"])),
+    # The vehicle's own tracker: a person is home without the car.
+    CONF_LOCATION_ENTITY: EntitySelector(EntitySelectorConfig(domain="device_tracker")),
     CONF_CHARGER_STATE_ENTITY: EntitySelector(EntitySelectorConfig(domain="sensor")),
     CONF_WALL_CONNECTOR_ENTITY: EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
+    # Any entity that is unavailable while evcc is down, such as an ha-evcc entity.
+    CONF_LIVENESS_ENTITY: EntitySelector(EntitySelectorConfig()),
+    CONF_OVERRIDE_ENTITY: EntitySelector(EntitySelectorConfig(domain=["input_select", "select"])),
 }
 REQUIRED_ENTITY_OPTIONS = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY)
 

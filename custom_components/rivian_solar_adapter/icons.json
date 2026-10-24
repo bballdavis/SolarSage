@@ -22,7 +22,8 @@
         "state": {
           "fault": "mdi:alert-circle-outline",
           "lease_active": "mdi:ev-station",
-          "paused": "mdi:pause-circle-outline"
+          "paused": "mdi:pause-circle-outline",
+          "handed_back": "mdi:account-arrow-left-outline"
         }
       },
       "evcc_status": {
@@ -54,6 +55,9 @@
     },
     "abandon_ownership": {
       "service": "mdi:link-variant-off"
+    },
+    "force_restore": {
+      "service": "mdi:backup-restore"
     },
     "read_schedules": {
       "service": "mdi:calendar-search"

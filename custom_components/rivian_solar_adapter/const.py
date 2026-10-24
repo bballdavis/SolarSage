@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 from typing import Any, Final
 
 from homeassistant.const import Platform
@@ -14,8 +15,10 @@ TICK_INTERVAL: Final = timedelta(seconds=15)
 # After Rivian reports the session as unauthenticated, provider-facing ticks are
 # retried this often until reauthentication reloads the entry.
 AUTH_RETRY_INTERVAL: Final = timedelta(minutes=5)
-# How long removing the integration may spend restoring the owner's schedule.
+# How long disabling or removing the integration may spend restoring the owner's schedule.
 REMOVE_RESTORE_TIMEOUT: Final = 60
+# How long a mapped plug or location entity may be missing before a repair issue.
+MISSING_ENTITY_GRACE: Final = timedelta(minutes=5)
 # How long unloading waits for a tick in flight before it is cancelled.
 STOP_TIMEOUT: Final = 10
 REQUEST_TIMEOUT: Final = 30
@@ -23,8 +26,18 @@ REQUEST_TIMEOUT: Final = 30
 STORAGE_VERSION: Final = 1
 
 
-def storage_key(entry_id: str) -> str:
-    """Return the storage key of an entry's ownership journal."""
+def journal_key(vehicle_id: str) -> str:
+    """Return the storage key of a vehicle's ownership journal.
+
+    The journal belongs to the vehicle, not to the config entry, so a removed
+    and re-added entry inherits an unfinished journal. The vehicle ID is
+    hashed so it does not appear in a file name.
+    """
+    return f"{DOMAIN}.{hashlib.sha256(vehicle_id.encode()).hexdigest()[:16]}"
+
+
+def legacy_storage_key(entry_id: str) -> str:
+    """Return the storage key journals had when they were keyed by config entry."""
     return f"{DOMAIN}.{entry_id}"
 
 
@@ -42,13 +55,21 @@ CONF_PLUGGED_ENTITY: Final = "plugged_entity"
 CONF_LOCATION_ENTITY: Final = "location_entity"
 CONF_CHARGER_STATE_ENTITY: Final = "charger_state_entity"
 CONF_WALL_CONNECTOR_ENTITY: Final = "wall_connector_entity"
+CONF_LIVENESS_ENTITY: Final = "evcc_liveness_entity"
+CONF_OVERRIDE_ENTITY: Final = "vehicle_override_entity"
 
 ENTITY_OPTIONS: Final = (
     CONF_PLUGGED_ENTITY,
     CONF_LOCATION_ENTITY,
     CONF_CHARGER_STATE_ENTITY,
     CONF_WALL_CONNECTOR_ENTITY,
+    CONF_LIVENESS_ENTITY,
+    CONF_OVERRIDE_ENTITY,
 )
+# Mapped entities whose absence is reported as a repair issue.
+MONITORED_ENTITY_OPTIONS: Final = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY)
+# Override entity states that leave the evcc status to the adapter.
+OVERRIDE_PASS_STATES: Final = frozenset({"auto", "rivian"})
 
 # Config entry options: tuning
 CONF_LEASE_MINUTES: Final = "lease_minutes"
@@ -80,6 +101,10 @@ OPTION_RANGES: Final[dict[str, tuple[int, int, str]]] = {
     CONF_RELEASE_DELAY: (0, 1800, "s"),
 }
 
+# Range of the current evcc may request; the controller applies even 8-48 A.
+REQUEST_MIN_AMPS: Final = 0
+REQUEST_MAX_AMPS: Final = 80
+
 # Rivian chargerState values that mean the vehicle is charging.
 ACTIVE_CHARGER_STATES: Final = frozenset(
     {"charging_active", "charging_connecting", "smart_charging_active"}
@@ -96,6 +121,7 @@ ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"
 SERVICE_RELEASE: Final = "release"
 SERVICE_CLEAR_FAULT: Final = "clear_fault"
 SERVICE_ABANDON_OWNERSHIP: Final = "abandon_ownership"
+SERVICE_FORCE_RESTORE: Final = "force_restore"
 SERVICE_READ_SCHEDULES: Final = "read_schedules"
 
 DEVICE_MANUFACTURER: Final = "HASS-Solar-Rivian"

@@ -39,12 +39,12 @@ class ControlStateSensor(RivianSolarAdapterEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """The control state."""
-        return self.runtime.controller.state(dt_util.now()).value
+        return self.runtime.controller.state(dt_util.utcnow()).value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Journal summary, errors and the last provider read; no coordinates."""
-        return self.runtime.attributes(dt_util.now())
+        return self.runtime.attributes(dt_util.utcnow())
 
 
 class EvccStatusSensor(RivianSolarAdapterEntity, SensorEntity):
@@ -58,5 +58,6 @@ class EvccStatusSensor(RivianSolarAdapterEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        """a unless plugged in at home, c while charging, else b."""
+        """a unless eligible (plugged in at home, at the Wall Connector if known)
+        or while the override names another vehicle; c while charging, else b."""
         return self.runtime.evcc_status
