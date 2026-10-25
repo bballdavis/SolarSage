@@ -8,3 +8,8 @@ tmp/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+tools/.env
+tools/out/
+tools/config.json
+tools/config.yaml
+tools/config.yml

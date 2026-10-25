@@ -1,0 +1,84 @@
+{
+  "_about": "Entity mapping for the tools, prefilled with the owner's entity ids. Copy to tools/config.json (git-ignored) and edit what differs; keys left out keep these values.",
+  "site": {
+    "pv_power": "sensor.sol_ark_inverter_pv_power",
+    "grid_power": "sensor.sol_ark_inverter_grid_power",
+    "battery_power": "sensor.sol_ark_inverter_battery_power",
+    "battery_soc": "sensor.sol_ark_inverter_battery_state_of_charge",
+    "battery_capacity": "sensor.sol_ark_battery_capacity_estimate",
+    "wall_power": "sensor.tesla_wall_connector_total_power",
+    "wall_current": "sensor.garage_tesla_wall_connector_vehicle_current",
+    "wall_connected": "binary_sensor.tesla_wall_connector_vehicle_connected",
+    "wall_contactor": "binary_sensor.tesla_wall_connector_contactor_closed",
+    "forecast_today": "sensor.solcast_pv_forecast_forecast_today",
+    "forecast_tomorrow": "sensor.solcast_pv_forecast_forecast_tomorrow",
+    "forecast_remaining_today": "sensor.solcast_pv_forecast_forecast_remaining_today",
+    "forecast_last_polled": "sensor.solcast_pv_forecast_api_last_polled",
+    "free_hours": "schedule.free_hours"
+  },
+  "units": {
+    "pv_power": "W",
+    "grid_power": "W",
+    "battery_power": "W",
+    "wall_power": "kW"
+  },
+  "cars": {
+    "tesla": {
+      "kind": "tesla",
+      "name": "Roxxo",
+      "soc": "sensor.roxxo_battery_level",
+      "limit": "number.roxxo_charge_limit",
+      "plugged": "binary_sensor.roxxo_charge_cable",
+      "location": "device_tracker.roxxo_location",
+      "switch": "switch.roxxo_charge",
+      "current": "number.roxxo_charge_current",
+      "charging_wanted": "binary_sensor.roxxo_planner_charging_wanted",
+      "legacy_switch": "switch.roxxo_charger",
+      "legacy_current": "number.roxxo_charging_amps"
+    },
+    "rivian": {
+      "kind": "rivian",
+      "name": "R1S",
+      "soc": "sensor.r1s_battery_state_of_charge",
+      "limit": "sensor.r1s_battery_state_of_charge_limit",
+      "plugged": "binary_sensor.r1s_charger_connection",
+      "location": "device_tracker.r1s_location",
+      "switch": "switch.r1s_solar_adapter_solar_charging",
+      "current": "number.r1s_solar_adapter_solar_current",
+      "control_state": "sensor.r1s_solar_adapter_control_state",
+      "charging_wanted": "binary_sensor.r1s_planner_charging_wanted",
+      "charger_status": "sensor.r1s_solar_adapter_charger_status",
+      "lease_renewal": "switch.r1s_solar_adapter_lease_renewal",
+      "restore_button": "button.r1s_solar_adapter_restore_owner_schedule",
+      "read_schedules_button": "button.r1s_solar_adapter_read_schedules"
+    }
+  },
+  "planner": {
+    "heartbeat": "sensor.solar_ev_planner_heartbeat",
+    "planning": "switch.solar_ev_planner_planning",
+    "shadow_mode": "switch.solar_ev_planner_shadow_mode",
+    "mode": "sensor.solar_ev_planner_mode",
+    "reason": "sensor.solar_ev_planner_reason",
+    "car_on_charger": "sensor.solar_ev_planner_car_on_charger"
+  },
+  "tariff": {
+    "price": 0.32,
+    "buyback": 0.0,
+    "free_hours_fallback": ["20:00", "06:00"]
+  },
+  "battery": {
+    "capacity_kwh": 31.0,
+    "max_charge_kw": 9.0,
+    "max_discharge_kw": 9.0,
+    "efficiency": 0.92,
+    "reserve_pct": 10.0,
+    "holds_in_free_hours": true
+  },
+  "settings": {},
+  "plans": {},
+  "freshness": {
+    "sol_ark_quiet_min": 15,
+    "forecast_poll_warn_h": 6,
+    "forecast_poll_fail_h": 24
+  }
+}

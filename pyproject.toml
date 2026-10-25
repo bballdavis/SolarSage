@@ -18,5 +18,5 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC"]
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
-known-first-party = ["custom_components"]
+known-first-party = ["custom_components", "tools"]
 combine-as-imports = true
