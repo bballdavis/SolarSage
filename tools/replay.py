@@ -156,17 +156,29 @@ def parse_settings(pairs: Sequence[str]) -> dict[str, Any]:
 
 
 def battery_step(
-    bat: Any, soc: float, pv: float, house: float, car: float, hold: bool, dt_h: float
+    bat: Any,
+    soc: float,
+    pv: float,
+    house: float,
+    car: float,
+    hold: bool,
+    dt_h: float,
+    refill: bool = False,
 ) -> tuple[float, float, float]:
     """One step of the Sol-Ark self-consumption model: (new soc %, battery kW + charging,
-    grid kW + import)."""
+    grid kW + import). ``hold``: no discharge; ``refill``: charges from the grid at its full
+    rate up to the refill level (free hours)."""
     e, eff = bat.kwh(soc), bat.efficiency
     e_min, e_max = bat.kwh(bat.reserve_pct), bat.capacity_kwh
     net = pv - house - car
-    if net >= 0:
+    room = max(0.0, (bat.kwh(bat.refill_to_pct) - e) / eff / dt_h) if refill else 0.0
+    if refill and room >= max(net, 0.0):
+        b = min(bat.max_charge_kw, room)
+        e += b * eff * dt_h
+    elif net >= 0:
         b = min(net, bat.max_charge_kw, max(0.0, (e_max - e) / eff / dt_h))
         e += b * eff * dt_h
-    elif hold:
+    elif hold or refill:
         b = 0.0
     else:
         b = -min(-net, bat.max_discharge_kw, max(0.0, (e - e_min) * eff / dt_h))
@@ -383,8 +395,9 @@ def _advance(
             gain = kw * dt_h * c.spec.charge_eff / c.spec.capacity_kwh * 100
             world.car_soc[c.car_id] = world.car_soc.get(c.car_id, c.soc_pct) + gain
     bat = snap.battery
-    hold = bat.holds_in_free_hours and snap.tariff.is_free(row.t)
-    soc, b, grid = battery_step(bat, world.soc, pv or 0.0, house or 0.0, car_kw, hold, dt_h)
+    free = snap.tariff.is_free(row.t)
+    hold, refill = free and bat.free_hours != "normal", free and bat.free_hours == "refill"
+    soc, b, grid = battery_step(bat, world.soc, pv or 0.0, house or 0.0, car_kw, hold, dt_h, refill)
     world.soc, world.battery_kw, world.grid_kw, world.car_kw = soc, b, grid, car_kw
     row.soc_whatif = _r(soc, 1)
     row.grid_whatif_kw = _r(grid)

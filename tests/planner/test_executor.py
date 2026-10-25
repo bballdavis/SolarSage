@@ -115,11 +115,11 @@ async def test_changes_wait_for_the_minimum_interval(
     first = coordinator.runtime["rivian"].commanded_a
     assert first is not None and first > 10
     fake_cars.clear()
-    # five minutes later Solcast's new poll says a dull afternoon and the battery is low:
-    # the plan wants much less, but the last change was five minutes ago (minimum 15
+    # five minutes later Solcast's new poll says a dull afternoon and the battery is under
+    # the floor: the plan wants much less, but the last change was five minutes ago (minimum 15
     # minutes between changes)
     freezer.tick(timedelta(minutes=5))
-    set_site(hass, soc=31, pv_w=1500, grid_w=0, battery_w=-1500, forecast_ratio=0.3)
+    set_site(hass, soc=25, pv_w=1500, grid_w=0, battery_w=-1500, forecast_ratio=0.3)
     await cycle(hass, coordinator, freezer, minutes=0)
     assert fake_cars.calls == []
     reason = hass.states.get("sensor.solar_ev_planner_reason").state
@@ -196,6 +196,7 @@ async def test_tesla_is_commanded_and_restored_at_unplug(
     site: HomeAssistant, fake_cars: FakeCars, freezer: FrozenDateTimeFactory
 ) -> None:
     hass = site
+    set_site(hass, soc=45)  # less spare battery than the Tesla's maximum would take
     set_rivian(hass, plugged="off")
     set_tesla(hass, plugged="on", charging=True, amps=48)
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA), fake_cars)

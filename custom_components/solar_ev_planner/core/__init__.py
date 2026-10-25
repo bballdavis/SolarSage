@@ -11,7 +11,8 @@ Stable API (everything else is internal):
         .state_dict() / .load_state(d)    # persist across restarts (JSON-safe)
 
     Inputs   Settings, Snapshot, BatterySpec, Measured, ForecastSlot, PvDay, CarSpec,
-             CarState, CarPlan, RepeatingPlan, RIVIAN_R1S, TESLA, CAUTION_LEVELS
+             CarState, CarPlan, RepeatingPlan, RIVIAN_R1S, TESLA, CAUTION_LEVELS,
+             FREE_REFILL, FREE_HOLD, FREE_NORMAL (BatterySpec.free_hours)
     Outputs  Decision, CarCommand, TrajectoryPoint, CarOutlook, PlannedChange
     Helpers  parse_detailed_forecast(*attrs)            Solcast detailedForecast -> slots
              Tariff, PriceWindow, WeeklySchedule        schedule helpers + prices -> $/kWh
@@ -32,6 +33,10 @@ from .solcast import forecast_energy, parse_detailed_forecast
 from .tariff import PriceWindow, Tariff, TariffLike, WeeklySchedule
 from .types import (
     CAUTION_LEVELS,
+    FREE_HOLD,
+    FREE_HOURS_BATTERY,
+    FREE_NORMAL,
+    FREE_REFILL,
     RIVIAN_R1S,
     TESLA,
     BatterySpec,
@@ -55,6 +60,10 @@ __version__ = "1.0.0"
 
 __all__ = [
     "CAUTION_LEVELS",
+    "FREE_HOLD",
+    "FREE_HOURS_BATTERY",
+    "FREE_NORMAL",
+    "FREE_REFILL",
     "RIVIAN_R1S",
     "TESLA",
     "BatterySpec",

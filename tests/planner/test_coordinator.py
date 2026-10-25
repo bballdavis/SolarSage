@@ -12,7 +12,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 import pytest
 
-from custom_components.solar_ev_planner.const import MODE_NO_DATA
+from custom_components.solar_ev_planner.const import (
+    CONF_BATTERY_FREE_HOURS,
+    DEFAULT_SITE_OPTIONS,
+    LEGACY_BATTERY_HOLDS,
+    MODE_NO_DATA,
+)
 from custom_components.solar_ev_planner.history import statistics_during_period
 
 from .conftest import (
@@ -184,3 +189,24 @@ async def test_new_day_records_yesterdays_solar(
     await cycle(hass, coordinator, freezer)
     assert [d.day for d in coordinator.pv_days] == [yesterday]
     assert coordinator.pv_days[0].forecast_kwh > 30
+
+
+@pytest.mark.parametrize(("holds", "mode"), [(True, "hold"), (False, "normal")])
+async def test_an_entry_from_1_1_keeps_its_battery_behaviour(
+    site: HomeAssistant, holds: bool, mode: str
+) -> None:
+    old = {k: v for k, v in OPTIONS.items() if k != CONF_BATTERY_FREE_HOURS}
+    entry = make_entry(RIVIAN, options=old | {LEGACY_BATTERY_HOLDS: holds}, minor_version=1)
+    coordinator = await setup_entry(site, entry)
+    assert (entry.version, entry.minor_version) == (1, 2)
+    assert LEGACY_BATTERY_HOLDS not in entry.options
+    assert entry.options[CONF_BATTERY_FREE_HOURS] == mode
+    assert coordinator.options[CONF_BATTERY_FREE_HOURS] == mode
+
+
+async def test_new_entries_refill_the_battery_in_free_hours(site: HomeAssistant) -> None:
+    assert DEFAULT_SITE_OPTIONS[CONF_BATTERY_FREE_HOURS] == "refill"
+    entry = make_entry(RIVIAN, options=dict(OPTIONS), minor_version=1)
+    await setup_entry(site, entry)
+    assert entry.minor_version == 2
+    assert entry.options[CONF_BATTERY_FREE_HOURS] == "refill"

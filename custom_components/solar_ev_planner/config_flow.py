@@ -40,10 +40,11 @@ from .const import (
     CAR_KINDS,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_CAPACITY_KWH,
-    CONF_BATTERY_HOLDS,
+    CONF_BATTERY_FREE_HOURS,
     CONF_BATTERY_MAX_CHARGE_KW,
     CONF_BATTERY_MAX_DISCHARGE_KW,
     CONF_BATTERY_POWER,
+    CONF_BATTERY_REFILL_TO_PCT,
     CONF_BATTERY_RESERVE_PCT,
     CONF_BATTERY_SOC,
     CONF_CAPACITY_KWH,
@@ -78,7 +79,9 @@ from .const import (
     CONF_WALL_POWER,
     DEFAULT_SITE_OPTIONS,
     DOMAIN,
+    ENTRY_MINOR_VERSION,
     ENTRY_TITLE,
+    ENTRY_VERSION,
     KIND_RIVIAN,
     KIND_TESLA,
     POWER_UNITS,
@@ -87,6 +90,7 @@ from .const import (
     invert_key,
     unit_key,
 )
+from .core import FREE_HOURS_BATTERY
 from .core.entities import CAR_ENTITIES, SITE_ENTITIES, TESLA_CUSTOM_ENTITIES
 
 
@@ -128,7 +132,17 @@ SITE_FIELDS: dict[str, tuple[bool, Any]] = {
     CONF_BATTERY_MAX_CHARGE_KW: (True, _number(0.5, 50, 0.1, "kW")),
     CONF_BATTERY_MAX_DISCHARGE_KW: (True, _number(0.5, 50, 0.1, "kW")),
     CONF_BATTERY_RESERVE_PCT: (True, _number(0, 50, 1, "%")),
-    CONF_BATTERY_HOLDS: (True, BooleanSelector()),
+    CONF_BATTERY_FREE_HOURS: (
+        True,
+        SelectSelector(
+            SelectSelectorConfig(
+                options=list(FREE_HOURS_BATTERY),
+                mode=SelectSelectorMode.LIST,
+                translation_key="battery_in_free_hours",
+            )
+        ),
+    ),
+    CONF_BATTERY_REFILL_TO_PCT: (True, _number(20, 100, 1, "%")),
 }
 # Step "charger": the Wall Connector (read only; it tells whether a vehicle is connected).
 CHARGER_FIELDS: dict[str, tuple[bool, Any]] = {
@@ -192,8 +206,8 @@ def _site_errors(options: Mapping[str, Any]) -> dict[str, str]:
 class SolarEvPlannerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Map the site; cars and price windows are added as subentries."""
 
-    VERSION = 1
-    MINOR_VERSION = 1
+    VERSION = ENTRY_VERSION
+    MINOR_VERSION = ENTRY_MINOR_VERSION
 
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}

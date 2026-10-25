@@ -232,7 +232,8 @@ class Timeline:
             "max_discharge_kw",
             "efficiency",
             "reserve_pct",
-            "holds_in_free_hours",
+            "free_hours",
+            "refill_to_pct",
         )
         return self.core.BatterySpec(**{k: m[k] for k in keys if k in m})
 

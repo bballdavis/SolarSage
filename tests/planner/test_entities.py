@@ -96,7 +96,7 @@ async def test_settings_reach_the_core_and_persist(
     )
     assert (core.night_start, core.night_end, core.night_current_a) == ("22:00", "06:00", None)
     assert (core.min_change_min, core.max_step_a, core.paid_tolerance_min) == (15.0, 6, 5.0)
-    assert core.wanted_at_free_start_pct == 40.0
+    assert core.wanted_at_free_start_pct == 30.0
 
     async def call(domain: str, service: str, entity_id: str, **data: object) -> None:
         await hass.services.async_call(

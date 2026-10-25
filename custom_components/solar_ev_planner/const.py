@@ -7,9 +7,12 @@ from typing import Any, Final
 
 from homeassistant.const import Platform
 
-from .core import CAUTION_LEVELS, RIVIAN_R1S, TESLA
+from .core import CAUTION_LEVELS, FREE_REFILL, RIVIAN_R1S, TESLA
 
 DOMAIN: Final = "solar_ev_planner"
+# Config entry version; minor 2 replaced the battery hold switch with the free-hours mode.
+ENTRY_VERSION: Final = 1
+ENTRY_MINOR_VERSION: Final = 2
 PLATFORMS: Final = [
     Platform.BINARY_SENSOR,
     Platform.NUMBER,
@@ -88,7 +91,9 @@ CONF_BATTERY_CAPACITY_KWH: Final = "battery_capacity_kwh"  # the fixed value oth
 CONF_BATTERY_MAX_CHARGE_KW: Final = "battery_max_charge_kw"
 CONF_BATTERY_MAX_DISCHARGE_KW: Final = "battery_max_discharge_kw"
 CONF_BATTERY_RESERVE_PCT: Final = "battery_reserve_pct"
-CONF_BATTERY_HOLDS: Final = "battery_holds_in_free_hours"
+CONF_BATTERY_FREE_HOURS: Final = "battery_in_free_hours"  # refill, hold or normal
+CONF_BATTERY_REFILL_TO_PCT: Final = "battery_refill_to_pct"
+LEGACY_BATTERY_HOLDS: Final = "battery_holds_in_free_hours"  # entry version 1.1 (on/off)
 CONF_WALL_CURRENT: Final = "wall_current"
 CONF_WALL_CONNECTED: Final = "wall_connected"
 CONF_WALL_CONTACTOR: Final = "wall_contactor"
@@ -106,7 +111,8 @@ DEFAULT_SITE_OPTIONS: Final[dict[str, Any]] = {
     CONF_BATTERY_MAX_CHARGE_KW: 9.0,
     CONF_BATTERY_MAX_DISCHARGE_KW: 9.0,
     CONF_BATTERY_RESERVE_PCT: 10.0,
-    CONF_BATTERY_HOLDS: True,
+    CONF_BATTERY_FREE_HOURS: FREE_REFILL,
+    CONF_BATTERY_REFILL_TO_PCT: 100.0,
     CONF_CHARGER_MAX_A: 48,
     CONF_VOLTS: 240,
 }
@@ -186,7 +192,7 @@ DEFAULT_SETTINGS: Final[dict[str, Any]] = {
     S_NIGHT_CURRENT: NIGHT_CURRENT_MAX,
     S_CAUTION: "conservative",
     S_FLOOR: 30.0,
-    S_WANTED: 40.0,
+    S_WANTED: 30.0,
     S_MIN_CHANGE: 15.0,
     S_MAX_STEP: 6,
     S_PAID_TOLERANCE: 5.0,

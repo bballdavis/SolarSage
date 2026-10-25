@@ -3,13 +3,18 @@
     net = pv - house - car
     net > 0: the battery charges min(net, max charge, room), the rest is exported;
     net < 0: the battery discharges min(-net, max discharge, energy above the reserve), the
-             rest is imported. While it holds (free hours, Sol-Ark TOU slot with grid as the
-             source) it does not discharge at all. Outside a hold, ANY car draw is served by
-             the battery before the grid.
+             rest is imported. Outside free hours, ANY car draw is served by the battery
+             before the grid.
+    free hours (BatterySpec.free_hours): with "refill" the battery charges at its full rate
+             from the sun and then the grid until it reaches ``refill_to_pct`` (Sol-Ark
+             time-of-use slot with grid charge), so tomorrow starts full whatever today
+             took; with "hold" it does not discharge at all; with "normal" it runs as by day.
 
 The car in the model draws a steady ``p_kw`` while it is in its window and still needs energy:
 during the commitment period whatever the sun gives, after it only the solar surplus (the
 planner re-plans every 15 min, so a steady current is never held into a deficit for long).
+With ``held`` it keeps its power after the commitment period too, as far as the sun and the
+battery supply it without import (the safety rule cuts paid import within minutes).
 """
 
 from __future__ import annotations
@@ -27,11 +32,12 @@ class Step:
     dt_h: float
     pv: float  # kW
     house: float  # kW
-    hold: bool  # the battery holds (free hours and the inverter is set to hold)
+    hold: bool  # the battery does not discharge (free hours, inverter set to hold or refill)
     paid: bool  # import costs money
     car_on: bool  # inside the car's daytime window
     commit: bool  # inside the commitment period: the car holds its power even from the battery
     price: float = 0.0  # import price in the step ($/kWh)
+    refill: bool = False  # the battery charges from the grid (free hours, inverter set to refill)
 
 
 @dataclass
@@ -43,12 +49,35 @@ class Path:
     export_unmet_kwh: float  # exported while the car (in its window) still wanted energy
 
 
+def battery_kw(s: Step, net: float, e: float, bat: BatterySpec) -> float:
+    """The battery's power in the step (+ charging) at level ``e`` kWh, with ``net`` = pv -
+    house - car; the grid supplies ``battery_kw - net`` (+ import)."""
+    dt, eff = s.dt_h, bat.efficiency
+    if s.refill:
+        room = max(0.0, bat.kwh(bat.refill_to_pct) - e) / (eff * dt)
+        if room >= max(net, 0.0):  # below the refill level: the full rate, sun then grid
+            return min(bat.max_charge_kw, room)
+    if net >= 0:
+        return min(net, bat.max_charge_kw, max(0.0, bat.capacity_kwh - e) / (eff * dt))
+    if s.hold:
+        return 0.0
+    return -min(-net, bat.max_discharge_kw, max(0.0, e - bat.kwh(bat.reserve_pct)) * eff / dt)
+
+
+def _store(e: float, b: float, s: Step, bat: BatterySpec) -> float:
+    return e + (b * bat.efficiency if b > 0 else b / bat.efficiency) * s.dt_h
+
+
 def simulate(
-    steps: Sequence[Step], e0: float, p_kw: float, need_kwh: float, bat: BatterySpec
+    steps: Sequence[Step],
+    e0: float,
+    p_kw: float,
+    need_kwh: float,
+    bat: BatterySpec,
+    held: bool = False,
 ) -> Path:
     """Battery path with the car at a steady ``p_kw`` until ``need_kwh`` is in it."""
-    e, eff = e0, bat.efficiency
-    e_min, e_max = bat.kwh(bat.reserve_pct), bat.capacity_kwh
+    e = e0
     got = paid = exp_unmet = 0.0
     es: list[float] = []
     cars: list[float] = []
@@ -58,20 +87,19 @@ def simulate(
         if s.car_on and got < need_kwh:
             car = min(p_kw, (need_kwh - got) / dt)
             if not s.commit:
-                car = min(car, max(0.0, s.pv - s.house))
+                room = max(0.0, s.pv - s.house)
+                if held and not s.hold:
+                    spare = (e - bat.kwh(bat.reserve_pct)) * bat.efficiency / dt
+                    room += max(0.0, min(bat.max_discharge_kw, spare))
+                car = min(car, room)
         net = s.pv - s.house - car
-        if net >= 0:
-            ch = min(net, bat.max_charge_kw, max(0.0, e_max - e) / (eff * dt))
-            e += ch * eff * dt
-            if s.car_on and got + car * dt < need_kwh - 0.05:
-                exp_unmet += (net - ch) * dt
-        else:
-            dis = 0.0
-            if not s.hold:
-                dis = min(-net, bat.max_discharge_kw, max(0.0, e - e_min) * eff / dt)
-                e -= dis / eff * dt
-            if s.paid:
-                paid += (-net - dis) * dt
+        b = battery_kw(s, net, e, bat)
+        e = _store(e, b, s, bat)
+        grid = b - net
+        if grid < 0 and s.car_on and got + car * dt < need_kwh - 0.05:
+            exp_unmet -= grid * dt
+        elif grid > 0 and s.paid:
+            paid += grid * dt
         got += car * dt
         es.append(e)
         cars.append(car)
@@ -82,15 +110,10 @@ def simulate_profile(
     steps: Sequence[Step], e0: float, car_kw: Sequence[float], bat: BatterySpec
 ) -> list[float]:
     """Battery path (kWh at the end of each step) for a given car power per step."""
-    e, eff = e0, bat.efficiency
-    e_min, e_max = bat.kwh(bat.reserve_pct), bat.capacity_kwh
+    e = e0
     out = []
     for s, car in zip(steps, car_kw, strict=False):
-        net = s.pv - s.house - car
-        if net >= 0:
-            e += min(net, bat.max_charge_kw, max(0.0, e_max - e) / (eff * s.dt_h)) * eff * s.dt_h
-        elif not s.hold:
-            e -= min(-net, bat.max_discharge_kw, max(0.0, e - e_min) * eff / s.dt_h) / eff * s.dt_h
+        e = _store(e, battery_kw(s, s.pv - s.house - car, e, bat), s, bat)
         out.append(e)
     return out
 

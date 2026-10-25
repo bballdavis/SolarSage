@@ -72,7 +72,8 @@
     "max_discharge_kw": 9.0,
     "efficiency": 0.92,
     "reserve_pct": 10.0,
-    "holds_in_free_hours": true
+    "free_hours": "refill",
+    "refill_to_pct": 100.0
   },
   "settings": {},
   "plans": {},

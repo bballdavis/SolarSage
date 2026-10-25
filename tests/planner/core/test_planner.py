@@ -8,7 +8,11 @@ from datetime import datetime, timedelta
 import json
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from custom_components.solar_ev_planner.core import (
+    FREE_HOLD,
+    BatterySpec,
     Measured,
     Planner,
     PriceWindow,
@@ -72,6 +76,25 @@ def test_free_hours_before_window_wait_unless_needed(settings):
     low = rivian(soc=5.0, since=now - timedelta(minutes=5))
     d2 = _plan(replace(settings, night_current_a=16)).decide(snapshot(now, cars=[low]))
     assert d2.mode == "night" and d2.amps == 16
+
+
+def test_the_overnight_refill_lets_the_day_use_the_battery(settings):
+    snap = snapshot(NOON, soc=55.0, fc_ratio=0.8, actual_ratio=0.8)
+    refill = _plan(settings).decide(snap)  # the default: free hours refill the battery
+    hold = _plan(settings).decide(replace(snap, battery=BatterySpec(free_hours=FREE_HOLD)))
+    assert refill.amps is not None and hold.amps is not None and refill.amps > hold.amps
+    assert "before the free hours refill it" in refill.reason
+    at = {p.t: p.soc_pct for p in refill.trajectory}
+    held = {p.t: p.soc_pct for p in hold.trajectory}
+    # on the cautious day the battery gives the car what it holds above the wanted level
+    # (the floor) when the free hours start, and starts tomorrow full again
+    assert at[datetime(2026, 6, 15, 20, 0)] == pytest.approx(
+        settings.wanted_at_free_start_pct, abs=1
+    )
+    assert at[datetime(2026, 6, 16, 6, 0)] == pytest.approx(100.0)
+    # holding instead, the evening level is all tomorrow morning has
+    assert held[datetime(2026, 6, 16, 6, 0)] == pytest.approx(held[datetime(2026, 6, 15, 20, 0)])
+    assert held[datetime(2026, 6, 16, 6, 0)] < 90
 
 
 def test_daytime_solar_off_waits(settings):

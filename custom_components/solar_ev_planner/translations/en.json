@@ -20,7 +20,8 @@
           "battery_max_charge_kw": "Battery maximum charge power",
           "battery_max_discharge_kw": "Battery maximum discharge power",
           "battery_reserve_pct": "Battery reserve",
-          "battery_holds_in_free_hours": "Battery holds during free hours"
+          "battery_in_free_hours": "Home battery during free hours",
+          "battery_refill_to_pct": "Refill level"
         },
         "data_description": {
           "pv_power": "Solar production, for example sensor.sol_ark_inverter_pv_power.",
@@ -38,7 +39,8 @@
           "battery_max_charge_kw": "AC-side limit of the inverter's battery charging.",
           "battery_max_discharge_kw": "AC-side limit of the inverter's battery discharging.",
           "battery_reserve_pct": "The level at which the inverter stops discharging.",
-          "battery_holds_in_free_hours": "On if the inverter is set to hold the battery while import is free (Sol-Ark time-of-use slot with the grid as source). The prediction then keeps the battery level through the free hours."
+          "battery_in_free_hours": "What the inverter does with the battery while import is free. Refill: a Sol-Ark time-of-use slot with grid charge fills it, so each paid day starts full and the planner can use the battery down to the floor by day. Hold: it keeps its level and the house and car run from the grid. Normal: it serves the house and the car as by day.",
+          "battery_refill_to_pct": "With refill: the level the inverter charges to from the grid (the time-of-use slot's battery level)."
         }
       },
       "charger": {
@@ -108,7 +110,8 @@
           "battery_max_charge_kw": "Battery maximum charge power",
           "battery_max_discharge_kw": "Battery maximum discharge power",
           "battery_reserve_pct": "Battery reserve",
-          "battery_holds_in_free_hours": "Battery holds during free hours"
+          "battery_in_free_hours": "Home battery during free hours",
+          "battery_refill_to_pct": "Refill level"
         },
         "data_description": {
           "pv_power": "Solar production, for example sensor.sol_ark_inverter_pv_power.",
@@ -126,7 +129,8 @@
           "battery_max_charge_kw": "AC-side limit of the inverter's battery charging.",
           "battery_max_discharge_kw": "AC-side limit of the inverter's battery discharging.",
           "battery_reserve_pct": "The level at which the inverter stops discharging.",
-          "battery_holds_in_free_hours": "On if the inverter is set to hold the battery while import is free (Sol-Ark time-of-use slot with the grid as source). The prediction then keeps the battery level through the free hours."
+          "battery_in_free_hours": "What the inverter does with the battery while import is free. Refill: a Sol-Ark time-of-use slot with grid charge fills it, so each paid day starts full and the planner can use the battery down to the floor by day. Hold: it keeps its level and the house and car run from the grid. Normal: it serves the house and the car as by day.",
+          "battery_refill_to_pct": "With refill: the level the inverter charges to from the grid (the time-of-use slot's battery level)."
         }
       },
       "charger": {
@@ -303,6 +307,13 @@
     }
   },
   "selector": {
+    "battery_in_free_hours": {
+      "options": {
+        "refill": "Refill: charges from the grid",
+        "hold": "Hold: keeps its level",
+        "normal": "Normal: serves the house and car"
+      }
+    },
     "power_unit": {
       "options": {
         "W": "W",

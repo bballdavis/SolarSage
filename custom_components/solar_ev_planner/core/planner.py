@@ -50,6 +50,8 @@ from .house import HouseModel, HouseParams
 from .pv import PvModel, PvParams
 from .tariff import minutes, next_flip
 from .types import (
+    FREE_NORMAL,
+    FREE_REFILL,
     SLOT,
     CarCommand,
     CarOutlook,
@@ -412,7 +414,7 @@ class Planner:
         s_now = pv.slot_at(now)
         if s_now is not None and s_now.p50 > 0.3:
             r_now = max(0.0, min(1.6, snap.pv_recent_kw / s_now.p50))
-        hold_ok = snap.battery.holds_in_free_hours
+        mode = snap.battery.free_hours  # what the battery does while import is free
         steps: list[Step] = []
         t, t_commit = now, now + timedelta(hours=self.params.commit_h)
         while t < now + lim:
@@ -434,11 +436,12 @@ class Planner:
                     STEP.total_seconds() / 3600.0,
                     pv_kw,
                     house.kw(mid, off_until) * qload,
-                    price <= 0.0 and hold_ok,
+                    price <= 0.0 and mode != FREE_NORMAL,
                     price > 0,
                     t_car_end is not None and win_start <= t < t_car_end,
                     t < t_commit,
                     price,
+                    price <= 0.0 and mode == FREE_REFILL,
                 )
             )
             t += STEP
@@ -477,10 +480,12 @@ class Planner:
                 return "check"
             return "paid" if path.paid_kwh - base.paid_kwh > 0.05 else ""
 
-        def run(p: float, which: list[Step] = steps) -> Path:
-            return simulate(which, e0, p, need, bat)
+        def run(p: float, which: list[Step] = steps, held: bool = False) -> Path:
+            return simulate(which, e0, p, need, bat, held)
 
-        p_cap = 0.0
+        p_cap = p_spread = 0.0
+        refill = any(st.refill for st in steps)
+        spreading = False  # the battery's spare energy sets the power
         if not any(st.car_on for st in steps) or need <= 0:
             p_kw, fail = 0.0, "nowindow"
         else:
@@ -504,20 +509,31 @@ class Planner:
                 p_noexp = p_cap
                 if run(p_cap, steps0).export_unmet_kwh <= 0.5:
                     p_noexp = lowest(lambda p: run(p, steps0).export_unmet_kwh <= 0.5, 0.0, p_cap)
+            # P_spread (refill only): tonight's free hours fill the battery from the grid, so
+            # what it holds above the wanted level when they start is worth nothing. The car
+            # gets it spread over the window: the highest power held all window (not just the
+            # commitment period) that keeps the battery rules on the cautious day.
+            if refill and p_cap > 0.0:
+                if not broken(run(p_cap, held=True)):
+                    p_spread = p_cap
+                else:
+                    p_spread = lowest(lambda p: bool(broken(run(p, held=True))), 0.0, p_cap, 13)
+                    p_spread = max(0.0, p_spread - p_max / 8192)
             p_min = car.spec.kw(car.spec.min_a, snap.volts)
-            if p_noexp < self.params.min_current_spill * p_min and p_fill <= 0.0:
+            if max(p_noexp, p_spread) < self.params.min_current_spill * p_min and p_fill <= 0.0:
                 p_min = 0.0  # not enough spill to justify the car's minimum from the battery
-            p_kw = min(p_cap, max(p_fill, p_noexp, p_min))
+            p_kw = min(p_cap, max(p_fill, p_noexp, p_spread, p_min))
+            spreading = p_spread > 0.0 and p_spread >= max(p_fill, p_noexp, p_min)
             if p_kw < p_cap - 0.05:
                 if p_kw <= 0.0:
                     fail = "nospill"
+                elif p_fill >= max(p_noexp, p_spread, p_min):
+                    fail = "fill"
+                elif p_spread >= max(p_noexp, p_min):
+                    fail = "spread"
                 else:
-                    fail = (
-                        "fill"
-                        if p_fill >= max(p_noexp, p_min)
-                        else ("noexport" if p_noexp >= p_min else "min")
-                    )
-        best = run(p_kw)
+                    fail = "noexport" if p_noexp >= p_min else "min"
+        best = run(p_kw, held=spreading)  # spreading: the power is held all afternoon
         first = p_kw if steps and steps[0].car_on else 0.0
         k_min = min(range(len(best.e)), key=lambda k: best.e[k]) if best.e else None
         min_soc = bat.pct(best.e[k_min]) if k_min is not None else snap.soc_pct
@@ -526,6 +542,7 @@ class Planner:
         dbg = dict(
             p_plan_kw=round(p_kw, 2),
             p_cap_kw=round(p_cap, 2),
+            p_spread_kw=round(p_spread, 2),
             min_soc=round(min_soc, 1),
             soc_free=None if soc_free is None else round(soc_free, 1),
             pv_ratio=round(md.pv.ratio, 3),
@@ -566,6 +583,12 @@ class Planner:
             return f"a steady rate meets the plan by {fmt_t(b.t_car_end, now)} and {low} {allow}"
         if fail == "noexport":
             return f"a steady rate takes the solar the battery cannot store and {low} {allow}"
+        if fail == "spread":
+            return (
+                f"a steady rate through the afternoon uses the battery down to "
+                f"{b.soc_free:.0f}% at {fmt_t(t_check, now)}, before the free hours refill it "
+                f"{allow}"
+            )
         if fail == "min":
             return f"the car's minimum current is enough and {low} {allow}"
         if fail == "nospill":

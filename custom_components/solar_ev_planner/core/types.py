@@ -44,7 +44,7 @@ class Settings:
     daytime_solar: bool = True  # off: a car plugged in by day waits for the night window
     caution: str | float = "conservative"  # a CAUTION_LEVELS label or a probability 0.5-0.999
     floor_pct: float = 30.0  # the PREDICTED battery must stay above this
-    wanted_at_free_start_pct: float = 40.0  # battery wanted when free hours start (or sunset)
+    wanted_at_free_start_pct: float = 30.0  # battery wanted when free hours start (or sunset)
     min_change_min: float = 15.0  # minimum time between current changes
     max_step_a: int = 6  # largest single change
     paid_tolerance_min: float = 5.0  # paid import accepted this long before the safety rule acts
@@ -62,6 +62,13 @@ class Settings:
 # --------------------------------------------------------------------------- the site
 
 
+# What the inverter does with the home battery while grid import is free
+FREE_REFILL = "refill"  # charges it from the grid (Sol-Ark time-of-use slot with grid charge)
+FREE_HOLD = "hold"  # keeps its level: the house and the car run from the grid
+FREE_NORMAL = "normal"  # self-consumption as by day: it serves the house and the car
+FREE_HOURS_BATTERY = (FREE_REFILL, FREE_HOLD, FREE_NORMAL)
+
+
 @dataclass(frozen=True)
 class BatterySpec:
     """The home battery and the inverter's dispatch rules (Sol-Ark self-consumption)."""
@@ -71,7 +78,8 @@ class BatterySpec:
     max_discharge_kw: float = 9.0
     efficiency: float = 0.92  # one way
     reserve_pct: float = 10.0  # the inverter stops discharging here
-    holds_in_free_hours: bool = True  # no discharge while import is free (Sol-Ark TOU slot)
+    free_hours: str = FREE_REFILL  # FREE_REFILL, FREE_HOLD or FREE_NORMAL
+    refill_to_pct: float = 100.0  # where grid charging in free hours stops
 
     def kwh(self, pct: float) -> float:
         return self.capacity_kwh * pct / 100.0
