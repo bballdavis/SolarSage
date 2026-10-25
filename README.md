@@ -15,7 +15,7 @@ Start here:
 - [Architecture record](docs/SOLAR_CHARGING_ARCHITECTURE.md) (earlier evcc-centred design, superseded in part): the design, what we build versus reuse, the Rivian adapter contract, evcc pitfalls, the safety model, and open questions for the owner.
 - [Roadmap](docs/ROADMAP.md) (superseded in part by the plan): phased plan with evidence gates. Tesla first, then an attended Rivian trial using the adapter, then wiring the adapter into evcc or taking the hardware path.
 - [Ecosystem survey](docs/ECOSYSTEM_SURVEY.md): what evcc, the Tesla integrations, the Rivian integration and client, charger-side options, and other orchestrators actually do, with source permalinks.
-- [Draft evcc config](config/evcc/evcc.example.yaml) and [draft HA glue package](config/homeassistant/packages/ev_solar_glue.example.yaml): starting points with placeholders, untested against the live installation.
+- The earlier evcc config and HA glue package were removed when evcc was dropped; their last versions are in commit [`266b3bf`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/266b3bf0f022fcccbcf3874c6511963aac61d711/config).
 
 Background and history:
 
@@ -24,6 +24,6 @@ Background and history:
 - [Complete HA prototype source snapshot](reference/ha-prototype-source/): the earlier combined Rivian/solar integration. Its Rivian schedule-safety code is the basis for the adapter; its control engine and panel are superseded by evcc.
 - [Codex discussion history](docs/CODEX_DISCUSSION_HISTORY.md): relevant chat IDs and decisions.
 
-The `reference/` tree is an archival snapshot of earlier work. Its Python harness and HA tests are not installed or run by this repository. No credentials, raw Rivian responses, or live charging proof are included. Nothing in `config/` has been applied to the live Home Assistant instance.
+The `reference/` tree is an archival snapshot of earlier work. Its Python harness and HA tests are not installed or run by this repository. No credentials, raw Rivian responses, or live charging proof are included.
 
 **Checks.** There is no CI yet. Before committing adapter changes, run `ruff check custom_components tests`, `ruff format --check custom_components tests` and `python -m pytest tests -q` locally, in a Python 3.14 environment with `pytest-homeassistant-custom-component` and `rivian-python-client` installed.

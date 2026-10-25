@@ -1,5 +1,7 @@
 # Rivian charge adapter
 
+> **Controller change (October 25, 2026).** This guide was written with evcc as the controller. Under the [working plan](PLAN.md) the solar planner drives the same **Solar charging** switch and **Solar current** number instead; option names such as `evcc_liveness_entity` still say evcc until the adapter is adapted to the planner. The evcc config and glue package it mentions are kept only in git history.
+
 **What it is.** The Rivian charge adapter (`custom_components/rivian_solar_adapter`) is the one control component this project owns in the [architecture decision](SOLAR_CHARGING_ARCHITECTURE.md). It gives evcc a start/stop switch and a current setting for a Gen 2 Rivian, which has no usable remote charging command. It does this by writing the vehicle's **charging schedule**.
 
 **Status: software-tested only.** Four rounds of independent adversarial review shaped the design, including closed-loop simulations against a model of evcc's charging loop. Its tests run against Home Assistant 2026.10.3 with a simulated Rivian provider. It has not been run against a real account, vehicle, or Wall Connector. **It installs in dry-run mode, and nothing is written until you turn dry run off.**
@@ -61,9 +63,9 @@
      | Location | The Rivian device tracker (not a person) | Yes |
      | Charger state | The Rivian charger state sensor | Recommended: without it evcc's status can never be "charging" (`c`) |
      | Wall Connector vehicle connected | `binary_sensor.tesla_wall_connector_vehicle_connected` | Recommended: it ends a session when the Wall Connector sees no vehicle, and blocks control of a Rivian plugged in elsewhere |
-     | evcc liveness | `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the [glue package](../config/homeassistant/packages/ev_solar_glue.example.yaml). **Not** an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. | **Strongly recommended**: without it, an evcc outage cannot stop renewals |
+     | evcc liveness | `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the [glue package](https://github.com/bballdavis/HASS-Solar-Rivian/blob/266b3bf0f022fcccbcf3874c6511963aac61d711/config/homeassistant/packages/ev_solar_glue.example.yaml). **Not** an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. | **Strongly recommended**: without it, an evcc outage cannot stop renewals |
      | evcc charging enabled | `binary_sensor.evcc_rivian_charging_enabled` from the same REST resource in the glue package: evcc's loadpoint `enabled` while the Rivian is its vehicle | **Recommended** with liveness: it lets charging resume after a liveness outage in which evcc kept running, and after a long Home Assistant restart |
-     | Vehicle override | `input_select.twc3_vehicle_override` from the [glue package](../config/homeassistant/packages/ev_solar_glue.example.yaml) | Optional: when it names another car, evcc's status reports `a` |
+     | Vehicle override | `input_select.twc3_vehicle_override` from the [glue package](https://github.com/bballdavis/HASS-Solar-Rivian/blob/266b3bf0f022fcccbcf3874c6511963aac61d711/config/homeassistant/packages/ev_solar_glue.example.yaml) | Optional: when it names another car, evcc's status reports `a` |
 
 4. Options (**Configure**):
 
@@ -104,7 +106,7 @@ Services:
 | `.force_restore` | **Faulted only.** Writes the snapshotted owner list whatever Rivian holds now, then verifies it. An archived list from an earlier abandon is used only while Rivian holds an adapter window, so it never replaces schedules the owner has set up since. Otherwise the call fails with `force_restore_archive_unsafe` and writes nothing. |
 | `.abandon_ownership` | **Faulted only.** Forgets ownership without writing. The owner's list is archived, not deleted, and shown in a notification so it can be recreated or force-restored. |
 
-evcc vehicle (see [`config/evcc/evcc.example.yaml`](../config/evcc/evcc.example.yaml)):
+evcc vehicle (see [`config/evcc/evcc.example.yaml`](https://github.com/bballdavis/HASS-Solar-Rivian/blob/266b3bf0f022fcccbcf3874c6511963aac61d711/config/evcc/evcc.example.yaml)):
 
 ```yaml
   - name: rivian

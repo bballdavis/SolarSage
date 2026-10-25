@@ -32,7 +32,7 @@ The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-test
   2. Add HA core **Tesla Fleet**. Setup asks for a domain you control and shows the public key to serve at `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`; Tesla needs it to accept signed commands.
   3. Open the virtual-key link the setup shows on a phone with the Tesla app, and approve the key in the car.
   4. Leave `tesla_custom` installed but unused for control until phase 2 passes.
-- [ ] Copy [`config/homeassistant/packages/ev_solar_glue.example.yaml`](../config/homeassistant/packages/ev_solar_glue.example.yaml) into HA. Replace placeholders, including the Tesla's normal charging amps (default 32 A). Confirm that the Tesla's `sensor.evcc_tesla_status` and the adapter's `sensor.r1s_solar_adapter_evcc_status` read `a`/`b`/`c` correctly:
+- [ ] Copy [`config/homeassistant/packages/ev_solar_glue.example.yaml`](https://github.com/bballdavis/HASS-Solar-Rivian/blob/266b3bf0f022fcccbcf3874c6511963aac61d711/config/homeassistant/packages/ev_solar_glue.example.yaml) into HA. Replace placeholders, including the Tesla's normal charging amps (default 32 A). Confirm that the Tesla's `sensor.evcc_tesla_status` and the adapter's `sensor.r1s_solar_adapter_evcc_status` read `a`/`b`/`c` correctly:
   - each car away;
   - each car home but unplugged;
   - each car plugged in and idle;
@@ -44,7 +44,7 @@ The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-test
 ## Phase 1 — evcc in observe-only mode
 
 - [ ] Install the evcc add-on (0.318.0 at the time of writing) and the `ha-evcc` integration.
-- [ ] Start from [`config/evcc/evcc.example.yaml`](../config/evcc/evcc.example.yaml). Configure meters, the `twc3` charger, the solar tariff, and both vehicles **without** control services. The loadpoint stays in mode `off`; the Rivian keeps `mode: now` until phase 4A.
+- [ ] Start from [`config/evcc/evcc.example.yaml`](https://github.com/bballdavis/HASS-Solar-Rivian/blob/266b3bf0f022fcccbcf3874c6511963aac61d711/config/evcc/evcc.example.yaml). Configure meters, the `twc3` charger, the solar tariff, and both vehicles **without** control services. The loadpoint stays in mode `off`; the Rivian keeps `mode: now` until phase 4A.
 - [ ] Set the adapter's **evcc liveness** option to `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the glue package. Do not use an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. Without a liveness entity, an evcc outage cannot stop the adapter's lease renewals. Check it by stopping the evcc add-on: `sensor.evcc_api` turns unavailable within a minute. Also set the **evcc charging enabled** option to `binary_sensor.evcc_rivian_charging_enabled` from the same REST resource; it turns on while evcc has charging enabled for the Rivian.
 - [ ] In the evcc UI, set:
   - loadpoint phases **1**;
@@ -120,7 +120,7 @@ Record results with the evidence-note template in the [brief](RIVIAN_SOLAR_CHARG
 The adapter is already built, so this phase adds no code. It wires the adapter into evcc once the trial passes.
 
 - [ ] Confirm the adapter state: `control_state` idle with no fault, dry run off, **Lease renewal** on, and the evcc liveness option set (phase 1).
-- [ ] Change evcc's Rivian vehicle ([`config/evcc/evcc.example.yaml`](../config/evcc/evcc.example.yaml)):
+- [ ] Change evcc's Rivian vehicle ([`config/evcc/evcc.example.yaml`](https://github.com/bballdavis/HASS-Solar-Rivian/blob/266b3bf0f022fcccbcf3874c6511963aac61d711/config/evcc/evcc.example.yaml)):
   - Remove `mode: now`. It only made evcc ignore the missing current control.
   - Add `start_charging: switch.r1s_solar_adapter_solar_charging` and `setMaxCurrent: number.r1s_solar_adapter_solar_current`. Copy the real IDs from the adapter's device page; they follow the config entry's title.
   - Keep `minCurrent: 8`. The adapter never applies less than 8 A, and a lower evcc minimum makes evcc re-send the current every cycle.
