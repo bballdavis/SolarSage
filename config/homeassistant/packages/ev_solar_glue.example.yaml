@@ -10,12 +10,10 @@
 # Contents:
 #   1. A manual override for which car is on the Wall Connector, and the Tesla's normal
 #      charging amps.
-#   2. A presence- and charger-aware Tesla status sensor for evcc vehicle detection
+#   2. A location- and charger-aware Tesla status sensor for evcc vehicle detection
 #      (a/b/c). evcc identifies vehicles by status only. The sensor reports "a" unless
-#      the Tesla is within Bluetooth range of the garage ESP32 and plugged in while the
-#      Wall Connector reports a vehicle, so evcc never commands a car that is charging
-#      somewhere else. Tesla entities come from the ESPHome Tesla BLE device
-#      (config/esphome/tesla-ble.example.yaml, friendly name "Tesla BLE").
+#      the Tesla is home and plugged in while the Wall Connector reports a vehicle, so
+#      evcc never commands a car that is charging somewhere else.
 #      The Rivian's status sensor comes from the Rivian charge adapter
 #      (sensor.<title>_solar_adapter_evcc_status, e.g. sensor.r1s_solar_adapter_evcc_status).
 #      Point the adapter's vehicle override option at input_select.twc3_vehicle_override
@@ -26,8 +24,6 @@
 #      evcc charging enabled option at binary_sensor.evcc_rivian_charging_enabled.
 #   4. A Tesla amp restore at unplug. The Tesla keeps the last current evcc set, so a
 #      later manual charge would otherwise start at that current, possibly 6 A.
-#   5. A notice when the Tesla's Bluetooth link drops mid-charge: nothing can then stop
-#      or slow the car until the link is back.
 
 input_select:
   twc3_vehicle_override:
@@ -90,14 +86,13 @@ template:
   - sensor:
       - name: evcc_tesla_status
         unique_id: evcc_tesla_status
-        # The ESP32's Bluetooth link to the car means it is parked at home. The Tesla
-        # BLE switch mirrors whether the car is charging.
+        # Tesla Fleet entity names depend on the car's name in HA; copy them from its device page.
         state: >
           {%- set override = states('input_select.twc3_vehicle_override') -%}
-          {%- set home = is_state('binary_sensor.tesla_ble_ble_connection', 'on') -%}
-          {%- set plugged = is_state('binary_sensor.tesla_ble_charger', 'on') -%}
+          {%- set home = is_state('<device_tracker.tesla_location>', 'home') -%}
+          {%- set plugged = is_state('<binary_sensor.tesla_charge_cable>', 'on') -%}
           {%- set twc = is_state('binary_sensor.tesla_wall_connector_vehicle_connected', 'on') -%}
-          {%- set charging = is_state('switch.tesla_ble_charger', 'on') -%}
+          {%- set charging = states('<sensor.tesla_charging>') in ['starting', 'charging'] -%}
           {{ 'a' if override == 'rivian' or not (home and plugged and twc)
              else ('c' if charging else 'b') }}
 
@@ -161,7 +156,7 @@ automation:
         then:
           - action: switch.turn_off
             target:
-              entity_id: switch.tesla_ble_charger
+              entity_id: <switch.tesla_charge>
       # Belt and braces: with sensor.evcc_api as its liveness entity, the adapter stops
       # renewing at once and, after 3 minutes, drops evcc's request and parks its
       # window itself. This also covers an adapter without the liveness option. Only
@@ -188,47 +183,24 @@ automation:
     id: tesla_restore_normal_charge_amps
     mode: single
     # evcc leaves the Tesla at the last current it set. Restore the normal value when the
-    # Tesla unplugs at home, so a later manual or app start does not begin at 6 A. The car
-    # is still awake right after unplugging, so the Bluetooth command needs no wake.
+    # Tesla unplugs at home, so a later manual or app start does not begin at 6 A.
     triggers:
       - trigger: state
-        entity_id: binary_sensor.tesla_ble_charger
+        entity_id: <binary_sensor.tesla_charge_cable>
         from: "on"
         to: "off"
     conditions:
       - condition: state
-        entity_id: binary_sensor.tesla_ble_ble_connection
-        state: "on"
-      # Skip the command when the value is already right.
+        entity_id: <device_tracker.tesla_location>
+        state: home
+      # Skip the command (and a possible wake) when the value is already right.
       - condition: template
         value_template: >
-          {{ states('number.tesla_ble_charging_amps') | int(0)
+          {{ states('<number.tesla_charge_current>') | int(0)
              != states('input_number.tesla_normal_charge_amps') | int(32) }}
     actions:
       - action: number.set_value
         target:
-          entity_id: number.tesla_ble_charging_amps
+          entity_id: <number.tesla_charge_current>
         data:
           value: "{{ states('input_number.tesla_normal_charge_amps') | int(32) }}"
-
-  - alias: Tesla - Bluetooth link lost while charging
-    id: tesla_ble_link_lost_while_charging
-    mode: single
-    # A car cannot drive away while charging without first reporting the cable unplugged,
-    # so a charging switch that goes unavailable means the ESP32 lost its link (power,
-    # Wi-Fi or range). Until it is back, evcc cannot stop or slow the Tesla, which keeps its
-    # last current up to its own charge limit.
-    triggers:
-      - trigger: state
-        entity_id: switch.tesla_ble_charger
-        from: "on"
-        to: unavailable
-        for: "00:05:00"
-    actions:
-      - action: persistent_notification.create
-        data:
-          title: Tesla Bluetooth link lost
-          message: >
-            The garage ESP32 lost its Bluetooth link to the Tesla while it was charging.
-            evcc cannot stop or slow it until the link is back. Check the ESP32's power and
-            Wi-Fi, or stop charging from the Tesla app.

@@ -5,7 +5,7 @@ Seamless "charge on solar" in Home Assistant for **both** household EVs, a Tesla
 **Direction (October 2026):** build on existing projects instead of a custom controller.
 
 - **[evcc](https://github.com/evcc-io/evcc)** is the solar-charging brain.
-- **Home Assistant** supplies the measurements and the vehicle controls. The Tesla is controlled locally over Bluetooth by an ESPHome device in the garage ([config](config/esphome/tesla-ble.example.yaml)), with no Tesla cloud API or subscription.
+- **Home Assistant** supplies the measurements and the vehicle controls.
 - **This repository** owns only what nobody else solves: a small Rivian charge adapter, the HA glue configuration, and the commissioning evidence.
 - **Hardware fallback.** If the Gen 2 Rivian cannot be controlled reliably through its charging schedule, replace the Wall Connector with a locally controllable NACS EVSE. evcc then controls both cars at the charger.
 
@@ -14,7 +14,7 @@ Start here:
 - [Architecture decision](docs/SOLAR_CHARGING_ARCHITECTURE.md): the chosen design, what we build versus reuse, the Rivian adapter contract, evcc pitfalls, the safety model, and open questions for the owner.
 - [Roadmap](docs/ROADMAP.md): phased plan with evidence gates. Tesla first, then an attended Rivian trial using the adapter, then wiring the adapter into evcc or taking the hardware path.
 - [Ecosystem survey](docs/ECOSYSTEM_SURVEY.md): what evcc, the Tesla integrations, the Rivian integration and client, charger-side options, and other orchestrators actually do, with source permalinks.
-- [Draft evcc config](config/evcc/evcc.example.yaml), [draft HA glue package](config/homeassistant/packages/ev_solar_glue.example.yaml) and [draft ESPHome Tesla BLE device](config/esphome/tesla-ble.example.yaml): starting points with placeholders, untested against the live installation.
+- [Draft evcc config](config/evcc/evcc.example.yaml) and [draft HA glue package](config/homeassistant/packages/ev_solar_glue.example.yaml): starting points with placeholders, untested against the live installation.
 
 Background and history:
 

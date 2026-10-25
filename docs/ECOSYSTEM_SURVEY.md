@@ -60,10 +60,10 @@ Research date: October 24, 2026. This is the evidence base for the [architecture
 
 | Option | Transport and cost | Maturity | Fit |
 | --- | --- | --- | --- |
-| **`esphome-tesla-ble` on a dedicated ESP32** | Local BLE, $0. Commands and state both go over Bluetooth; the ESP32 reaches HA through the ESPHome API. Charging-only key role available. | Since July 2024, actively tagged (v2026.10.3) | **Primary** (owner prefers no Teslemetry or cloud) |
-| HA core Teslemetry with Bluetooth vehicle sub-entry | BLE first for commands, per-command cloud fallback through `VehicleRouter`. State always comes from the cloud or the data stream, never over Bluetooth. Roughly US$30–36/year (unverified). | Core integration, platinum quality scale. The BLE path shipped in HA 2026.10. | Not used: needs a paid Teslemetry account |
-| HA core `tesla_fleet` (own developer account) | Fleet API against Tesla's monthly credit | Core | Cloud fallback in a $0 stack |
-| `ha-tesla-ble` (HACS, HA Bluetooth stack) | Local BLE, $0, through HA's own Bluetooth adapter or a stock ESPHome proxy; same author as `esphome-tesla-ble`, whose README now points HA users to it | First release 2026-10-12 (v1.1.7 at the pinned commit) | Alternative on the same ESP32 once it has a track record |
+| HA core Teslemetry with Bluetooth vehicle sub-entry | BLE first for commands, per-command cloud fallback through `VehicleRouter`. State always comes from the cloud or the data stream, never over Bluetooth. Roughly US$30–36/year (unverified). BLE commands use no credits (Teslemetry's own statement, medium). | Core integration, platinum quality scale. The BLE path shipped in HA 2026.10. | Not used: a third-party service |
+| `esphome-tesla-ble` on a dedicated ESP32 | Local BLE, $0 | Since July 2024, actively tagged | Fallback if the API proves too slow or costly; needs an ESP32 in the garage |
+| **HA core `tesla_fleet`** (own developer account) | Tesla's official Fleet API, signed commands via a virtual key; billed against Tesla's monthly credit | Core | **Primary** (owner: Tesla's own API, no third party) |
+| `ha-tesla-ble` (HACS, HA Bluetooth stack) | Local BLE, $0 | First release 2026-10-12 | Watch |
 | TeslaBleHttpProxy with evcc `tesla-ble` | Local BLE, $0; no authentication on the proxy | evcc-recommended, since 2024 | Best if evcc talks to the car directly |
 | `tesla_custom` (installed today) | Owner API data. Commands need the external Tesla HTTP Proxy add-on, which its author marked unmaintained in January 2025. | Integration active (v3.28.0, 2026-10-22) | **Retire** for unattended control |
 | TeslaSolarCharger | Proprietary, paid activation | Active | Rejected (see orchestrators) |

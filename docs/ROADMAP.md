@@ -26,11 +26,10 @@ The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-test
 - [ ] Fix TWC3 telemetry: DHCP reservation, Wi-Fi signal, and the HA `tesla_wall_connector` fetch timeouts. Confirm the vitals update at least every 30 s for 24 hours.
 - [ ] **Split-phase check.** During a normal manual charge, compare the Wall Connector's per-leg current sensors with its vehicle-current sensor. Record whether evcc's `currentA + currentB` would double-count ([why](SOLAR_CHARGING_ARCHITECTURE.md#evcc-pitfalls-to-configure-around)).
 - [ ] **Tesla path.**
-  1. Flash an ESP32 (for example an M5Stack NanoC6) with the [ESPHome Tesla BLE config](../config/esphome/tesla-ble.example.yaml) through the ESPHome add-on, place it within a few metres of the Tesla's parking spot, and adopt it in HA.
-  2. Press **Pair BLE Key** and tap a key card on the console reader. The key has the `CHARGING_MANAGER` role: it cannot unlock or drive the car.
-  3. Check that `sensor.tesla_ble_battery`, `binary_sensor.tesla_ble_charger` and `binary_sensor.tesla_ble_ble_connection` update while the car is parked, and that `number.tesla_ble_charging_amps` goes up to the car's maximum.
-  4. With the car asleep, press **Wake up**. If the car refuses, re-pair with `role: DRIVER`; evcc needs to wake it to start a session.
-  5. Leave `tesla_custom` installed but unused for control until phase 2 passes.
+  1. Register a Tesla developer app (developer.tesla.com) with Home Assistant's redirect URL, and add its client ID and secret to HA as application credentials.
+  2. Add HA core **Tesla Fleet**. Setup asks for a domain you control and shows the public key to serve at `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`; Tesla needs it to accept signed commands.
+  3. Open the virtual-key link the setup shows on a phone with the Tesla app, and approve the key in the car.
+  4. Leave `tesla_custom` installed but unused for control until phase 2 passes.
 - [ ] Copy [`config/homeassistant/packages/ev_solar_glue.example.yaml`](../config/homeassistant/packages/ev_solar_glue.example.yaml) into HA. Replace placeholders, including the Tesla's normal charging amps (default 32 A). Confirm that the Tesla's `sensor.evcc_tesla_status` and the adapter's `sensor.r1s_solar_adapter_evcc_status` read `a`/`b`/`c` correctly:
   - each car away;
   - each car home but unplugged;
@@ -65,11 +64,10 @@ The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-test
 - [ ] Add `start_charging` (switch) and `setMaxCurrent` (number) to the Tesla vehicle. Set the loadpoint to `smart` while attended.
   - For unattended use, also change the loadpoint's `mode:` in the YAML to `smart`. evcc re-applies that default mode at every unplug ([`core/loadpoint.go#L742-L750`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/core/loadpoint.go#L742-L750)), so a mode set only in the UI lasts one session.
 - [ ] Attended checks. Log the command time, the acknowledgement, the Tesla's reported amps, and the TWC3 current:
-  - [ ] Bluetooth reachability at the parking spot: `binary_sensor.tesla_ble_ble_connection` stays on while the car is parked, and at least 95% of current commands are confirmed by the TWC3 current.
+  - [ ] Command reliability: at least 95% of current commands are confirmed by the TWC3 current. Watch Tesla's developer dashboard for usage and cost after a sunny day.
   - [ ] Amp steps while charging: 16 → 10 → 6 A and back up. Record time to settle.
   - [ ] Stop, sleep, wake, start round trip. Confirm no unintended wakes over one idle hour.
-  - [ ] Link loss: unplug the ESP32 mid-session. The "Tesla Bluetooth link lost" notification appears after 5 minutes, and control resumes on its own once the ESP32 is back.
-  - [ ] Internet down: disconnect the internet briefly and change the current. It must still land, since nothing in the path uses the cloud.
+  - [ ] Internet down: disconnect the internet briefly mid-session. Record what the Tesla does (it keeps its last current) and that control resumes once the connection is back.
   - [ ] Amp restore: set the normal amps in the glue package's `input_number.tesla_normal_charge_amps` (default 32). Unplug at home: the Tesla's charge-current number returns to that value. A later manual start must not begin at 6 A.
 - [ ] Enable the glue watchdogs: evcc mode `off` on stale site meters, and stop on evcc unavailable. The watchdog's Rivian step acts only while the adapter's **Solar charging** switch is on.
 - [ ] Retire `tesla_custom` control (remove it or disable its entities) so there is a single writer.
@@ -155,7 +153,7 @@ The adapter is already built, so this phase adds no code. It wires the adapter i
 ## Phase 6 — Unattended operation and polish
 
 - [ ] Dashboard: `ha-evcc` mode, plan, and power entities, plus the evcc ingress UI link.
-- [ ] Notifications: identification failures ("guest") and watchdog trips. The adapter already posts a notification for each fault, and the glue package one for a Tesla Bluetooth link lost mid-charge.
+- [ ] Notifications: identification failures ("guest"), watchdog trips, Tesla Bluetooth fallback usage. The adapter already posts a notification for each fault.
 - [ ] Departure-SoC plans per vehicle. Add a time-of-use tariff, if one applies, so plans pick cheap hours.
 - [ ] Optional and experimental: the evcc optimizer's automatic mode `full`, for forecast-aware "wait for tomorrow's sun" decisions. It needs a sponsor token, the experimental flag, and a configured vehicle capacity. Verify what it does on this site, because its docs still describe it as advisory.
 - [ ] Re-run the phase 2/3 spot checks after vehicle, charger, evcc, or integration updates that touch charging.
