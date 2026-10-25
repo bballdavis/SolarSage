@@ -59,6 +59,7 @@ from .runtime import (
     AdapterRuntime,
     RivianSolarAdapterConfigEntry,
     adapter_config_from_entry,
+    restore_failed_issue_id,
     restore_failed_notification_id,
     setup_failed_issue_id,
 )
@@ -132,6 +133,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
 
     # The adapter is back in charge of the journal it could not restore.
     persistent_notification.async_dismiss(hass, restore_failed_notification_id(vehicle_id))
+    ir.async_delete_issue(hass, DOMAIN, restore_failed_issue_id(vehicle_id))
     ir.async_delete_issue(hass, DOMAIN, setup_failed_issue_id(entry.entry_id))
     integration = await async_get_integration(hass, DOMAIN)
     runtime = AdapterRuntime(
@@ -237,7 +239,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """
     vehicle_id: str = entry.data[CONF_VEHICLE_ID]
     # The entry is gone, so its setup issue no longer applies. A failed restore
-    # below is reported by its own notification.
+    # below raises its own persistent issue, which follows the vehicle.
     ir.async_delete_issue(hass, DOMAIN, setup_failed_issue_id(entry.entry_id))
     store = JournalFileStore(hass, vehicle_id)
     try:
@@ -329,6 +331,7 @@ async def _async_finish_removal(
     hass: HomeAssistant, entry: ConfigEntry, store: JournalFileStore, data: dict[str, Any]
 ) -> None:
     """Delete a finished journal; keep one that holds an archived owner list."""
+    ir.async_delete_issue(hass, DOMAIN, restore_failed_issue_id(entry.data[CONF_VEHICLE_ID]))
     if data.get("archived_original") is None:
         await store.async_remove()
         return
@@ -369,6 +372,18 @@ def _async_notify_restore_failed(
         ),
         title="Rivian charging schedule may need manual restoration",
         notification_id=restore_failed_notification_id(entry.data[CONF_VEHICLE_ID]),
+    )
+    # The notification is lost on restart; the issue is not. It is deleted when
+    # an entry for this vehicle takes over the journal again.
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        restore_failed_issue_id(entry.data[CONF_VEHICLE_ID]),
+        is_fixable=False,
+        is_persistent=True,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="restore_failed_removed" if removed else "restore_failed_disabled",
+        translation_placeholders={"title": entry.title, "reason": reason, "path": path},
     )
 
 

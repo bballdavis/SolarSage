@@ -65,6 +65,7 @@ from custom_components.rivian_solar_adapter.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.rivian_solar_adapter.runtime import (
+    restore_failed_issue_id,
     restore_failed_notification_id,
     setup_failed_issue_id,
 )
@@ -1375,6 +1376,16 @@ async def test_disable_while_faulted_notifies(
     assert "disabled" in notification["message"]
     assert "external_edit" in notification["message"]
     assert read_journal(hass)["original"] == OWNER_SCHEDULES
+    # A repair issue survives a restart, unlike the notification.
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, restore_failed_issue_id(VEHICLE_ID))
+    assert issue is not None and issue.is_persistent
+    assert issue.translation_key == "restore_failed_disabled"
+    assert "external_edit" in issue.translation_placeholders["reason"]
+
+    # Enabled again, the adapter takes the journal back over and the issue goes.
+    assert await hass.config_entries.async_set_disabled_by(loaded_entry.entry_id, None)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, restore_failed_issue_id(VEHICLE_ID)) is None
 
 
 async def test_disable_during_error_backoff_restores(
@@ -1449,6 +1460,7 @@ async def test_remove_restores_owner_schedule(
     assert mock_rivian.schedules == OWNER_SCHEDULES
     assert not journal_path(hass).exists()
     assert restore_failed_notification_id(VEHICLE_ID) not in notifications(hass)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, restore_failed_issue_id(VEHICLE_ID)) is None
 
 
 @pytest.mark.usefixtures("fast_restore")
@@ -1479,6 +1491,12 @@ async def test_remove_keeps_journal_and_readd_inherits_it(
     # The reason is the error of this restore attempt.
     assert "Rivian request failed (RivianApiException)" in notification["message"]
     assert not any(fragment in notification["message"] for fragment in COORDINATE_FRAGMENTS)
+    # The entry is gone, but a persistent issue keeps saying so after a restart.
+    issues = ir.async_get(hass)
+    issue = issues.async_get_issue(DOMAIN, restore_failed_issue_id(VEHICLE_ID))
+    assert issue is not None and issue.is_persistent
+    assert issue.translation_key == "restore_failed_removed"
+    assert issues.async_get_issue(DOMAIN, setup_failed_issue_id(loaded_entry.entry_id)) is None
 
     # Added again, the entry uses the vehicle's journal, never the lease as "original".
     # The first tick is held at its read so the journal can be checked before it acts.
@@ -1490,6 +1508,7 @@ async def test_remove_keeps_journal_and_readd_inherits_it(
     assert entry.runtime_data.controller.journal.original == OWNER_SCHEDULES
     assert entry.runtime_data.controller.journal.release_requested == "integration removed"
     assert notification_id not in notifications(hass)
+    assert issues.async_get_issue(DOMAIN, restore_failed_issue_id(VEHICLE_ID)) is None
     mock_rivian.read_gate.set()
     await hass.async_block_till_done(wait_background_tasks=True)
 

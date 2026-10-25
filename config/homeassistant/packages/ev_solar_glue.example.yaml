@@ -18,8 +18,9 @@
 #      (sensor.<title>_solar_adapter_evcc_status, e.g. sensor.r1s_solar_adapter_evcc_status).
 #      Point the adapter's vehicle override option at input_select.twc3_vehicle_override
 #      so both sensors honor the same override.
-#   3. A stale-input sensor and two watchdogs. evcc keeps the last value of an
-#      unavailable meter, and nothing stops a car if evcc itself stops.
+#   3. An evcc liveness sensor, a stale-input sensor and two watchdogs. evcc keeps the
+#      last value of an unavailable meter, and nothing stops a car if evcc itself stops.
+#      Point the adapter's evcc liveness option at sensor.evcc_api.
 #   4. A Tesla amp restore at unplug. The Tesla keeps the last current evcc set, so a
 #      later manual charge would otherwise start at that current, possibly 6 A.
 
@@ -47,6 +48,21 @@ input_number:
     unit_of_measurement: A
     mode: box
     icon: mdi:current-ac
+
+rest:
+  # evcc liveness: unavailable whenever evcc's API does not answer (add-on stopped,
+  # crashed or restarting). Do not use an ha-evcc entity for this: with ha-evcc's
+  # default websocket connection its entities stay available after evcc stops.
+  # /api/state needs no login; jq keeps the answer to the version string.
+  # This detects a stopped evcc, not one that runs but no longer updates.
+  - resource: http://<evcc_host>:7070/api/state?jq=.version
+    scan_interval: 30
+    timeout: 10
+    sensor:
+      - name: evcc api
+        unique_id: evcc_api_liveness
+        value_template: "{{ value_json | default('up', true) }}"
+        icon: mdi:heart-pulse
 
 template:
   - sensor:
@@ -111,7 +127,7 @@ automation:
     mode: single
     triggers:
       - trigger: state
-        entity_id: <select.evcc_lp1_mode>
+        entity_id: sensor.evcc_api
         to: unavailable
         for: "00:05:00"
     actions:
@@ -123,11 +139,12 @@ automation:
           - action: switch.turn_off
             target:
               entity_id: <switch.tesla_charge>
-      # Belt and braces: the adapter already stops renewing its lease while its evcc
-      # liveness entity is unavailable, so the lease lapses on its own. Turning the switch
-      # off parks the window now instead. Only turn it off while it is on: an "off"
-      # command to an idle adapter while the car is plugged in at home would take
-      # ownership of the schedule just to park it.
+      # Belt and braces: with sensor.evcc_api as its liveness entity, the adapter stops
+      # renewing at once and, after 3 minutes, drops evcc's request and parks its
+      # window itself. This also covers an adapter without the liveness option. Only
+      # turn the switch off while it is on: without a liveness entity, an "off" command
+      # to an idle adapter while the car is plugged in at home would take ownership of
+      # the schedule just to park it.
       - if:
           - condition: state
             entity_id: switch.r1s_solar_adapter_solar_charging

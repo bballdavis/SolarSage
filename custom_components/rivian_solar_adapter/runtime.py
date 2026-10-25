@@ -151,6 +151,11 @@ def restore_failed_notification_id(vehicle_id: str) -> str:
     return f"{journal_key(vehicle_id)}_restore_failed"
 
 
+def restore_failed_issue_id(vehicle_id: str) -> str:
+    """Persistent repair issue for an unrestored owner's schedule; it follows the vehicle."""
+    return f"restore_failed_{journal_key(vehicle_id)}"
+
+
 def setup_failed_issue_id(entry_id: str) -> str:
     """Repair issue for an entry that owns the schedule but could not be set up."""
     return f"setup_failed_while_owning_{entry_id}"

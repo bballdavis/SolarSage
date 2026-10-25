@@ -46,7 +46,7 @@
           "location_entity": "The vehicle's device tracker; its state is home while the vehicle is at home. A person entity cannot be used: a person can be home without the car.",
           "charger_state_entity": "Optional. Rivian charger state sensor; charging_active, charging_connecting and smart_charging_active count as charging.",
           "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the evcc status a; unknown is ignored. It does not tell which vehicle is connected.",
-          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, ideally from the ha-evcc integration (for example the loadpoint mode select). While it is unknown, unavailable or missing, the adapter treats evcc as down: it starts and renews nothing, drops evcc's last request and parks the charging window, so charging stops. evcc asks again once it is back.",
+          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, such as a REST sensor on evcc's /api/state (see the example glue package). Do not use an ha-evcc entity: with ha-evcc's default websocket connection, its entities stay available after evcc stops. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once evcc has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), its last request is dropped and the charging window is parked, so charging stops. A request evcc sends meanwhile is kept, and evcc asks again after a restart.",
           "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector, such as auto, tesla or rivian. While its state is anything other than auto or rivian, the evcc status is a."
         }
       }
@@ -91,7 +91,7 @@
           "location_entity": "The vehicle's device tracker; its state is home while the vehicle is at home. A person entity cannot be used: a person can be home without the car.",
           "charger_state_entity": "Optional. Rivian charger state sensor; charging_active, charging_connecting and smart_charging_active count as charging.",
           "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the evcc status a; unknown is ignored. It does not tell which vehicle is connected.",
-          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, ideally from the ha-evcc integration (for example the loadpoint mode select). While it is unknown, unavailable or missing, the adapter treats evcc as down: it starts and renews nothing, drops evcc's last request and parks the charging window, so charging stops. evcc asks again once it is back.",
+          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, such as a REST sensor on evcc's /api/state (see the example glue package). Do not use an ha-evcc entity: with ha-evcc's default websocket connection, its entities stay available after evcc stops. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once evcc has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), its last request is dropped and the charging window is parked, so charging stops. A request evcc sends meanwhile is kept, and evcc asks again after a restart.",
           "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector, such as auto, tesla or rivian. While its state is anything other than auto or rivian, the evcc status is a.",
           "lease_minutes": "How far ahead each charging window reaches. If renewals stop, charging stops when it ends.",
           "renew_before_minutes": "Renew an active lease this long before it ends. Must be shorter than the lease.",
@@ -267,11 +267,19 @@
     },
     "missing_evcc_liveness_entity": {
       "title": "Solar adapter evcc liveness entity is missing",
-      "description": "The solar adapter for {title} uses {entity_id} to know whether evcc is running, but that entity does not exist. Until it does, the adapter treats evcc as down: starts and renewals are blocked, so the vehicle does not charge under the adapter, and evcc's requests are dropped. Map an existing entity in the adapter's options, clear the option, or restore the entity."
+      "description": "The solar adapter for {title} uses {entity_id} to know whether evcc is running, but that entity does not exist. Until it does, the adapter treats evcc as down: starts and renewals are blocked, so the vehicle does not charge under the adapter, and evcc's earlier request is dropped after 10 minutes. A request evcc sends meanwhile is kept but cannot start charging. Map an existing entity in the adapter's options, clear the option, or restore the entity."
     },
     "setup_failed_while_owning": {
       "title": "Solar adapter cannot run while it controls the charging schedule",
       "description": "The solar adapter for {title} controls the vehicle's charging schedule, but it could not be set up ({error}). While it cannot run, the vehicle keeps the adapter's charging window, which recurs weekly, and the owner's schedules stay suspended. Disabling the adapter now does not restore them.\n\nHome Assistant retries the setup on its own while Rivian cannot be reached; if Rivian asks for a new login, follow that repair notice. If the adapter does not recover, remove the integration: removal restores the owner's schedules, and if that fails it says so and keeps the adapter's journal at {path}."
+    },
+    "restore_failed_removed": {
+      "title": "Rivian charging schedule was not restored",
+      "description": "The solar adapter for {title} was removed while it controlled the vehicle's charging schedule, and the owner's schedules could not be restored ({reason}). Until they are, the vehicle keeps the adapter's short charging window, which recurs weekly.\n\nRestore the schedules in the Rivian app by hand, or add the adapter again for this vehicle: it reuses the journal at {path} and resumes the restore, and this issue then goes away. If you restore them by hand, delete the journal file and ignore this issue."
+    },
+    "restore_failed_disabled": {
+      "title": "Rivian charging schedule was not restored",
+      "description": "The solar adapter for {title} was disabled while it controlled the vehicle's charging schedule, and the owner's schedules could not be restored ({reason}). Until they are, the vehicle keeps the adapter's short charging window, which recurs weekly.\n\nEnable the adapter again to resume the restore; this issue then goes away. Or restore the schedules in the Rivian app by hand, then remove the adapter or delete its journal at {path}, and ignore this issue."
     }
   }
 }
