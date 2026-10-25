@@ -24,3 +24,5 @@ Background and history:
 - [Codex discussion history](docs/CODEX_DISCUSSION_HISTORY.md): relevant chat IDs and decisions.
 
 The `reference/` tree is an archival snapshot of earlier work. Its Python harness and HA tests are not installed or run by this repository. No credentials, raw Rivian responses, or live charging proof are included. Nothing in `config/` has been applied to the live Home Assistant instance.
+
+**Checks.** There is no CI yet. Before committing adapter changes, run `ruff check custom_components tests`, `ruff format --check custom_components tests` and `python -m pytest tests -q` locally, in a Python 3.14 environment with `pytest-homeassistant-custom-component` and `rivian-python-client` installed.
