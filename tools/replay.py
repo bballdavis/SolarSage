@@ -16,7 +16,8 @@ Two ways to run it:
   current the car really drew. This is what shadow mode will show in Home Assistant.
 - **what-if** (``--whatif``, closed loop): the car draws what the planner commands, and a
   simple Sol-Ark model (the sun serves the house, the battery takes the surplus and covers the
-  deficit within 9 kW and its reserve, it holds in free hours, the grid takes the rest) turns
+  deficit within 9 kW and its reserve; in free hours it charges from the grid at its full rate
+  until full and never discharges; the grid takes the rest) turns
   the real solar and house load into the battery level, grid power and costs the planner
   would have caused. The planner then sees that world, not the real one.
 

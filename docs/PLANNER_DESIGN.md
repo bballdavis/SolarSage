@@ -5,11 +5,11 @@ October 25, 2026. This is the design that [PLAN.md](PLAN.md) phase 2 asks for: h
 - **The code** is the pure-Python package [`custom_components/solar_ev_planner/core/`](../custom_components/solar_ev_planner/core/): standard library only, no Home Assistant imports. Its unit tests are in [`tests/planner/core/`](../tests/planner/core/). The real-data tools load the same folder as the package `planner_core`, which is the name used below.
 - **The Home Assistant integration** around it (entities, settings, commands) is described in [PLANNER.md](PLANNER.md), and testing it with real data in [TESTING.md](TESTING.md).
 - **The simulation results** below come from a design run whose harness and comparison tools are not part of this repository ([section 13](#13-where-things-are)).
-- **The free-hours refill came after the simulation.** The simulated site held its battery in free hours and wanted 40% when they began. The owner's Sol-Ark refills the battery to 100% instead, so the planner now models the refill and adds a fourth power, Spread (section 2). Spread, the refill and the 30% default are covered by unit tests, not by the simulation; the shadow week and `tools/replay.py --whatif` on real days are their check.
+- **The free hours changed after the simulation.** The simulated planner charged the car in a 10 PM to 6 AM night window, and the simulated site held its battery in free hours and wanted 40% when they began. The planner now charges the car at its full current from the moment the free hours begin. In those hours the owner's Sol-Ark refills the battery to 100% from the grid on its own settings, so the planner models the refill and adds a fourth power, Spread (section 2). Full-current free hours, Spread, the refill and the 30% default are covered by unit tests, not by the simulation; the shadow week and `tools/replay.py --whatif` on real days are their check.
 
 ## 1. The decision
 
-Three designs were built and compared against four baselines on 30 simulated scenarios (3 weather and load draws each), plus 19 scenarios re-drawn with seeds no design was tuned on. All runs use the owner's tariff: free 8 PM to 6 AM, $0.32/kWh otherwise, $0.00 buyback, night window 10 PM to 6 AM.
+Three designs were built and compared against four baselines on 30 simulated scenarios (3 weather and load draws each), plus 19 scenarios re-drawn with seeds no design was tuned on. All runs use the owner's tariff: free 8 PM to 6 AM, $0.32/kWh otherwise, $0.00 buyback, and the night charging window used then, 10 PM to 6 AM (see the note above).
 
 | Design | What it is | Owner score, all 72 rows (lower is better) |
 | --- | --- | ---: |
@@ -36,7 +36,7 @@ Why this one:
   That is inside seed noise for almost every scenario. All of them put 5,300–5,700 kWh of solar into the cars, with almost no car-caused paid import (0.7–5 kWh in all).
 - **Only plans separate them, and there the trajectory design fails.** On a daytime-only weekday plan ("80% by 17:00") the trajectory design scores 652, against 370 for final and 345 for robust. It pushes the plan in the last paid hours and leaves the home battery near empty into the evening (3,630 car-caused minutes below the floor).
 - **The MPC is as good but heavier.** It takes 6.6 ms a step, against 2.0 ms for final including all dashboard outputs. Its decisions come out of a cost table that is hard to explain on a dashboard.
-- **Final is the simplest to explain and to check.** One rule, `P = min(P_cap, max(P_noexport, P_fill, P_min))` (with the free-hours refill, `P_spread` joins the max; section 2). Each decision's one-sentence reason names the limit that binds. The internal constants sit on a broad plateau: every variant tried moved the total by at most 2–3%.
+- **Final is the simplest to explain and to check.** One rule, `P = min(P_cap, max(P_noexport, P_fill, P_min))` (with free hours ahead, `P_spread` joins the max; section 2). Each decision's one-sentence reason names the limit that binds. The internal constants sit on a broad plateau: every variant tried moved the total by at most 2–3%.
 
 ## 2. How it decides, in plain words
 
@@ -46,8 +46,8 @@ Every 15 minutes, and at once on plug-in, on a new Solcast issue or when the mod
 
 1. **Builds today's forecast as a range.** Each Solcast half hour is a bell curve on a log scale: the most likely value p50, and a spread taken from p10 and p90. Today's real production so far pulls the rest of today up or down. Early in the morning the forecast dominates; by early afternoon today's behaviour carries about two thirds of the weight.
 2. **Predicts the house load** from the last 14 days, recency-weighted, with weekdays and weekends kept apart. Today's level (the last 24 hours against the profile) and any sustained jump in the last 2 hours (air conditioning, for example) are added on top.
-3. **Predicts the home battery** in 15-minute steps from now until tomorrow's free hours, or tomorrow's sunset when there are no free hours. It uses the Sol-Ark's own rules: the sun serves the house first, the battery absorbs surplus and covers deficits, and at most 9 kW flows each way. In free hours the battery does what the planner's free-hours option says: **refill** (the owner's setting: it charges from the grid at its full rate, the sun first, up to the refill level, 100% by default), **hold** (it does not discharge) or **normal** (as by day). The prediction runs twice: once for the expected day, and once for a cautious day at the owner's caution level (default 90%), where solar is lower and house use higher.
-4. **Works out three powers for the car:**
+3. **Predicts the home battery** in 15-minute steps from now until tomorrow's free hours, or tomorrow's sunset when there are no free hours. It uses the Sol-Ark's own rules: the sun serves the house first, the battery absorbs surplus and covers deficits, and at most 9 kW flows each way. In free hours the Sol-Ark's own settings charge the battery from the grid, so the prediction fills it at its full rate (the sun first, the grid for the rest) until it is full, and never discharges it. The prediction runs twice: once for the expected day, and once for a cautious day at the owner's caution level (default 90%), where solar is lower and house use higher.
+4. **Works out four powers for the car:**
    - **Room (P_cap).** The highest steady power that keeps three things true on the cautious path all the way to tomorrow's free hours:
      - the battery never goes below the 30% floor (where the battery is already headed below the floor without the car, the car may not push it lower);
      - it still holds the wanted level when the free hours start (30% by default, the floor; the simulation used 40%);
@@ -55,7 +55,7 @@ Every 15 minutes, and at once on plug-in, on a new Solcast issue or when the mod
      In this test the car holds its power for 2 hours and then takes only surplus, because the planner will have re-planned long before then.
    - **Spill (P_noexport).** The lowest steady power at which the expected day exports nothing while the car still wants energy: the solar the battery cannot store. Battery energy that the sun refills later counts here, so "drain now, refill later" comes out of the forecast.
    - **Plan (P_fill).** Only with a plan: the lowest steady power that reaches the plan's target by the end of the solar window on the cautious day.
-   - **Spread (P_spread), only with the free-hours refill.** The free hours fill the battery from the grid overnight, so what it would still hold when they begin is worth nothing tomorrow. Spread is the highest steady power that, held through the whole solar window (not just 2 hours), keeps the floor and the wanted level on the cautious path. After the 2 hours the car is held only as far as the sun and the battery supply it without import, since the safety rule cuts paid import within minutes. So a car plugged in by day gets the battery's spare energy spread over the afternoon, and the cautious path reaches the wanted level when the free hours start. The dashboard's battery outlook then shows that held path.
+   - **Spread (P_spread), only when free hours lie ahead.** The free hours fill the battery from the grid, so what it would still hold when they begin is worth nothing tomorrow. Spread is the highest steady power that, held through the whole solar window (not just 2 hours), keeps the floor and the wanted level on the cautious path. After the 2 hours the car is held only as far as the sun and the battery supply it without import, since the safety rule cuts paid import within minutes. So a car plugged in by day gets the battery's spare energy spread over the afternoon, and the cautious path reaches the wanted level when the free hours start. The dashboard's battery outlook then shows that held path.
 5. **Sets the car's power** to `P = min(Room, max(Spill, Plan, Spread, the car's minimum current))`, then moves the real current toward it slowly:
    - changes under 5 A are ignored, and under 10 A for decreases that the battery rules do not require;
    - at most one change every 15 minutes, and at most 6 A per change;
@@ -63,16 +63,14 @@ Every 15 minutes, and at once on plug-in, on a new Solcast issue or when the mod
 
 So **the floor is a limit on the predicted path, not a trigger.** If the cautious prediction stays above the floor through the evening, the night and tomorrow morning, the battery is allowed to drain now. Clouds then come out of the battery, and the car's current stays where it is.
 
-### Night charging and waiting (free hours)
+### Free hours at full current
 
-- **Inside the night window** (default 10 PM to 6 AM), the car charges at the night current (default: the car's maximum) up to its charge limit, then stops.
-- **Free hours outside the window** (8 PM to 10 PM): the car waits, unless the night window alone cannot deliver what it needs (or a plan's target before its deadline). Then it starts as late as possible.
-- **A car still charging when free hours begin** (it was solar charging and is still short) carries straight on: night charging finishes it.
-- **The battery itself is never commanded.** The planner models what the Sol-Ark does in free hours, by default a refill to 100% from the grid (PLAN.md decision 14). The `BatterySpec.free_hours` option (`refill`, `hold` or `normal`) and `refill_to_pct` must match the inverter.
+- **The car charges at its full current** from the moment the free hours begin (8 PM for now), up to its charge limit, then stops. Full current is the car's maximum, capped by the Wall Connector's setting (48 A). The dashboard shows, for example, *"Free hours: charging at 48 A to the 85% limit."*
+- **The battery itself is never commanded.** The Sol-Ark's own settings charge it from the grid in free hours (PLAN.md decision 14). The planner's prediction fills it at its full charge power (9 kW by default) until it is full and never discharges it there, so the next paid hours start at 100%.
 
 ### Worked example
 
-The example is from the summer simulation, Tuesday 16 June, a partly cloudy day. The Rivian (limit 85%) plugs in at 10:00 at 63%. The home battery is at 78%.
+The example is from the summer simulation, Tuesday 16 June, a partly cloudy day. It ran with the earlier setup (a 10 PM night window, a battery that held its level in free hours, no Spread; see the top of this page), so the numbers are as recorded then. The Rivian (limit 85%) plugs in at 10:00 at 63%. The home battery is at 78%.
 
 | Step | Numbers at 10:00 |
 | --- | --- |
@@ -90,7 +88,7 @@ The rest of the day:
 
 - **12:15:** after a brighter late morning, Spill is 3.9 kW (16 A). That is 6 A above the current setting, past the deadband, so the current changes once, to 16 A.
 - **17:30:** solar no longer covers the house, so the car pauses: *"No solar window now; the R1S waits for free hours."*
-- **22:00:** the night window starts and the car charges at 48 A to 85%.
+- **22:00:** the simulated night window starts and the car charges at 48 A to 85%. The planner now starts this at 20:00, when the free hours begin.
 
 The day took 5 current changes. Solar put 18.9 kWh into the car, the battery 7.0 kWh (clouds the battery absorbed, refilled by the sun the same afternoon), and free hours 15.7 kWh. There was no paid import, and the battery never went below 59%.
 
@@ -149,12 +147,10 @@ These are the owner's settings, all on the dashboard. They map to `planner_core.
 | Free hours | 8 PM–6 AM daily | Schedule helper | `Tariff` window at $0 |
 | Price outside free hours | $0.32/kWh | Normal import price | `Tariff.price` |
 | Solar buyback | $0.00/kWh | Export price | `Tariff.buyback` |
-| Night charging window | 10 PM–6 AM | When the overnight car charges | `night_start`, `night_end` |
-| Night charging current | the car's maximum | Lower it to spread the charge | `night_current_a` (None = max) |
-| Daytime solar charging | on | Off: a car plugged in by day waits for the night window | `daytime_solar` |
+| Daytime solar charging | on | Off: a car plugged in by day waits for the free hours | `daytime_solar` |
 | Caution | conservative | near-certain / conservative / balanced / typical day | `caution` |
 | Battery floor | 30% | The predicted battery stays above this | `floor_pct` |
-| Battery level wanted when free hours start | 30% (the floor; 40% in the simulation) | At sunset when there are no free hours. With the refill, the car may use the battery down to it | `wanted_at_free_start_pct` |
+| Battery level wanted when free hours start | 30% (the floor; 40% in the simulation) | At sunset when there are no free hours. With free hours ahead, the car may use the battery down to it (Spread); raise it to keep more in the battery | `wanted_at_free_start_pct` |
 | Minimum time between changes | 15 min | | `min_change_min` |
 | Largest single change | 6 A | | `max_step_a` |
 | Paid grid tolerance | 5 min | Paid import accepted this long before the safety rule acts | `paid_tolerance_min` |
@@ -177,10 +173,10 @@ The internal constants are `planner_core.Params`, not owner settings. Each was v
 
 Every plan is settings only: Schedule helpers painted with prices (`WeeklySchedule.from_ha`), a normal price and a buyback.
 
-- **Free nights (today).** By day the car takes the spill and, because the battery refills overnight, the battery's spare energy spread over the afternoon (Spread). The wanted-level check is at 8 PM. Night charging runs in the window while the Sol-Ark refills the battery from the grid, so the next paid day starts full. A car plugged in all day and night gets its solar and spare battery by day and the rest free at night. (The simulation ran this tariff with a battery that held overnight and a 40% check.)
-- **Time of use (no free hours).** Nothing is free, so there is no night mode and no refill. The wanted-level check is at sunset. By day the car takes the spill. Without a plan, a car plugged in at night waits for the sun. A plan's shortfall is charged at full current in the cheapest paid hours, as late as possible before the deadline. If the inverter does not hold the battery off-peak, night plan charging drains the home battery first (section 11).
+- **Free nights (today).** By day the car takes the spill and, because the battery refills overnight, the battery's spare energy spread over the afternoon (Spread). The wanted-level check is at 8 PM. From 8 PM the car charges at its full current while the Sol-Ark refills the battery from the grid, so the next paid day starts full. A car plugged in all day and night gets its solar and spare battery by day and the rest free at night. (The simulation ran this tariff with a 10 PM night window, a battery that held overnight and a 40% check.)
+- **Time of use (no free hours).** Nothing is free, so there is no night mode and no refill. The wanted-level check is at sunset. By day the car takes the spill. Without a plan, a car plugged in at night waits for the sun. A plan's shortfall is charged at full current in the cheapest paid hours, as late as possible before the deadline. In paid hours the battery serves the car before the grid, so night plan charging drains the home battery first (section 11).
 - **Flat.** The same as time of use with one price: solar by day, and paid power only when a plan needs it.
-- **Free weekend.** Free daylight hours count as free hours. The battery fills from the sun, the car charges in the night window from free power, and a car already charging when the free hours begin carries on.
+- **Free weekend.** Free daylight hours count as free hours. The car charges at its full current through them, and the prediction fills the battery as on a free night, the sun first.
 - **Buyback above $0.** The decisions do not change. Spill still goes to the car, which is right while the car's energy is worth more than the buyback. The rule `P_noexport` would need a price comparison if buyback ever exceeds that value.
 
 ## 6. Plans
@@ -188,7 +184,7 @@ Every plan is settings only: Schedule helpers painted with prices (`WeeklySchedu
 A plan is "X% by T", from the dashboard. `RepeatingPlan(80, "07:30", weekdays)` makes the concrete `CarPlan`s for the next few days. The sources are used in the owner's order:
 
 1. **Sun and battery within the floor rule.** `P_fill` raises the steady power, up to Room, so the target is reached by the end of the solar window.
-2. **Free hours.** The night window first, starting before 10 PM only if the window cannot make it.
+2. **Free hours.** The car charges at full current from the moment they begin, so each free hour before the deadline counts at the car's full power.
 3. **Paid power, only for what 1 and 2 cannot cover.** The car charges at full current:
    - **now**, when the deadline falls inside today's solar window, so the sun can refill the battery before the evening;
    - otherwise in the cheapest paid hours, as late as possible.
@@ -225,10 +221,12 @@ Nothing seasonal is fixed:
 - the solar window, the end of the surplus and the reserve come from the forecast on every run;
 - house demand comes from the last 14 days.
 
+The rows below are from the simulation, with its earlier setup (see the top of this page).
+
 | Season | What the planner does |
 | --- | --- |
 | Summer | Long surplus. On the partly cloudy chart day the car takes 10–20 A by day, the battery still reaches 95% (the evcc-like follower's peaks at 65%) and holds overnight. |
-| Winter (Dec 21, 5 kW peak, heating) | House use exceeds solar most of the day. The car gets no battery energy, night charging does the work, and no paid import comes from the car. All three designs score the same here; free-hours-only scores up to 7 points better only because its night starts at 8 PM (section 11). |
+| Winter (Dec 21, 5 kW peak, heating) | House use exceeds solar most of the day. The car gets no battery energy, night charging does the work, and no paid import comes from the car. All three designs score the same here; free-hours-only scores up to 7 points better only because its night started at 8 PM and theirs at 10 PM (section 11). |
 | Air conditioning jump (+40%) | The 24-h level and the 2-h offset raise the house prediction on the day of the jump; the recency weights carry it from the next day. The trajectory design adapts a little faster: 15 car-caused floor minutes per week against 83 for final. |
 | Weekday / weekend | Separate profiles. A home-on-weekends household gets a bigger weekend reserve. |
 
@@ -284,7 +282,7 @@ The integration fills one `Snapshot` per call:
 | --- | --- |
 | `now` | Local time (naive local, or aware local; do not mix) |
 | `soc_pct` | Home battery level (%) |
-| `battery` | `BatterySpec(capacity_kwh, max_charge_kw, max_discharge_kw, efficiency, reserve_pct, free_hours, refill_to_pct)`; `free_hours` is `FREE_REFILL` (default), `FREE_HOLD` or `FREE_NORMAL` |
+| `battery` | `BatterySpec(capacity_kwh, max_charge_kw, max_discharge_kw, efficiency, reserve_pct)`; in free hours the prediction charges it at `max_charge_kw` until full |
 | `tariff` | A `Tariff`, or anything with `import_price(t)`, `export_price(t)` and `is_free(t)` in $/kWh |
 | `forecast` | `ForecastSlot(start, p10, p50, p90)` half hours, today 00:00 to tomorrow 24:00 (kW); past slots keep their last values |
 | `load` | The `LoadProfile` from `build_load_profile`, rebuilt once a day |
@@ -301,7 +299,7 @@ The integration fills one `Snapshot` per call:
 
 | Field | Meaning |
 | --- | --- |
-| `mode` | `off` / `empty` / `stale` / `full` / `day` / `wait` / `night` |
+| `mode` | `off` / `empty` / `stale` / `full` / `day` / `night` (`night` is any free hour; the dashboard labels it "Free hours") |
 | `car_id` | The car on the charger |
 | `commands` | One `CarCommand(car_id, amps, reason)` per car: None = no call; 0 = switch off; > 0 = set the current number, then switch on if it was off |
 | `reason` | One sentence for the dashboard |
@@ -327,12 +325,11 @@ In shadow mode the planner keeps its own virtual current, so the shadow plan evo
 - **The caution level is not fully honest yet.** The 90% path held 76% of the time in the simulation (section 3). The remedy needs data:
   - in shadow mode, log the predicted level at the start of free hours against the realised one, then either re-scale z or add a sun-dependent house term;
   - neither should be tuned on simulated data.
-- **Plans are forced through battery-first physics.** Paid power for a plan comes from the home battery first. On a cloudy daytime-only weekday plan this empties the battery, and in the simulation the free-hours hold kept it low overnight (weekday_plan: 1,500–2,900 car-caused floor minutes per 5 days); with the refill it is full again by morning. Plans outrank the floor, as the owner asked. The early/late push split is a hand-made rule, and it is sensitive near the boundary.
-- **The free-hours refill is assumed to reach its level.** The planner models the inverter's free-hours behaviour from its option and never checks it. If the refill stops short (a changed time-of-use slot, a lower grid-charge rate), a day that Spread planned down to the floor leaves the next paid morning short. With `normal`, night charging drains the home battery, and on time of use the planner's only lever is not to charge (tou: about 85 kWh of plan-driven paid import over 3 days for every design).
+- **Plans are forced through battery-first physics.** Paid power for a plan comes from the home battery first. On a cloudy daytime-only weekday plan this empties the battery, and in the simulation the free-hours hold kept it low overnight (weekday_plan: 1,500–2,900 car-caused floor minutes per 5 days); with the refill it is full again by morning. On time of use, where nothing is free, night plan charging drains the home battery too, and the planner's only lever is not to charge (tou: about 85 kWh of plan-driven paid import over 3 days for every design). Plans outrank the floor, as the owner asked. The early/late push split is a hand-made rule, and it is sensitive near the boundary.
+- **The free-hours refill is assumed to reach 100%.** The planner assumes the Sol-Ark's own settings fill the battery from the grid in free hours, and never checks it. If the refill stops short (a changed time-of-use slot, a lower grid-charge rate), a day that Spread planned down to the wanted level leaves the next paid morning short.
 - **Spread is not simulated** (see the top of this page). It cycles the home battery more than Spill alone, roughly the car's share of the battery each sunny day; raising the wanted level at free start limits that.
 - **A steady current with a 2-hour commitment is an approximation.** Some midday export can remain when Room binds: 20–26 kWh over 3 flat-tariff days, where the trajectory design leaves 8–9. Taking the measured export when the battery is full was tried; it cost more floor time elsewhere.
-- **The 10 PM window looks worse in the simulation than it is.** Simulated runs end at midnight, so the last night delivers only two hours. This is why the free-hours-only baseline (which starts at 8 PM) wins the season and winter rows by up to 7 points.
-- **Free daylight hours (a free weekend) wait for the night window**, even when the battery is full and exporting. That is free either way, but it looks odd.
+- **The simulation's 10 PM night window cost it points.** The simulated planner charged the car from 10 PM, and simulated runs end at midnight, so the last night delivered only two hours. This is why the free-hours-only baseline (which starts at 8 PM) wins the season and winter rows by up to 7 points. The planner now charges from the start of the free hours, as that baseline does.
 - **History builds up.** The multi-day PV bias needs past days' solar against their forecast, which the integration keeps in its own store; until it has a few days, the planner uses priors. The house profile comes from the recorder's statistics, so a new installation starts with whatever history the recorder already has.
 - **Not measured here:**
   - the real Gen 2 Rivian schedule-write behaviour;
@@ -343,7 +340,7 @@ In shadow mode the planner keeps its own virtual current, so the shadow plan evo
 
 ## 12. Results
 
-**Method.** Every policy ran on the same simulated worlds (the design run's harness, unchanged), on the owner's tariff and settings.
+**Method.** Every policy ran on the same simulated worlds (the design run's harness, unchanged), on the owner's tariff and the settings of the time: a 10 PM to 6 AM night window, and a battery that held its level in free hours with a 40% check (see the top of this page).
 
 - **Score.** The harness's owner score: lower is better, and 1 point is about $0.20. Paid import, lost export, current changes, billed Tesla calls, minutes below the floor, plan shortfall and the battery's end level all count against a policy; energy delivered to the car counts for it. Costs are measured against a run of the same world in which the car never charges.
 - **Seeds.** Each row is the mean of 3 seeds.
@@ -438,7 +435,7 @@ The owner's tariff only: free nights, no plan that forces paid power. That is 12
 | Path | What |
 | --- | --- |
 | [`custom_components/solar_ev_planner/core/`](../custom_components/solar_ev_planner/core/) | The package: `types.py`, `tariff.py`, `solcast.py`, `load_profile.py`, `pv.py`, `house.py`, `battery.py`, `planner.py`, `entities.py` |
-| [`tests/planner/core/`](../tests/planner/core/) | Its 52 unit tests, including the HA-shaped end-to-end fixture `ha_fixture.py` |
+| [`tests/planner/core/`](../tests/planner/core/) | Its 59 unit tests, including the HA-shaped end-to-end fixture `ha_fixture.py` |
 | [`custom_components/solar_ev_planner/`](../custom_components/solar_ev_planner/) | The Home Assistant integration that feeds it and sends its commands ([PLANNER.md](PLANNER.md)) |
 | [`tools/replay.py`](../tools/replay.py) | Runs the planner over the owner's recorded days ([TESTING.md](TESTING.md)) |
 

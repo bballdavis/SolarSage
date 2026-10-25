@@ -56,7 +56,6 @@ class Range:
 
 
 SETTINGS = (
-    # 48 A (the top) means each car's maximum, as night charging defaults to
     Range("battery_floor", S_FLOOR, 5, 95, 1, PERCENTAGE, False),
     Range("battery_wanted_at_free_hours", S_WANTED, 0, 100, 1, PERCENTAGE, False),
     Range("minimum_time_between_changes", S_MIN_CHANGE, 1, 120, 1, UnitOfTime.MINUTES),

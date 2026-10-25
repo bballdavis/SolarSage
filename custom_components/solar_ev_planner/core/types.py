@@ -278,7 +278,7 @@ class Decision:
     """The planner's answer for one call."""
 
     now: datetime
-    mode: str  # off | empty | stale | full | day | wait | night
+    mode: str  # off | empty | stale | full | day | night (night = any free hours)
     car_id: str | None  # the car on the charger
     commands: tuple[CarCommand, ...]  # one per car in the snapshot
     reason: str  # one sentence for the dashboard

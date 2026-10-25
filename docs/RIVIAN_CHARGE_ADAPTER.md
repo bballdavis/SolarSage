@@ -44,7 +44,7 @@
    - **If a disable or removal cannot restore the owner's schedule**, a persistent repair issue says so and survives restarts. It goes away when the adapter is enabled again or added again for the vehicle, which resumes the restore.
    - **A change of Home Assistant's time zone** reloads the adapter, which then rewrites its window in the new local time. A change of the home location takes effect at the next reload or restart.
 
-**While the adapter owns the schedule, the owner's own schedules are suspended.** Overnight charging then comes from the planner's night charging and plans, not from the owner's Rivian schedule.
+**While the adapter owns the schedule, the owner's own schedules are suspended.** Overnight charging then comes from the planner, which charges the car at full current in the free hours, not from the owner's Rivian schedule.
 
 ## Install and configure
 

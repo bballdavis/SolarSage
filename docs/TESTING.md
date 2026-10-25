@@ -71,11 +71,11 @@ Plan phase 1: every planner input is present and fresh, with no control yet.
    python -m tools.snapshot pull --days 7
    ```
 
-**Done when** a week of checks shows no FAIL, both cars were identified correctly on the charger, and the snapshot holds a week of data. Answer the open [information needed](PLAN.md#information-needed) items now. Also look at the Sol-Ark battery level in the week's history: it should be back at 100% by the end of each night's free hours, because the planner counts on that refill (PLAN.md decision 14). If it is not, set the planner's "home battery during free hours" option to match what the inverter really does.
+**Done when** a week of checks shows no FAIL, both cars were identified correctly on the charger, and the snapshot holds a week of data. Answer the open [information needed](PLAN.md#information-needed) items now. Also look at the Sol-Ark battery level in the week's history: it should be back at 100% by the end of each night's free hours, because the planner counts on that refill (PLAN.md decision 14). If it is not, fix that in the Sol-Ark's settings: the planner leaves charging the battery from the grid to the inverter.
 
 ## 2. Replay real days
 
-Plan phase 2: the owner agrees with the behaviour. [PLANNER_DESIGN.md](PLANNER_DESIGN.md) describes it on simulated days; the replay shows it on yours.
+Plan phase 2: the owner agrees with the behaviour. [PLANNER_DESIGN.md](PLANNER_DESIGN.md) describes it; its simulated days come from an earlier version. The replay shows it on yours.
 
 ```sh
 python -m tools.replay tools/out/snapshot_<first>_<last>.json             # what it would have planned
@@ -85,7 +85,7 @@ python -m tools.replay tools/out/snapshot_<first>_<last>.json --set caution=bala
 
 Open the `.html` page it writes in `tools/out/`. For each day, look at:
 
-- **Car current:** a smooth daytime current, a few changes a day, each with a reason that makes sense;
+- **Car current:** a smooth daytime current, a few changes a day, each with a reason that makes sense, and the car's full current from the start of the free hours (or from plug-in) until it reaches its limit;
 - **Home battery:** in `--whatif`, it stays above the floor (30%) by day, nears the wanted level (30% by default) at the free start only on days a car took the battery's spare energy, and refills to 100% overnight;
 - **Paid import** in the summary: near zero for the car on the free-nights tariff;
 - **The forecast source** in the notes: `totals` days are an approximation until `record-forecasts` has run for a while (the [tools guide](../tools/README.md#replaypy-what-would-the-planner-have-done) explains).
@@ -108,7 +108,7 @@ Plan phase 3: the planner runs in Home Assistant, plans and explains, and sends 
    - Each evening, replay the day to see it charted against what happened: `python -m tools.replay --live --days 1`.
    - Note the predicted battery when the free hours start (`at_free_hours_start` on `sensor.solar_ev_planner_battery_minimum`, recorded in its history) against the real level at 20:00. These pairs recalibrate the caution level later ([PLANNER_DESIGN.md, known limits](PLANNER_DESIGN.md#11-known-limits)).
    - If something looks wrong, download the planner's diagnostics (its entry → ⋮ → Download diagnostics; coordinates and identifiers are redacted).
-9. **Try the settings:** change the caution, the floor or the night window and watch the reason change at once.
+9. **Try the settings:** change the caution, the floor or the battery wanted at free hours and watch the reason change at once.
 
 **Done when** a week of shadow plans looks sensible to you: smooth currents, a few changes a day, the right car identified, and no `no_data` periods you cannot explain.
 

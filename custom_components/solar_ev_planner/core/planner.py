@@ -223,13 +223,15 @@ class Planner:
             amps, reason, dbg = self._night(snap, car)
             dbg["exempt"] = True  # free hours: full current at once
             mode = "night"
+            self.import_since = self.export_since = None  # import is free: nothing to time
         else:
             amps, reason, dbg = self._day(snap, car)
             mode = "day"
             safety = dbg.pop("safety", None)
-        exempt = dbg.pop("exempt", False) or plug_in or mode != self.mode
+        fresh = plug_in or mode != self.mode  # a new session or mode: tell the car once
+        exempt = dbg.pop("exempt", False) or fresh
         self.mode = mode
-        amps_out, reason, want = self._limit(snap, car, amps, reason, exempt, dbg)
+        amps_out, reason, want = self._limit(snap, car, amps, reason, exempt, fresh, dbg)
         if amps_out is not None and amps_out != car.commanded_a:
             self.last_change = now
         if s.shadow and amps_out is not None:
@@ -273,11 +275,12 @@ class Planner:
             return a, plan_why, dbg
         safe = self._safety(snap, car)
         if safe is not None:
-            a, why, rule = safe
-            self.cap = (a, now + timedelta(minutes=self.params.safety_cap_min))
-            dbg["exempt"] = True
+            cut, why, rule = safe
+            self.cap = (cut, now + timedelta(minutes=self.params.safety_cap_min))
+            dbg["exempt"] = True  # either way the lower current goes at once
             dbg["safety"] = rule
-            return a, why, dbg
+            if cut < a:  # otherwise the plan already wants less than the cut
+                return cut, why, dbg
         if self.cap is not None and now < self.cap[1] and a > self.cap[0]:
             dbg["capped_from"] = a
             a = self.cap[0]
@@ -696,13 +699,24 @@ class Planner:
         return sp.min_a if car.commanded_a > 0 and a >= 0.6 * sp.min_a else 0
 
     def _limit(
-        self, snap: Snapshot, car: CarState, want: int, reason: str, exempt: bool, dbg: dict
+        self,
+        snap: Snapshot,
+        car: CarState,
+        want: int,
+        reason: str,
+        exempt: bool,
+        fresh: bool,
+        dbg: dict,
     ) -> tuple[int | None, str, int]:
-        """(amps to send or None, reason, the current the plan wants)."""
+        """(amps to send or None, reason, the current the plan wants). An unchanged current
+        is sent again only on a new session or mode (the executor re-sends a request the
+        Rivian adapter dropped, and never repeats a Tesla command the owner overrode)."""
         now, s, cur = snap.now, self.settings, car.commanded_a
         dbg["want_a"] = want
-        if want == cur or exempt:
-            return (want if exempt else None), reason, want
+        if want == cur and not fresh:
+            return None, reason, want
+        if exempt or want == cur:
+            return want, reason, want
         since = (now - self.last_change).total_seconds() if self.last_change else 1e9
         if since < s.min_change_min * 60.0 and not (want > cur and self._early_increase_ok(now)):
             nxt = self.last_change + timedelta(minutes=s.min_change_min)
@@ -949,6 +963,8 @@ class Planner:
             )
         if mode == "day" and b is not None:
             for st, kw in zip(b.steps, b.path.car_kw, strict=False):
+                if st.refill:
+                    break  # the free hours: full current, below
                 a = self._to_amps(kw, replace(car, commanded_a=cur), snap) if st.car_on else 0
                 if (a == 0) != (cur == 0) or abs(a - cur) >= self.params.deadband_a:
                     if a > 0:
@@ -958,8 +974,9 @@ class Planner:
                     else:
                         why = "the solar window ends"
                     return PlannedChange(max(now, st.t), a, why)
-            if b.t_free is not None and car.need_kwh > 0.5:
-                return PlannedChange(b.t_free, self._max_a(car, snap), "the free hours start")
+            max_a = self._max_a(car, snap)
+            if b.t_free is not None and car.need_kwh > 0.5 and max_a != cur:
+                return PlannedChange(b.t_free, max_a, "the free hours start")
             return None
         if mode == "night" and cur > 0:
             t_done = now + timedelta(hours=car.need_kwh / car.spec.kw(cur, snap.volts))

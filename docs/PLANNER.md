@@ -1,13 +1,14 @@
 # Solar EV planner
 
-**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [charge adapter](RIVIAN_CHARGE_ADAPTER.md). How it decides, and how it did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
+**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [charge adapter](RIVIAN_CHARGE_ADAPTER.md). How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
 
 **Status: software-tested only.** Its tests run against Home Assistant 2026.10.3, with made-up states, a real recorder and Schedule helper, and the real Rivian adapter over a simulated Rivian account. It has not been run against the owner's Home Assistant. **It starts in shadow mode: it plans and explains, but sends nothing until you turn shadow mode off.**
 
 ## What it does
 
 - **Every minute** it reads the Sol-Ark, the Wall Connector, Solcast, the free-hours schedule and both cars. House use is `solar + grid − battery − Wall Connector` (there is no house sensor).
-- **Every 15 minutes** (and at once on a plug-in, a new forecast or a mode change) it plans one steady current for the car on the charger: excess solar first, then the home battery within the floor rule (with the free-hours refill, the battery energy that would be left when the free hours begin), then free hours, and paid grid power only when a plan cannot be met otherwise.
+- **Every 15 minutes** (and at once on a plug-in, a new forecast or a mode change) it plans one steady current for the car on the charger: excess solar first, then the home battery within the floor rule (with free hours ahead, what it would still hold above the wanted level when they begin), then free hours, and paid grid power only when a plan cannot be met otherwise.
+- **In free hours** the car on the charger charges at its full current (the car's maximum, capped by the Wall Connector) from the moment they begin until its charge limit. The planner counts on the Sol-Ark's own settings to charge the home battery from the grid meanwhile, and predicts it charging to full.
 - **Every minute** its safety rules check for paid import and the battery at the floor.
 - **It commands only the car it sees on the charger**, and only what differs from what the car already holds. A pause is the charge switch, never 0 A.
 - **It explains itself**: a mode, a one-sentence reason, the next planned change, the predicted battery path and each car's outlook.
@@ -69,8 +70,6 @@ The form is prefilled with the owner's entity IDs wherever they exist. Change an
 | | Battery capacity sensor | `sensor.sol_ark_battery_capacity_estimate` (optional; the fixed capacity, 31 kWh, is used without it) |
 | | Maximum charge and discharge power | 9 kW each |
 | | Battery reserve | 10%: where the inverter stops discharging |
-| | Home battery during free hours | **Refill** (default): the Sol-Ark charges the battery from the grid while import is free, so each paid day starts full, and by day the car may use what the battery would still hold when the free hours begin. **Hold:** it keeps its level and the house and car run from the grid. **Normal:** it serves the house and car as by day. Must match the inverter's time-of-use setting ([PLAN.md, decision 14](PLAN.md#decisions)). |
-| | Refill level | 100%: where the grid charging stops (the time-of-use slot's battery level) |
 | Wall Connector | Power | `sensor.tesla_wall_connector_total_power` (kW). **Required:** without it the planner cannot tell the house from the car, and does not plan. |
 | | Vehicle current | `sensor.garage_tesla_wall_connector_vehicle_current` |
 | | Vehicle connected | `binary_sensor.tesla_wall_connector_vehicle_connected` (recommended: off means no car is commanded) |
@@ -106,7 +105,7 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 
 ### Electricity plans
 
-The free hours are the main entry's Schedule helper, at $0. Every other price level is a **price window**: on the planner's entry choose **Add price window**, pick a Schedule helper painted for that level, a name and a price (and optionally an export price). The price is then a number entity, `number.solar_ev_planner_<name>_price`, on its own device. The free hours apply first, then the price windows in the order they were added; outside all of them the planner's **Import price** applies, and the **Solar buyback** for export.
+The free hours are the main entry's Schedule helper, at $0. In them, by night or by day, the car on the charger charges at its full current to its limit. Every other price level is a **price window**: on the planner's entry choose **Add price window**, pick a Schedule helper painted for that level, a name and a price (and optionally an export price). The price is then a number entity, `number.solar_ev_planner_<name>_price`, on its own device. The free hours apply first, then the price windows in the order they were added; outside all of them the planner's **Import price** applies, and the **Solar buyback** for export.
 
 | Plan | Set up |
 | --- | --- |
@@ -138,10 +137,10 @@ What the planner sends the adapter, and the adapter's rules for requests, are in
 
 | Entity | What it shows |
 | --- | --- |
-| `sensor.solar_ev_planner_mode` | `day` (solar charging), `wait`, `night`, `full` (car at its limit), `stale` (car data stale), `empty` (charger empty), `off`, or `no_data` (cannot plan). Attributes: shadow, commanding, the car, the safety rule that acted. |
+| `sensor.solar_ev_planner_mode` | `day` (solar charging), `night` (shown as "Free hours": the car charges at its full current), `full` (car at its limit), `stale` (car data stale), `empty` (charger empty), `off`, or `no_data` (cannot plan). Attributes: shadow, commanding, the car, the safety rule that acted. |
 | `sensor.solar_ev_planner_reason` | The decision in one sentence; `full_reason` holds all of it |
 | `sensor.solar_ev_planner_next_change` | When the current is expected to change next; attributes: the current and why |
-| `sensor.solar_ev_planner_battery_minimum` | The home battery's predicted lowest level (at the caution level) until the next free hours or sunset. Attributes: when, the expected-day and no-car minimums, the floor, the level when free hours start, and the half-hourly path (not recorded). |
+| `sensor.solar_ev_planner_battery_minimum` | The home battery's predicted lowest level (at the caution level) until tomorrow's free hours (tomorrow's sunset when there are none). Attributes: when, the expected-day and no-car minimums, the floor, the level when free hours start, and the half-hourly path (not recorded). |
 | `sensor.solar_ev_planner_battery_minimum_time` | When that minimum is reached |
 | `sensor.solar_ev_planner_forecast_correction` | The factor today's production so far puts on the rest of today's forecast; attributes: the evidence weight, the multi-day bias, the forecast's age, and p10/p50/p90 left today |
 | `sensor.solar_ev_planner_car_on_charger` | `none`, `rivian` or `tesla`, with why, the candidates, the Wall Connector readings and `tonight_car`: the car that should be on the charger in the coming free hours |
@@ -167,12 +166,10 @@ All settings are entities on the planner's device. They are kept in the planner'
 | --- | --- | --- | --- |
 | `switch.solar_ev_planner_planning` | on | | Off: no plans and nothing sent; see [Planning off and shadow mode](#planning-off-and-shadow-mode) |
 | `switch.solar_ev_planner_shadow_mode` | **on** | | Plan and explain, send nothing |
-| `switch.solar_ev_planner_daytime_solar_charging` | on | | Off: a car plugged in by day waits for the night window |
-| `time.solar_ev_planner_night_window_start`, `_end` | 22:00, 06:00 | | When the overnight car charges (inside the free hours) |
-| `number.solar_ev_planner_night_charging_current` | 48 A | 6–48 A | 48 means each car's maximum; lower it to spread the charge |
+| `switch.solar_ev_planner_daytime_solar_charging` | on | | Off: a car plugged in by day waits for the free hours |
 | `select.solar_ev_planner_caution` | conservative | near-certain, conservative, balanced, typical day | How much of the forecast to count on (97%, 90%, 75%, 50%) |
 | `number.solar_ev_planner_battery_floor` | 30% | 5–95% | The predicted battery must stay above it |
-| `number.solar_ev_planner_battery_wanted_at_free_hours` | 30% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours). With the refill, the car may use the battery down to it by day; raise it to keep more in the battery |
+| `number.solar_ev_planner_battery_wanted_at_free_hours` | 30% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours). With free hours ahead, the car may use the battery down to it by day, since the Sol-Ark refills it from the grid in them; raise it to keep more in the battery |
 | `number.solar_ev_planner_minimum_time_between_changes` | 15 min | 1–120 min | |
 | `number.solar_ev_planner_largest_change` | 6 A | 1–48 A | |
 | `number.solar_ev_planner_paid_grid_tolerance` | 5 min | 0–60 min | How long paid import is accepted before the safety rule cuts the car |
@@ -196,7 +193,7 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 1. The planner starts a fresh session and sends its first decision at once to the car on the charger, and only to that car.
 2. **Tesla:** the charge current, then the charge switch. Every command is billed by Tesla's API, so a command is never repeated on the planner's own initiative.
 3. **Rivian:** the adapter's current, then its switch. If the adapter drops the request (after a restart, an outage or a replug), the planner sends it again, except while the adapter is handed back, faulted or waiting for the vehicle. With the adapter still in dry run, the requests are recorded but nothing is written to Rivian.
-4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure.
+4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure.
 5. **At unplug** the Tesla's current is set back to its restore current, if the planner changed it during that plug-in.
 
 ### Planning off and shadow mode
@@ -284,9 +281,6 @@ views:
           - switch.solar_ev_planner_planning
           - switch.solar_ev_planner_shadow_mode
           - switch.solar_ev_planner_daytime_solar_charging
-          - time.solar_ev_planner_night_window_start
-          - time.solar_ev_planner_night_window_end
-          - number.solar_ev_planner_night_charging_current
           - select.solar_ev_planner_caution
           - number.solar_ev_planner_battery_floor
           - number.solar_ev_planner_battery_wanted_at_free_hours
@@ -313,7 +307,7 @@ views:
 ## Known limits
 
 - **Not run against the real system yet.** Real Tesla Fleet timing (its charge switch reads on only while the car charges), real Solcast attribute types and how often the Sol-Ark reports unchanged values are unchecked until [TESTING.md](TESTING.md) phase 1 and 3.
-- **The caution level is optimistic.** In simulation the 90% battery path held 76% of the time; the closed loop compensated. Shadow-mode data should recalibrate it ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
+- **The caution level is optimistic.** In simulation (run with a 10 PM–6 AM night charging window and a battery that held its level in free hours) the 90% battery path held 76% of the time; the closed loop compensated. Shadow-mode data should recalibrate it ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
 - **The hourly command cap resets on restart.** The planner's own rate limits are saved; the executor's count of commands in the last hour is not.
 - **The Wall Connector power sensor is required.** While it is unavailable the planner does not plan, and the heartbeat goes down.
 - **Only one planner and one charger.** Car ids other than `rivian` and `tesla` show their raw id in the override and car-on-charger states.

@@ -34,12 +34,12 @@ Made:
 6. **Electricity plans are configurable.** Today's plan has free hours from 8 PM to 6 AM, and that will change; time of use, flat and buyback plans must also work by changing settings, not code.
 7. **One dashboard in Home Assistant** with built-in cards, plus the planner's settings.
 8. **The planner controls the cars directly; evcc is not used** (October 25, 2026). evcc's core is a loop that follows the surplus every 30 seconds, which is what decision 5 replaces, and night charging in free hours is simple to do in the planner. Keeping evcc as a pass-through would leave two systems competing for the same controls. **Reversible:** the evcc config and glue package are in commit [`266b3bf`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/266b3bf0f022fcccbcf3874c6511963aac61d711/config), and the Rivian adapter exposes the same switch and current number evcc would use, so bringing evcc back means installing the add-on and restoring one file.
-9. **Plugging in by day starts solar charging; overnight is the default otherwise.** A car plugged in during the day charges from excess solar automatically. A car on the charger at night charges in the free hours, by default from 10 PM to 6 AM; both times are settings.
-10. **The energy-budget planner** (October 25, 2026). Of three designs simulated against an evcc-like follower, the one that sets one steady current from the predicted battery path was chosen: it is as good as the best on the owner's tariff, holds up on plans, and is the simplest to explain ([PLANNER_DESIGN.md](PLANNER_DESIGN.md)).
+9. **Plugging in by day starts solar charging; overnight is the default otherwise.** A car plugged in during the day charges from excess solar automatically. A car on the charger in the free hours charges at its full current from the moment they begin until it reaches its charge limit; there is nothing else to plan then. The free hours are a Schedule helper (8 PM to 6 AM for now).
+10. **The energy-budget planner** (October 25, 2026). Of three designs simulated against an evcc-like follower, the one that sets one steady current from the predicted battery path was chosen: it is as good as the best on the owner's tariff, holds up on plans, and is the simplest to explain ([PLANNER_DESIGN.md](PLANNER_DESIGN.md)). The simulation came before decisions 9 and 14 took their present form; [The planner](#the-planner) says what it assumed.
 11. **Shadow mode first.** The planner installs in shadow mode and sends nothing until the owner turns it off; the Rivian adapter installs in dry run.
 12. **Paid power only for plans.** Without a plan, the planner never chooses paid power. A plan's remainder that sun, battery and free hours cannot cover is charged from paid hours.
 13. **One repository, two integrations.** HACS installs one integration per repository, so it installs the adapter, and the planner is copied by hand ([PLANNER.md, install](PLANNER.md#install)).
-14. **The home battery refills in free hours** (October 25, 2026). The Sol-Ark charges it from the grid during the free hours, so every paid day starts at 100%. Whatever the battery still holds when the free hours begin would be replaced for free overnight, so a car plugged in by day may also use that energy, spread over the afternoon, down to the level wanted at free start (default: the floor). The planner's "home battery during free hours" option says what the inverter does (refill, hold or normal) and must match it.
+14. **The home battery refills in free hours** (October 25, 2026). The Sol-Ark's own settings charge it from the grid during the free hours, so every paid day starts at 100%; the planner leaves this to the inverter. Its prediction assumes the same: in the free hours it charges the battery at its maximum charge power (9 kW by default) until it is full, and never discharges it. Whatever the battery still holds when the free hours begin would be replaced for free overnight, so a car plugged in by day may also use that energy, spread over the afternoon, down to the level wanted at free start (default: the floor). Raising that level keeps more in the battery.
 15. **Whichever car is plugged in charges.** The cars take turns on the one Wall Connector; the planner identifies the car on the charger and commands only that one ([PLANNER_DESIGN.md, two cars](PLANNER_DESIGN.md#7-two-cars)).
 
 ## How it works
@@ -61,11 +61,11 @@ flowchart LR
 
 ## The planner
 
-A Home Assistant integration in this repo ([PLANNER.md](PLANNER.md): install, configuration, entities), with two modes chosen by when the car is on the charger. A minute-by-minute safety check runs in both but acts only when something is wrong.
+A Home Assistant integration in this repo ([PLANNER.md](PLANNER.md): install, configuration, entities), with two modes chosen by when the car is on the charger. A minute-by-minute safety check acts only when something is wrong; its paid-import and battery rules apply in paid hours, since import is free otherwise.
 
-**Daytime solar charging (the main purpose).** Plugging a car in during the day starts it automatically, with no app or button. The goal is to put excess solar into the car while keeping paid grid import as low as possible. Every 15 minutes the planner plans the car's current as described below. If the car is still below its target when the free hours begin, night charging takes over.
+**Daytime solar charging (the main purpose).** Plugging a car in during the day starts it automatically, with no app or button. The goal is to put excess solar into the car while keeping paid grid import as low as possible. Every 15 minutes the planner plans the car's current as described below. If the car is still below its charge limit when the free hours begin, night charging takes over.
 
-**Night charging (the default overnight).** In the charging window (default 10 PM to 6 AM, inside the free hours), the car on the charger charges at its full current until it reaches its plan target or its charge limit, then stops. If the window alone cannot deliver what is needed, charging starts earlier in the free hours, as late as possible. If sun, battery and free hours together cannot deliver a plan's target by its time, the car's outlook says so, and the remainder is charged from paid hours: at once when the deadline falls inside today's solar window, otherwise in the cheapest paid hours as late as possible. The home battery does not feed the car at night: the Sol-Ark refills it from the grid during the free hours, so each paid day starts full (decision 14).
+**Night charging (the default overnight).** Throughout the free hours, from the moment they begin or the car is plugged in, the car on the charger charges at its full current (its own maximum, capped by the Wall Connector's) until it reaches its charge limit, then stops. The dashboard shows this mode as "Free hours". If sun, battery and free hours together cannot deliver a plan's target by its time, the car's outlook says so, and the remainder is charged from paid hours: at once when the deadline falls inside today's solar window, otherwise in the cheapest paid hours as late as possible. The home battery does not feed the car at night: the Sol-Ark's own settings charge it from the grid during the free hours, so each paid day starts full (decision 14).
 
 Daytime solar charging works like this:
 
@@ -76,9 +76,9 @@ Daytime solar charging works like this:
 **How it decides:**
 
 1. **Forecast as a range, corrected by today.** Each half-hour of the forecast is a bell curve (most likely value and spread). Today's actual production so far updates the rest of the day: in the morning the forecast dominates, by afternoon today's real behaviour does, and the uncertainty shrinks.
-2. **Predict the battery, not just the moment.** Using that forecast and the house's usual demand, it predicts the battery level from now through the evening and night until the next refill (sunrise or free hours).
+2. **Predict the battery, not just the moment.** Using that forecast and the house's usual demand, it predicts the battery level from now through tonight's free hours and the next day, until the following free hours begin (or until tomorrow's sunset when there are no free hours). In the free hours the prediction charges the battery to full, as the Sol-Ark does.
 3. **The floor is a limit on the prediction.** If the predicted lowest battery level stays above the floor at the chosen confidence, draining the battery now is fine: the car keeps a steady current and the battery covers clouds. The planner changes the car's current only when the prediction says the floor, or paid grid power, is at risk.
-4. **Excess solar first, paid grid last.** By day the car takes the solar the house and the battery's predicted needs do not. Because the free hours refill the battery, it also gets the battery energy that would be left when they begin, spread over the afternoon so the battery reaches the wanted level (default: the floor) on a cautious day. Paid grid power is used only when a plan cannot be met by solar, the battery and the next free hours.
+4. **Excess solar first, paid grid last.** By day the car takes the solar the house and the battery's predicted needs do not. When free hours are coming, the Sol-Ark will refill the battery in them, so the car also gets the battery energy that would be left above the wanted level (default: the floor) when they begin: one steady current through the afternoon that sun and battery can carry without paid grid power on a cautious day. Paid grid power is used only when a plan cannot be met by solar, the battery and the next free hours.
 5. **Smooth current.** The car's share follows the shape of the forecast across the day, as a gentle rise and fall in amps. Changes are rate-limited (at most one every 15 minutes by default, a few amps at a time, small differences ignored). That also keeps Rivian schedule writes and billed Tesla commands to a few per hour.
 
 **Safety rules that override the plan** (checked every minute):
@@ -90,7 +90,7 @@ Daytime solar charging works like this:
 - planner off or unable to plan: its heartbeat goes unavailable, and the Rivian adapter parks the Rivian's charging window after 3 minutes; the Tesla keeps its last current up to its own charge limit;
 - Home Assistant down: the Rivian's charging window lapses on its own within about 25 minutes (adapter behaviour); the Tesla keeps its last current up to its own charge limit.
 
-**Settings** (entities of the planner, listed in [PLANNER.md](PLANNER.md#settings); the defaults held up in the simulation):
+**Settings** (entities of the planner, listed in [PLANNER.md](PLANNER.md#settings); the defaults held up in the simulation, apart from the battery level wanted when free hours start, which it ran at 40%):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -99,20 +99,17 @@ Daytime solar charging works like this:
 | Free hours | 8 PM–6 AM daily | A Schedule helper; repaint it when the plan changes |
 | Price outside free hours | $0.32/kWh | Used to weigh paid grid power against other choices |
 | Solar buyback | $0.00/kWh | What exported solar earns |
-| Night charging window | 10 PM–6 AM | When the overnight car charges |
-| Night charging current | the car's maximum | Lower it to spread the charge over the night |
-| Daytime solar charging | on | On: plugging in by day starts solar charging. Off: a car plugged in by day waits for the night window |
+| Daytime solar charging | on | On: plugging in by day starts solar charging. Off: a car plugged in by day waits for the free hours |
 | Caution | conservative | How much of the forecast to count on, from "near-certain" to "typical day" |
 | Battery floor | 30% | The predicted battery level must stay above this |
-| Battery level wanted when free hours start | 30% (the floor) | What the battery should still hold when the free hours begin; the free hours refill it, so by default the car may use the battery down to the floor. Raise it to keep more in the battery (and cycle it less). With no free hours, checked at sunset |
-| Home battery during free hours | refill to 100% | An option of the planner, not a dashboard setting: refill (the Sol-Ark charges it from the grid), hold (it keeps its level) or normal (it serves the house and car as by day), plus the refill level |
+| Battery level wanted when free hours start | 30% (the floor) | What the battery should still hold when the free hours begin; the Sol-Ark refills it in the free hours, so by default the car may use the battery down to the floor. Raise it to keep more in the battery (and cycle it less). With no free hours, checked at sunset |
 | Minimum time between current changes | 15 min | |
 | Largest single change | 6 A | |
 | Paid grid tolerance | 5 min | How long paid import is accepted before the safety rule acts |
 | Per car: charge limit | car's own | |
 | Per car: plan | none | "X% by time T", once or on weekdays, every day or weekends |
 
-The algorithm, its tuning and the simulation results are in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). On the owner's tariff over 453 simulated days, it cut car-caused paid import from 179 kWh (an evcc-like follower) to 2.6 kWh, and current changes from 29 a day to 3.7; every simulated plan was met.
+The algorithm, its tuning and the simulation results are in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). On the owner's tariff over 453 simulated days, it cut car-caused paid import from 179 kWh (an evcc-like follower) to 2.6 kWh, and current changes from 29 a day to 3.7; every simulated plan was met. Those runs came before the present free-hours behaviour: they charged the car in a 10 PM–6 AM window and had the home battery hold its level in the free hours, with 40% wanted when they began, so they do not cover charging from the start of the free hours, the refill or the spread of the battery's spare energy over the afternoon.
 
 ## Electricity plans
 
@@ -125,7 +122,7 @@ Each plan is described with Home Assistant's **Schedule** helper, a weekly calen
 
 When the plan changes, repaint the schedules in the HA UI. A real-time-price plan could later use a price sensor instead. [PLANNER.md](PLANNER.md#electricity-plans) shows how free nights, time of use, flat and free weekends are set up.
 
-With **free nights**, a car plugged in by day takes the solar left after the house and what the battery needs to carry the house until the free hours begin, and the battery energy above that, which the free hours replace overnight. That reserve is worked out each time from the forecast and recent evening use, so it grows on short or cloudy days and shrinks on long sunny ones. A car on the charger overnight charges in the free hours. With one charger, only the overnight car gets the free hours; the dashboard shows which car should be plugged in tonight.
+With **free nights**, a car plugged in by day takes the solar left after the house and what the battery needs to carry the house until the free hours begin, and the battery energy above the wanted level when they begin, which the Sol-Ark replaces from the grid in the free hours. That reserve is worked out each time from the forecast and recent evening use, so it grows on short or cloudy days and shrinks on long sunny ones. A car on the charger in the free hours charges at its full current. Free hours by day, such as a free weekend, work the same way. With one charger, only the overnight car gets the free hours; the dashboard shows which car should be plugged in tonight.
 
 ## Dashboard
 
@@ -177,7 +174,7 @@ Retired:
 - [ ] **The owner's test path,** phases 0 to 6 ([TESTING.md](TESTING.md)), starting with the [information needed](#information-needed).
 - [ ] **Start recording Solcast forecasts now** (`python -m tools.snapshot record-forecasts` on an always-on machine). Home Assistant does not keep Solcast's half hours, so replays of past days use an approximation until it has run for a while.
 - [ ] **A finished dashboard.** [PLANNER.md](PLANNER.md#a-starting-dashboard) has a starting one with built-in cards; the battery outlook as a chart and the per-car outlook still need a layout.
-- [ ] **Recalibrate the caution level** from the shadow week: in simulation the 90% battery path held only 76% of the time ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
+- [ ] **Recalibrate the caution level** from the shadow week: in simulation (before the present free-hours behaviour) the 90% battery path held only 76% of the time ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
 - [ ] **Confirm what Planning off should mean.** Today it sends nothing: the Tesla keeps its last current, and the Rivian adapter, seeing the heartbeat down, parks the Rivian within minutes. Going back to shadow mode also sends nothing, so both cars keep their last command until they are paused or unplugged ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)).
 - [ ] **Phase 7:** notifications for adapter faults, safety-rule trips and the planner not planning.
 - [ ] **Installing through HACS** gives only the adapter. Moving the planner into its own repository would make it installable through HACS too; until then it is copied by hand.
@@ -193,8 +190,8 @@ Retired:
 
 Answered:
 
-- **Tariff:** free hours are 8 PM–6 AM for now; the price outside them is $0.32/kWh; solar buyback is $0.00/kWh; cars charge at night from 10 PM. All of them are settings.
-- **The home battery in free hours:** the Sol-Ark refills it to 100% from the grid, so every paid day starts full (decision 14; the planner's free-hours option defaults to refill).
+- **Tariff:** free hours are 8 PM–6 AM for now; the price outside them is $0.32/kWh; solar buyback is $0.00/kWh. All of them are settings. In the free hours the car on the charger charges at its full current (decision 9).
+- **The home battery in free hours:** the Sol-Ark's own settings charge it to 100% from the grid, so every paid day starts full (decision 14).
 - **The Tesla:** a 2020 Model Y, which takes 48 A (11.5 kW) on the Wall Connector, as the planner's Tesla preset assumes (about 75 kWh usable). The planner also reads the car's own maximum from Tesla Fleet's current number.
 - **Which car charges:** the cars swap; whichever is plugged in is the one charged (decision 15).
 - **Purpose:** plugging in by day starts solar charging, the app's main purpose. evcc is removed (decision 8).
@@ -206,6 +203,6 @@ Answered:
 - **Forecast quality** on fast-changing days: the planner leans on the battery and the safety rules there.
 - **Tesla API cost and limits:** a few commands an hour stays within Tesla's monthly credit; verify on Tesla's developer dashboard in phase 4.
 - **Internet down:** both cars' APIs are cloud services, so neither can be commanded. The Rivian's window lapses on its own; the Tesla keeps charging at its last current up to its limit.
-- **The free-hours refill is assumed to reach 100%.** The daytime plan counts on it, so if the Sol-Ark's time-of-use slot or grid-charge rate changes, the planner's free-hours option must change with it. Otherwise a day planned down to the floor can leave the next morning short, and the house imports paid power until the sun covers it. Phase 1 checks the refill in the Sol-Ark's history.
+- **The free-hours refill is assumed to reach 100%.** The daytime plan counts on it and leaves the refill to the Sol-Ark's own settings. If its time-of-use slot or grid-charge rate changes so that the battery is no longer full when the free hours end, the assumption breaks: a day planned down to the floor can leave the next morning short, and the house imports paid power until the sun covers it. Phase 1 checks the refill in the Sol-Ark's history.
 - **The caution level is optimistic** until it is recalibrated from shadow-mode data; the safety rules and re-planning every 15 minutes cover the gap in simulation.
 - **Nothing has run against the real system.** Every test so far uses fakes; the phases above are where the real behaviour is checked.

@@ -69,6 +69,43 @@ def test_free_hours_charge_at_full_current_from_their_start(settings):
     assert d.amps == 32
 
 
+def test_free_hours_send_full_current_once(settings):
+    p = _plan(settings)
+    now = datetime(2026, 6, 15, 21, 0)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    assert p.decide(snapshot(now, soc=50.0, cars=[car])).amps == 48
+    # the car holds 48 A: nothing is repeated (a Tesla the owner stopped from its app stays
+    # stopped; the executor re-sends only a request the Rivian adapter dropped)
+    car = replace(car, commanded_a=48)
+    d = p.decide(snapshot(now + timedelta(minutes=1), soc=50.0, cars=[car]))
+    assert d.mode == "night" and d.amps is None
+    assert d.reason == "Free hours: charging at 48 A to the 85% limit."
+
+
+def test_the_next_change_at_the_free_start_is_full_current(settings):
+    now = datetime(2026, 6, 15, 17, 0)
+    car = rivian(soc=40.0, since=now - timedelta(hours=3), commanded_a=40)
+    snap = snapshot(now, soc=90.0, cars=[car], tariff=Tariff.free_nights("18:00", "06:00"))
+    d = _plan(settings).decide(snap)
+    assert d.mode == "day" and d.amps is not None and 0 < d.amps < 48
+    assert d.next_change is not None
+    assert (d.next_change.at, d.next_change.amps) == (datetime(2026, 6, 15, 18, 0), 48)
+    assert d.next_change.why == "the free hours start"
+
+
+def test_a_safety_cut_never_raises_the_plan(settings):
+    # the first paid-hours decision comes late (a restart at 06:07) with the car still at the
+    # free hours' 48 A and the grid importing: the plan's 0 A goes at once, not a cut to 32 A
+    p = _plan(settings)
+    night = datetime(2026, 6, 16, 5, 55)
+    car = rivian(soc=60.0, since=night - timedelta(hours=8))
+    assert p.decide(snapshot(night, soc=100.0, cars=[car])).amps == 48
+    car = replace(car, commanded_a=48)
+    m = Measured(pv_kw=0.0, grid_kw=3.5, battery_kw=-9.0, car_kw=11.5, soc_pct=98.0)
+    d = p.decide(snapshot(datetime(2026, 6, 16, 6, 7), soc=98.0, cars=[car], measured=m))
+    assert d.mode == "day" and d.amps == 0 and d.safety == "paid_import"
+
+
 def test_the_day_uses_the_battery_the_free_hours_refill(settings):
     snap = snapshot(NOON, soc=55.0, fc_ratio=0.8, actual_ratio=0.8)
     free = _plan(settings).decide(snap)

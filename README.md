@@ -8,7 +8,7 @@ In short:
 
 - **Existing hardware only:** Home Assistant OS, the Sol-Ark, the Tesla Wall Connector (measurement only) and the two cars.
 - **The cars through their own APIs:** the Tesla through HA core Tesla Fleet, the Rivian through this repository's charge adapter, which writes its charging schedule.
-- **A planner in Home Assistant** decides each car's current: night charging in the free tariff hours by default, and smooth daytime solar charging planned from the Solcast forecast and recent usage, with the home battery absorbing swings.
+- **A planner in Home Assistant** decides each car's current: full current in the free tariff hours up to the car's charge limit, and smooth daytime solar charging planned from the Solcast forecast and recent usage, with the home battery absorbing swings.
 - **One dashboard** in Home Assistant to see and steer it.
 
 ## What is here
@@ -17,7 +17,7 @@ In short:
 | --- | --- |
 | [`docs/PLAN.md`](docs/PLAN.md) | The working plan: decisions, phases, open items, information needed |
 | [`docs/PLANNER.md`](docs/PLANNER.md) | Guide to the planner: install, configure, entities, settings, shadow mode, pointing the Rivian adapter at it |
-| [`docs/PLANNER_DESIGN.md`](docs/PLANNER_DESIGN.md) | How the planner decides, and how it compared in simulation |
+| [`docs/PLANNER_DESIGN.md`](docs/PLANNER_DESIGN.md) | How the planner decides, and how an earlier version compared in simulation |
 | [`docs/TESTING.md`](docs/TESTING.md) | The step-by-step path to test with real data and real connections (plan phases 1–6) |
 | [`docs/RIVIAN_CHARGE_ADAPTER.md`](docs/RIVIAN_CHARGE_ADAPTER.md) | Guide to the Rivian charge adapter: how it works, install, entities, the attended trial, faults |
 | [`custom_components/solar_ev_planner/`](custom_components/solar_ev_planner/) | The Solar EV planner (HA integration; copy it into Home Assistant) |
