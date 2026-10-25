@@ -61,7 +61,9 @@ A Home Assistant integration in this repo, with two modes chosen by when the car
 
 Daytime solar charging works like this:
 
-**Inputs:** the Solcast forecast for today and tomorrow (half-hour slots with pessimistic, typical and optimistic values), actual solar and house use so far today, the last 7–14 days of house use from the recorder, battery level, which car is plugged in with its level, limit and plan, and the tariff schedule.
+**Inputs:** the Solcast forecast for today and tomorrow (half-hour slots with pessimistic, typical and optimistic values), actual solar and house use so far today, recent house use from the recorder (the last 14 days, weighted toward the most recent, weekdays and weekends kept apart), battery level, which car is plugged in with its level, limit and plan, and the tariff schedule.
+
+**Nothing seasonal is fixed.** Day length, expected solar, house demand and the reserve the battery needs all come from the current forecast and recent use every time the planner runs. The same settings therefore behave sensibly in June and in December: a short winter day or a summer evening with air conditioning simply leaves less for the car.
 
 **How it decides:**
 
@@ -112,7 +114,7 @@ Each plan is described with Home Assistant's **Schedule** helper, a weekly calen
 
 When the plan changes, repaint the schedules in the HA UI. A real-time-price plan could later use a price sensor instead.
 
-With **free nights**, a car plugged in by day takes the solar left after the house and what the battery needs to carry the house until the free hours begin; with free hours from 8 PM, that evening reserve is small, so the car can take most of the excess. A car on the charger overnight charges in the free hours. With one charger, only the overnight car gets the free hours; the dashboard shows which car should be plugged in tonight.
+With **free nights**, a car plugged in by day takes the solar left after the house and what the battery needs to carry the house until the free hours begin. That reserve is worked out each time from the forecast and recent evening use, so it grows on short or cloudy days and shrinks on long sunny ones. A car on the charger overnight charges in the free hours. With one charger, only the overnight car gets the free hours; the dashboard shows which car should be plugged in tonight.
 
 ## Dashboard
 
