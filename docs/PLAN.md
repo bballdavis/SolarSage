@@ -4,7 +4,7 @@ Last updated: October 25, 2026. This is the plan we work from. Earlier designs a
 
 ## Goal
 
-Charge both cars from solar as much as possible without paying for grid power, with the home battery absorbing the swings. Charging should change gradually and predictably, not chase every cloud. It must be easy to see what is happening and to steer it from one Home Assistant dashboard.
+**The main purpose: plug a car in during the day and it charges from excess solar, with as little paid grid power as possible.** The home battery absorbs the swings. A car plugged in overnight charges in the free hours by default. Charging should change gradually and predictably, not chase every cloud. It must be easy to see what is happening and to steer it from one Home Assistant dashboard.
 
 ## What we use
 
@@ -32,7 +32,7 @@ Made:
 6. **Electricity plans are configurable.** Today's plan has free hours from 8 PM to 6 AM, and that will change; time of use, flat and buyback plans must also work by changing settings, not code.
 7. **One dashboard in Home Assistant** with built-in cards, plus the planner's settings.
 8. **The planner controls the cars directly; evcc is not used** (October 25, 2026). evcc's core is a loop that follows the surplus every 30 seconds, which is what decision 5 replaces, and night charging in free hours is simple to do in the planner. Keeping evcc as a pass-through would leave two systems competing for the same controls. **Reversible:** the evcc config and glue package are in commit [`266b3bf`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/266b3bf0f022fcccbcf3874c6511963aac61d711/config), and the Rivian adapter exposes the same switch and current number evcc would use, so bringing evcc back means installing the add-on and restoring one file.
-9. **Cars charge at night by default.** The default charging window is 10 PM to 6 AM, inside the free hours; both are settings. Daytime solar charging is a second mode for days a car is plugged in during the day.
+9. **Plugging in by day starts solar charging; overnight is the default otherwise.** A car plugged in during the day charges from excess solar automatically. A car on the charger at night charges in the free hours, by default from 10 PM to 6 AM; both times are settings.
 
 ## How it works
 
@@ -53,11 +53,13 @@ flowchart LR
 
 ## The planner
 
-A Home Assistant integration in this repo, with two modes. A minute-by-minute safety check runs in both but acts only when something is wrong.
+A Home Assistant integration in this repo, with two modes chosen by when the car is on the charger. A minute-by-minute safety check runs in both but acts only when something is wrong.
 
-**Night charging (the default).** In the charging window (default 10 PM to 6 AM), the car on the charger charges at its full current until it reaches its plan target or its charge limit, then stops. The window must lie in free hours unless a plan cannot be met otherwise. If the window cannot deliver a plan's target by its time, the dashboard says so in the evening, and the shortfall is covered by the next day's solar or, if the owner allows it, paid hours. The home battery should not feed the car at night; see [Information needed](#information-needed).
+**Daytime solar charging (the main purpose).** Plugging a car in during the day starts it automatically, with no app or button. The goal is to put excess solar into the car while keeping paid grid import as low as possible. Every 15 minutes the planner plans the car's current as described below. If the car is still below its target when the free hours begin, night charging takes over.
 
-**Daytime solar charging.** When a car is plugged in during the day, the planner plans its current every 15 minutes as described below.
+**Night charging (the default overnight).** In the charging window (default 10 PM to 6 AM, inside the free hours), the car on the charger charges at its full current until it reaches its plan target or its charge limit, then stops. If the window cannot deliver a plan's target by its time, the dashboard says so in the evening, and the shortfall is covered by the next day's solar or, if the owner allows it, paid hours. The home battery should not feed the car at night; see [Information needed](#information-needed).
+
+Daytime solar charging works like this:
 
 **Inputs:** the Solcast forecast for today and tomorrow (half-hour slots with pessimistic, typical and optimistic values), actual solar and house use so far today, the last 7–14 days of house use from the recorder, battery level, which car is plugged in with its level, limit and plan, and the tariff schedule.
 
@@ -66,7 +68,7 @@ A Home Assistant integration in this repo, with two modes. A minute-by-minute sa
 1. **Forecast as a range, corrected by today.** Each half-hour of the forecast is a bell curve (most likely value and spread). Today's actual production so far updates the rest of the day: in the morning the forecast dominates, by afternoon today's real behaviour does, and the uncertainty shrinks.
 2. **Predict the battery, not just the moment.** Using that forecast and the house's usual demand, it predicts the battery level from now through the evening and night until the next refill (sunrise or free hours).
 3. **The floor is a limit on the prediction.** If the predicted lowest battery level stays above the floor at the chosen confidence, draining the battery now is fine: the car keeps a steady current and the battery covers clouds. The planner changes the car's current only when the prediction says the floor, or paid grid power, is at risk.
-4. **Cheapest energy first.** A car's need is filled from free tariff hours first, then solar that would otherwise be exported for little, then the battery within the floor rule, and paid grid only to meet a plan that cannot be met otherwise.
+4. **Excess solar first, paid grid last.** By day the car takes the solar the house and the battery's predicted needs do not, plus battery energy within the floor rule. Paid grid power is used only when a plan cannot be met by solar, the battery and the next free hours.
 5. **Smooth current.** The car's share follows the shape of the forecast across the day, as a gentle rise and fall in amps. Changes are rate-limited (at most one every 15 minutes by default, a few amps at a time, small differences ignored). That also keeps Rivian schedule writes and billed Tesla commands to a few per hour.
 
 **Safety rules that override the plan** (checked every minute):
@@ -83,9 +85,11 @@ A Home Assistant integration in this repo, with two modes. A minute-by-minute sa
 | --- | --- | --- |
 | Planner | on | Off leaves both cars alone |
 | Free hours | 8 PM–6 AM daily | A Schedule helper; repaint it when the plan changes |
+| Price outside free hours | $0.32/kWh | Used to weigh paid grid power against other choices |
+| Solar buyback | $0.00/kWh | What exported solar earns |
 | Night charging window | 10 PM–6 AM | When the overnight car charges |
 | Night charging current | the car's maximum | Lower it to spread the charge over the night |
-| Daytime solar charging | on | Off means a car plugged in by day waits for the night window |
+| Daytime solar charging | on | On: plugging in by day starts solar charging. Off: a car plugged in by day waits for the night window |
 | Caution | conservative | How much of the forecast to count on, from "near-certain" to "typical day" |
 | Battery floor | 30% | The predicted battery level must stay above this |
 | Battery level wanted when free hours start | 40% | What the battery should still hold for the paid evening; with no free hours, at sunset |
@@ -103,12 +107,12 @@ The full algorithm, its tuning and the simulation results go in `docs/PLANNER_DE
 Each plan is described with Home Assistant's **Schedule** helper, a weekly calendar where you paint the hours:
 
 - one schedule per price level (for example "Free" and "Peak"), each with a price setting;
-- a normal price for all other hours;
+- a normal price for all other hours (default $0.32/kWh);
 - a solar buyback rate.
 
 When the plan changes, repaint the schedules in the HA UI. A real-time-price plan could later use a price sensor instead.
 
-With **free nights**, the car plugged in overnight mostly charges in the free hours; daytime solar mainly fills the home battery for the paid evening and powers the house, and goes to a car when it would otherwise be exported cheaply or the car needs it before night. With one charger, only the overnight car gets the free hours; the dashboard shows which car should be plugged in tonight.
+With **free nights**, a car plugged in by day takes the solar left after the house and what the battery needs to carry the house until the free hours begin; with free hours from 8 PM, that evening reserve is small, so the car can take most of the excess. A car on the charger overnight charges in the free hours. With one charger, only the overnight car gets the free hours; the dashboard shows which car should be plugged in tonight.
 
 ## Dashboard
 
@@ -148,12 +152,12 @@ Each phase ends with a check that must pass before the next.
 ## Information needed
 
 1. **The home battery at night.** Is the Sol-Ark set to hold the battery during free hours, so the house and the charging car run from the grid? If not, a car charging at 11 kW overnight drains the home battery, which then cannot cover the paid morning before the sun. This is an inverter setting (time-of-use slots); it may be adjustable from Home Assistant.
-2. The price outside free hours, and the solar buyback rate.
+2. The solar buyback rate (the setting defaults to $0.00/kWh).
 3. When each car usually needs to be charged by, and which car is usually plugged in overnight.
 4. The Tesla's model and year, and its maximum current on the Wall Connector (32 or 48 A).
 5. A domain you control, for Tesla's public key.
 
-Answered: free hours are 8 PM–6 AM for now (a setting); cars charge at night from 10 PM (a setting); evcc is removed (decision 8).
+Answered: free hours are 8 PM–6 AM for now; the price outside them is $0.32/kWh; cars charge at night from 10 PM; all three are settings. Plugging in by day starts solar charging, the app's main purpose. evcc is removed (decision 8).
 
 ## Risks and unknowns
 
