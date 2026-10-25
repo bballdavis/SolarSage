@@ -185,7 +185,7 @@ class Session:
                 out["current_min"], out["current_max"] = attrs.get("min"), attrs.get("max")
             if name == "control_state" and st:
                 attrs = st.get("attributes") or {}
-                out["adapter"] = {k: attrs.get(k) for k in ADAPTER_ATTRS if k in attrs}
+                out["schedule_control"] = {k: attrs.get(k) for k in ADAPTER_ATTRS if k in attrs}
                 out["last_provider_read"] = attrs.get("last_provider_read")
         for other_id, (plugged, location) in others.items():
             at_home = tracker_state((states.get(location) or {}).get("state")) == "home"
@@ -379,7 +379,7 @@ async def tesla_restore(s: Session, current: float | None, was_on: bool) -> None
 
 
 def _adapter(obs: Mapping[str, Any]) -> dict[str, Any]:
-    return obs.get("adapter") or {}
+    return obs.get("schedule_control") or {}
 
 
 def _state(obs: Mapping[str, Any]) -> Any:

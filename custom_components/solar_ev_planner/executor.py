@@ -120,7 +120,7 @@ class Standing:
 
     charging: bool | None  # True on, False paused, None unknown or no request
     amps: float | None
-    adapter_state: str | None = None
+    schedule_control_state: str | None = None
 
 
 def standing_request(hass: HomeAssistant, car: Mapping[str, Any]) -> Standing:
@@ -232,9 +232,9 @@ class CarExecutor:
         if rt.commanded_a is None or car.get(CONF_KIND) != KIND_RIVIAN:
             return False
         standing = standing_request(self.hass, car)
-        if standing.adapter_state in ADAPTER_IGNORES:
+        if standing.schedule_control_state in ADAPTER_IGNORES:
             return False
-        if standing.adapter_state is None and rt.commanded_a == 0:
+        if standing.schedule_control_state is None and rt.commanded_a == 0:
             return False  # without the control state a pause cannot be told from no request
         if calls_for(rt.commanded_a, standing):
             _LOGGER.debug("The Rivian adapter dropped the request; sending it again")

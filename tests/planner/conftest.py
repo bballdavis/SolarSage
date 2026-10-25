@@ -219,7 +219,7 @@ def set_rivian(
     home: str = "home",
     soc: float = 46,
     limit: float = 85,
-    adapter_state: str = "idle",
+    schedule_control_state: str = "idle",
     desired: bool | None = None,
     requested: float = 0,
 ) -> None:
@@ -233,7 +233,7 @@ def set_rivian(
     hass.states.async_set(RIV["current"], str(requested), {"min": 0, "max": 80, "step": 1})
     hass.states.async_set(
         RIV["control_state"],
-        adapter_state,
+        schedule_control_state,
         {"desired_charge": desired, "requested_amps": requested, "lease_amps": None},
     )
 

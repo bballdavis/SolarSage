@@ -144,12 +144,12 @@ async def test_a_dropped_request_is_sent_again(
     amps = coordinator.runtime["rivian"].commanded_a
     fake_cars.clear()
     # the adapter dropped the request (a restart it could not confirm): switch off, no request
-    set_rivian(hass, desired=None, requested=amps, adapter_state="idle")
+    set_rivian(hass, desired=None, requested=amps, schedule_control_state="idle")
     await cycle(hass, coordinator, freezer)
     assert fake_cars.calls == [("switch", "turn_on", RIV["switch"])]
     # handed back to the owner: requests are ignored until unplug, so none is repeated
     fake_cars.clear()
-    set_rivian(hass, desired=None, requested=amps, adapter_state="handed_back")
+    set_rivian(hass, desired=None, requested=amps, schedule_control_state="handed_back")
     for _ in range(3):
         await cycle(hass, coordinator, freezer)
     assert fake_cars.calls == []

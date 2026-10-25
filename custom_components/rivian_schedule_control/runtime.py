@@ -799,7 +799,7 @@ def format_schedules(schedules: list[dict[str, Any]]) -> list[str]:
 def describe_schedules(result: dict[str, Any]) -> str:
     """Format a provider read for a notification; it never has coordinates."""
     count = result["count"]
-    writer = "this adapter" if result["written_by_adapter"] else "not this adapter"
+    writer = "this adapter" if result["written_by_schedule_control"] else "not this adapter"
     return "\n".join(
         [
             f"Rivian reports {count} charging schedule{'' if count == 1 else 's'} "

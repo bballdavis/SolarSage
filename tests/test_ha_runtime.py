@@ -159,7 +159,7 @@ def test_describe_schedules() -> None:
         {
             "count": 1,
             "fingerprint": "0123456789ab",
-            "written_by_adapter": True,
+            "written_by_schedule_control": True,
             "schedules": [
                 {
                     "weekDays": ["Sunday"],

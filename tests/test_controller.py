@@ -178,7 +178,7 @@ async def test_takeover_persists_snapshot_before_first_write():
     assert journal_then["phase"] == "writing"
     assert journal_then["original"] == OWNER
     assert journal_then["pending"]["purpose"] == "lease"
-    assert len(journal_then["adapter_states"]) == 1
+    assert len(journal_then["written_states"]) == 1
     assert store.data["phase"] == "owned"
 
 
@@ -807,7 +807,7 @@ async def test_takeover_refuses_the_adapters_own_window_and_force_restore_recove
     provider.schedules = lease_list
     await controller.async_request_charge(True)
     await controller.async_tick(at(minutes=2), CHARGING)
-    assert controller.journal.fault.code == "adapter_window_present"
+    assert controller.journal.fault.code == "own_window_present"
     assert controller.journal.original is None
     assert await controller.async_force_restore(at(minutes=3))
     assert provider.schedules == OWNER
@@ -1173,7 +1173,7 @@ async def test_owner_edited_adapter_window_is_refused_after_abandon():
     assert await controller.async_abandon()
     await controller.async_request_charge(True)
     await controller.async_tick(at(minutes=2), CHARGING)
-    assert controller.journal.fault.code == "adapter_window_present"
+    assert controller.journal.fault.code == "own_window_present"
     assert await controller.async_force_restore(at(minutes=3))
     assert provider.schedules == OWNER
 

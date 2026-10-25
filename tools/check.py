@@ -105,7 +105,7 @@ CAR_EXPECT = {
     "restore_button": Expect("button", required=False),
     "read_schedules_button": Expect("button", required=False),
 }
-PLATFORMS = {"tesla": "tesla_fleet", "rivian_adapter": "rivian_schedule_control"}
+PLATFORMS = {"tesla": "tesla_fleet", "rivian_schedule_control": "rivian_schedule_control"}
 ADAPTER_KEYS = ("switch", "current", "control_state", "charger_status")
 
 
@@ -604,7 +604,7 @@ async def adapter_rows(
     a = cs.get("attributes") or {}
     state = cs.get("state")
     platform = await _platform(client, cs["entity_id"])
-    if platform and platform != PLATFORMS["rivian_adapter"]:
+    if platform and platform != PLATFORMS["rivian_schedule_control"]:
         rows.append(Row(WARN, f"{car_id} adapter", cs["entity_id"], platform, "not the adapter"))
     status, detail = OK, "the adapter is running"
     if state == "fault":

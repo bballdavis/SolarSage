@@ -740,7 +740,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         )
         pending = rt.last_sent is not None and now - rt.last_sent < PENDING_AFTER_SEND
         if on and not pending:
-            pending = standing_request(self.hass, car).adapter_state == ADAPTER_WRITING
+            pending = standing_request(self.hass, car).schedule_control_state == ADAPTER_WRITING
         known = soc if soc is not None else (limit if limit is not None else 0.0)
         return CarState(
             car_id,

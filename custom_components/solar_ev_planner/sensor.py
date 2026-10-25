@@ -342,7 +342,7 @@ class PlannedCurrentSensor(CarSensor):
             "commanded": v.commanded_a,
             "car_charging": standing.charging if standing else None,
             "car_current": standing.amps if standing else None,
-            "adapter_state": standing.adapter_state if standing else None,
+            "schedule_control_state": standing.schedule_control_state if standing else None,
             "waiting": v.blocked,
             "last_error": v.last_error,
             "stale": v.stale,

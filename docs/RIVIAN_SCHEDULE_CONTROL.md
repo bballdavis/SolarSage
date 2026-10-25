@@ -181,7 +181,7 @@ Entering a fault posts a Home Assistant notification. While faulted, the adapter
 | `write_not_applied` | Rivian accepted writes but showed no change, repeatedly | Check the vehicle and account, then **Clear fault** |
 | `write_rejected` | Rivian rejected the adapter's window, repeatedly | Check the account and the Rivian app's schedule screen, then **Clear fault** |
 | `restore_rejected` | Rivian refused the owner's list when it was written back. Some accounts return entries that cannot be written back together ([upstream PR #308](https://github.com/bretterer/home-assistant-rivian/pull/308)). The snapshot is kept. | Recreate the owner's schedule in the Rivian app, then **Clear fault** |
-| `adapter_window_present` | Rivian holds a window this adapter wrote, or one shaped like it, so it will not snapshot it as the owner's | Recreate the owner's schedule in the Rivian app, or `force_restore` the archived snapshot |
+| `own_window_present` | Rivian holds a window this adapter wrote, or one shaped like it, so it will not snapshot it as the owner's | Recreate the owner's schedule in the Rivian app, or `force_restore` the archived snapshot |
 | `unsupported_schedule` | Rivian returned a schedule shape the adapter does not understand | Nothing was written. Report the redacted shape from **Read schedules**. |
 | `force_restore_unverified` | A forced restore could not be confirmed by a readback | Check the Rivian app |
 

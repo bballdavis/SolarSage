@@ -296,7 +296,7 @@ class Journal:
     # Writes sent but never verified, newest last; recognized as our own.
     attempts: list[Attempt] = field(default_factory=list)
     # Every list this adapter ever wrote (not restores); kept across releases.
-    adapter_states: list[Fingerprint] = field(default_factory=list)
+    written_states: list[Fingerprint] = field(default_factory=list)
     lease: Lease | None = None
     fault: Fault | None = None
     command_received: bool = False
@@ -320,7 +320,7 @@ class Journal:
             "owned_fp": self.owned_fp.to_dict() if self.owned_fp else None,
             "pending": self.pending.to_dict() if self.pending else None,
             "attempts": [attempt.to_dict() for attempt in self.attempts],
-            "adapter_states": [state.to_dict() for state in self.adapter_states],
+            "written_states": [state.to_dict() for state in self.written_states],
             "lease": self.lease.to_dict() if self.lease else None,
             "fault": self.fault.to_dict() if self.fault else None,
             "command_received": self.command_received,
@@ -365,7 +365,7 @@ class Journal:
             owned_fp=fp(data["owned_fp"]),
             pending=pending,
             attempts=attempts,
-            adapter_states=[Fingerprint.from_dict(item) for item in data["adapter_states"]],
+            written_states=[Fingerprint.from_dict(item) for item in data["written_states"]],
             lease=Lease.from_dict(data["lease"]) if data["lease"] else None,
             fault=Fault.from_dict(data["fault"]) if data["fault"] else None,
             command_received=data["command_received"],
@@ -662,13 +662,13 @@ class RivianScheduleController:
             return
         self.provider_schedule_count = len(original)
         original_fp = fingerprint(original)
-        if any(original_fp.matches(state) for state in journal.adapter_states) or (
-            (journal.adapter_states or journal.archived_original)
+        if any(original_fp.matches(state) for state in journal.written_states) or (
+            (journal.written_states or journal.archived_original)
             and self._looks_like_adapter_window(original)
         ):
             self._fault(
                 now,
-                "adapter_window_present",
+                "own_window_present",
                 "Rivian holds a schedule this adapter wrote, not the owner's. Recreate the "
                 "owner's schedule in the Rivian app, or use force restore if a snapshot is "
                 "archived.",
@@ -866,9 +866,9 @@ class RivianScheduleController:
         journal.pending = attempt
         journal.attempts = [*journal.attempts, attempt][-self.config.attempt_history :]
         if purpose is Purpose.LEASE and not any(
-            attempt.target.matches(state) for state in journal.adapter_states
+            attempt.target.matches(state) for state in journal.written_states
         ):
-            journal.adapter_states = [*journal.adapter_states, attempt.target][
+            journal.written_states = [*journal.written_states, attempt.target][
                 -self.config.adapter_history :
             ]
         try:
@@ -1153,7 +1153,7 @@ class RivianScheduleController:
                     return False
                 current_fp = fingerprint(current_list)
                 if not (
-                    any(current_fp.matches(state) for state in journal.adapter_states)
+                    any(current_fp.matches(state) for state in journal.written_states)
                     or self._looks_like_adapter_window(current_list)
                 ):
                     return False
@@ -1226,8 +1226,8 @@ class RivianScheduleController:
             return {
                 "count": len(schedules),
                 "fingerprint": current_fp.key[:12],
-                "written_by_adapter": any(
-                    current_fp.matches(state) for state in self._journal.adapter_states
+                "written_by_schedule_control": any(
+                    current_fp.matches(state) for state in self._journal.written_states
                 ),
                 "schedules": summarize_schedules(schedules),
             }

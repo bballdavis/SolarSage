@@ -1177,7 +1177,7 @@ async def test_read_schedules_service(
     response = await call_adapter(hass, "read_schedules", loaded_entry)
     assert response["count"] == 2
     assert len(response["fingerprint"]) == 12
-    assert response["written_by_adapter"] is False
+    assert response["written_by_schedule_control"] is False
     assert response["schedules"][1] == {
         "weekDays": ["Saturday"],
         "startTime": 600,
@@ -1190,7 +1190,7 @@ async def test_read_schedules_service(
     await start_charging(hass)
     response = await call_adapter(hass, "read_schedules", loaded_entry)
     assert response["count"] == 1
-    assert response["written_by_adapter"] is True
+    assert response["written_by_schedule_control"] is True
 
 
 async def test_release_service(
@@ -1299,7 +1299,7 @@ async def test_force_restore_uses_archive_only_over_adapter_window(
     hass.states.async_set(PLUGGED_ENTITY, "on")
     await hass.async_block_till_done(wait_background_tasks=True)
     await start_charging(hass)
-    assert attributes(hass)["fault_code"] == "adapter_window_present"
+    assert attributes(hass)["fault_code"] == "own_window_present"
     assert read_journal(hass)["original"] is None
 
     # The owner sets up new schedules in the Rivian app first: the archive is stale.
@@ -1310,7 +1310,7 @@ async def test_force_restore_uses_archive_only_over_adapter_window(
     assert err.value.translation_key == "force_restore_archive_unsafe"
     assert len(mock_rivian.writes) == writes
     assert mock_rivian.schedules == [OWNER_SCHEDULES[1]]
-    assert attributes(hass)["fault_code"] == "adapter_window_present"
+    assert attributes(hass)["fault_code"] == "own_window_present"
 
     # While Rivian holds the adapter's window, the archived list is written.
     mock_rivian.schedules = lease
@@ -1375,7 +1375,7 @@ async def test_diagnostics_redacted(
     assert journal["original"][0]["location"] == "**REDACTED**"
     assert journal["original_fp"]["locations"] == "**REDACTED**"
     assert journal["owned_fp"]["locations"] == "**REDACTED**"
-    assert journal["adapter_states"][0]["locations"] == "**REDACTED**"
+    assert journal["written_states"][0]["locations"] == "**REDACTED**"
     assert diagnostics["entry"]["data"]["access_token"] == "**REDACTED**"
     assert diagnostics["entry"]["data"]["vehicle_id"] == "**REDACTED**"
     assert diagnostics["control_state"] == "lease_active"
