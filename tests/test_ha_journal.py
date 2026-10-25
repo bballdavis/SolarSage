@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import stat
+import threading
 from unittest.mock import patch
 
 from conftest import (
@@ -25,12 +27,14 @@ from homeassistant.util.file import WriteError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rivian_solar_adapter import store as store_module
 from custom_components.rivian_solar_adapter.const import (
     DOMAIN,
     journal_key,
     legacy_storage_key,
 )
 from custom_components.rivian_solar_adapter.runtime import restore_failed_notification_id
+from custom_components.rivian_solar_adapter.store import JournalFileStore
 
 
 @pytest.fixture(autouse=True)
@@ -133,6 +137,43 @@ async def test_failed_save_rejects_the_request(
     await hass.async_block_till_done(wait_background_tasks=True)
     assert mock_rivian.writes == []
     assert read_journal(hass) is None
+
+
+async def test_cancelled_save_holds_the_lock_until_written(hass: HomeAssistant) -> None:
+    """A cancelled save cannot be overtaken by a newer one while its thread still writes.
+
+    Unloading cancels a slow tick, and disabling or removing bounds the restore
+    with a timeout. The executor thread keeps writing after the cancel, so if
+    the lock were released then, a newer save could finish first and the older
+    journal would land over it.
+    """
+    store = JournalFileStore(hass, VEHICLE_ID)
+    started = threading.Event()
+    release = threading.Event()
+    write = store_module._write_journal
+
+    def stalled_write(path: str, payload: str) -> None:
+        if json.loads(payload)["data"]["seq"] == 1:
+            started.set()
+            release.wait(5)  # a slow disk
+        write(path, payload)
+
+    with patch.object(store_module, "_write_journal", stalled_write):
+        older = asyncio.ensure_future(store.async_save({"seq": 1}))
+        assert await hass.async_add_executor_job(started.wait, 5)
+        older.cancel()
+        newer = asyncio.ensure_future(store.async_save({"seq": 2}))
+        await asyncio.sleep(0.05)
+        older.cancel()  # cancelled again while it waits for its thread
+        await asyncio.sleep(0.05)
+        assert not older.done()
+        assert not newer.done()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await older
+        await newer
+    assert read_journal(hass) == {"seq": 2}
 
 
 async def test_legacy_journal_with_ownership_stops_setup(

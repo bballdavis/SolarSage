@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from conftest import (
@@ -14,11 +16,15 @@ from conftest import (
     make_entry,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.rivian_solar_adapter.controller import Observation
-from custom_components.rivian_solar_adapter.runtime import describe_schedules
+from custom_components.rivian_solar_adapter.const import MONITORED_ENTITY_OPTIONS
+from custom_components.rivian_solar_adapter.controller import Fault, Observation
+from custom_components.rivian_solar_adapter.runtime import _fault_message, describe_schedules
+
+COMPONENT = Path(__file__).parent.parent / "custom_components" / "rivian_solar_adapter"
 
 
 @pytest.fixture(autouse=True)
@@ -169,3 +175,44 @@ def test_describe_schedules() -> None:
         "Rivian reports 1 charging schedule (fingerprint 0123456789ab, written by this adapter).",
         "1. Sunday from 01:15 for 45 min at 40 A, enabled",
     ]
+
+
+@pytest.mark.parametrize(
+    ("code", "remedy"),
+    [
+        ("write_rejected", "Rivian repeatedly refused the adapter's schedule writes"),
+        ("restore_rejected", "Rivian refused the owner's schedules when they were written back"),
+    ],
+)
+def test_fault_message_names_the_first_step(code: str, remedy: str) -> None:
+    """Faults whose general remedies do not fit name what to do first."""
+    message = _fault_message("Test R1S", Fault(code, "Controller message.", dt_util.utcnow()))
+    assert f"Fault: {code}" in message
+    assert f"First: {remedy}" in message
+    assert message.index("First: ") < message.index("What you can do:")
+    assert "**Clear fault**" in message
+
+
+def test_fault_message_without_specific_remedy() -> None:
+    """Other faults get the general remedies, including the archive rule of force restore."""
+    message = _fault_message("Test R1S", Fault("external_edit", "Changed.", dt_util.utcnow()))
+    assert "First: " not in message
+    assert "only written while Rivian holds a window this adapter wrote" in message
+
+
+@pytest.mark.parametrize("name", ["strings.json", "translations/en.json"])
+def test_translations_cover_issues_and_errors(name: str) -> None:
+    """Every repair issue and error the adapter raises has a translation."""
+    strings = json.loads((COMPONENT / name).read_text())
+    for option in MONITORED_ENTITY_OPTIONS:
+        issue = strings["issues"][f"missing_{option}"]
+        assert "{entity_id}" in issue["description"]
+        assert "{title}" in issue["description"]
+    setup_issue = strings["issues"]["setup_failed_while_owning"]["description"]
+    for placeholder in ("{title}", "{error}", "{path}"):
+        assert placeholder in setup_issue
+    assert "remove the integration" in setup_issue
+    liveness_issue = strings["issues"]["missing_evcc_liveness_entity"]["description"]
+    assert "starts and renewals are blocked" in liveness_issue
+    for key in ("force_restore_unverified", "force_restore_archive_unsafe"):
+        assert strings["exceptions"][key]["message"]

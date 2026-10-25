@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import timedelta
 import logging
 from typing import Any
@@ -21,6 +22,7 @@ from conftest import (
     VEHICLE_ID,
     VEHICLE_NAME,
     WALL_CONNECTOR_ENTITY,
+    FakeResponse,
     FakeRivian,
     content_type_error,
     journal_path,
@@ -56,13 +58,16 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
     get_scheduled_timer_handles,
 )
-from rivian.exceptions import RivianApiException, RivianUnauthenticated
+from rivian.exceptions import RivianApiException, RivianBadRequestError, RivianUnauthenticated
 
-from custom_components.rivian_solar_adapter.const import DOMAIN, TICK_INTERVAL
+from custom_components.rivian_solar_adapter.const import DOMAIN, TICK_INTERVAL, journal_key
 from custom_components.rivian_solar_adapter.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from custom_components.rivian_solar_adapter.runtime import restore_failed_notification_id
+from custom_components.rivian_solar_adapter.runtime import (
+    restore_failed_notification_id,
+    setup_failed_issue_id,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -204,6 +209,8 @@ async def test_setup_not_ready_when_rivian_unreachable(
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     assert entry.state is ConfigEntryState.SETUP_RETRY
+    # Without ownership there is nothing for the owner to do.
+    assert ir.async_get(hass).async_get_issue(DOMAIN, setup_failed_issue_id(entry.entry_id)) is None
 
 
 async def test_setup_rejected_session_starts_reauth(
@@ -230,6 +237,124 @@ async def test_utc_time_zone_warns(
     await hass.config.async_set_time_zone("Etc/UTC")
     await set_up(hass, make_entry())
     assert "time zone is Etc/UTC" in caplog.text
+    assert "A change takes effect automatically" in caplog.text
+
+
+async def test_time_zone_change_reloads_and_rewrites_window(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    mock_rivian: FakeRivian,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A new Home Assistant time zone reloads the adapter, which moves its window."""
+    await start_charging(hass)
+    runtime = loaded_entry.runtime_data
+    [lease] = mock_rivian.writes[-1]
+
+    # Other core settings leave the adapter alone.
+    await hass.config.async_update(location_name="Test home")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert loaded_entry.runtime_data is runtime
+
+    await hass.config.async_update(time_zone="America/Chicago")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert loaded_entry.state is ConfigEntryState.LOADED
+    assert loaded_entry.runtime_data is not runtime
+    controller = loaded_entry.runtime_data.controller
+    assert controller.config.time_zone == dt_util.get_time_zone("America/Chicago")
+
+    # Ownership is kept, and the same lease now starts two hours later on the
+    # vehicle's wall clock (Chicago is two hours ahead of the test's US/Pacific).
+    assert controller.journal.original == OWNER_SCHEDULES
+    assert len(mock_rivian.writes) == 2
+    [moved] = mock_rivian.writes[-1]
+    assert (moved["startTime"] - lease["startTime"]) % (24 * 60) == 120
+    assert moved["amperage"] == lease["amperage"]
+    assert state(hass, "sensor", "control_state") == "lease_active"
+
+
+@pytest.mark.parametrize(
+    ("error", "entry_state", "reason"),
+    [
+        (
+            RivianApiException("unreachable"),
+            ConfigEntryState.SETUP_RETRY,
+            "Rivian request failed (RivianApiException)",
+        ),
+        (
+            RivianUnauthenticated(401, {}),
+            ConfigEntryState.SETUP_ERROR,
+            "The Rivian session is unauthenticated",
+        ),
+    ],
+    ids=["not_ready", "auth_failed"],
+)
+async def test_setup_failure_while_owning_raises_persistent_issue(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    mock_rivian: FakeRivian,
+    error: Exception,
+    entry_state: ConfigEntryState,
+    reason: str,
+) -> None:
+    """A setup that fails while the adapter owns the schedule raises a lasting issue."""
+    issues = ir.async_get(hass)
+    issue_id = setup_failed_issue_id(loaded_entry.entry_id)
+    await start_charging(hass)
+    mock_rivian.csrf_error = error
+    await hass.config_entries.async_reload(loaded_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert loaded_entry.state is entry_state
+
+    issue = issues.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.is_persistent is True
+    assert issue.is_fixable is False
+    assert issue.severity is ir.IssueSeverity.ERROR
+    assert issue.translation_key == "setup_failed_while_owning"
+    assert issue.translation_placeholders == {
+        "title": VEHICLE_NAME,
+        "error": reason,
+        "path": f".storage/{journal_key(VEHICLE_ID)}",
+    }
+
+    # Home Assistant does not unload an entry whose setup failed, so disabling it
+    # restores nothing; the issue stays.
+    writes = len(mock_rivian.writes)
+    assert await hass.config_entries.async_set_disabled_by(
+        loaded_entry.entry_id, ConfigEntryDisabler.USER
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(mock_rivian.writes) == writes
+    assert read_journal(hass)["phase"] == "owned"
+    assert issues.async_get_issue(DOMAIN, issue_id) is not None
+
+    # Once Rivian accepts the session again, a successful setup removes it.
+    mock_rivian.csrf_error = None
+    assert await hass.config_entries.async_set_disabled_by(loaded_entry.entry_id, None)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert loaded_entry.state is ConfigEntryState.LOADED
+    assert issues.async_get_issue(DOMAIN, issue_id) is None
+
+
+@pytest.mark.usefixtures("fast_restore")
+async def test_remove_after_setup_failure_restores_and_clears_issue(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
+) -> None:
+    """Removal, which the issue points to, restores the schedule and ends the issue."""
+    issue_id = setup_failed_issue_id(loaded_entry.entry_id)
+    await start_charging(hass)
+    mock_rivian.csrf_error = RivianApiException("unreachable")
+    await hass.config_entries.async_reload(loaded_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    mock_rivian.csrf_error = None
+    await hass.config_entries.async_remove(loaded_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert mock_rivian.schedules == OWNER_SCHEDULES
+    assert not journal_path(hass).exists()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 # Control ----------------------------------------------------------------
@@ -261,24 +386,34 @@ async def test_switch_on_writes_lease(
     assert attributes(hass)["owner_schedule_count"] == 2
 
     # The request is shown as sent. Increases wait for the increase interval and
-    # allow for evcc's 2 A measuring margin: 18 A requested is applied as 16 A.
-    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=18)
-    assert state(hass, "number", "solar_current") == "18"
+    # keep a 3 A margin below evcc's request (evcc adds up to 2 A for measuring
+    # lag and truncates): 20 A requested is applied as 16 A, and 18 A as 14 A.
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=20)
+    assert state(hass, "number", "solar_current") == "20"
     assert len(mock_rivian.writes) == 1
-    await advance(hass, freezer, timedelta(seconds=125))
+    await advance(hass, freezer, timedelta(seconds=110))
+    assert len(mock_rivian.writes) == 1  # the increase interval runs from the start
+    await advance(hass, freezer, TICK_INTERVAL)
     assert len(mock_rivian.writes) == 2
     assert mock_rivian.writes[-1][0]["amperage"] == 16
+
+    # At evcc's 48 A ceiling there is no lag to absorb, so 48 A is applied as is.
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=48)
+    await advance(hass, freezer, timedelta(seconds=125))
+    assert mock_rivian.writes[-1][0]["amperage"] == 48
+    assert attributes(hass)["lease_amps"] == 48
 
     # A decrease applies at once, rounded down to an even current.
     await advance(hass, freezer, timedelta(seconds=31))
     await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=11)
     assert mock_rivian.writes[-1][0]["amperage"] == 10
 
+    writes = len(mock_rivian.writes)
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "solar_charging")
     assert state(hass, "switch", "solar_charging") == "off"
-    assert len(mock_rivian.writes) == 3  # a pause waits 5 s after the last write
+    assert len(mock_rivian.writes) == writes  # a pause waits 5 s after the last write
     await advance(hass, freezer, TICK_INTERVAL)
-    assert len(mock_rivian.writes) == 4
+    assert len(mock_rivian.writes) == writes + 1
     assert state(hass, "sensor", "control_state") == "paused"
 
 
@@ -478,7 +613,11 @@ async def test_vehicle_override_entity(hass: HomeAssistant, mock_rivian: FakeRiv
 async def test_liveness_lost_stops_renewal(
     hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
 ) -> None:
-    """While evcc's liveness entity is unavailable, the lease lapses on its own."""
+    """While evcc's liveness entity is unavailable, nothing is renewed or started.
+
+    evcc's last request is stale while it is down, so it is dropped and the lease
+    is parked at once. After evcc is back, it must ask again.
+    """
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
     hass.states.async_set(LIVENESS_ENTITY, "pv")
@@ -492,24 +631,39 @@ async def test_liveness_lost_stops_renewal(
     # With evcc alive the lease is renewed once 8 minutes or less remain.
     await advance(hass, freezer, timedelta(minutes=12, seconds=15))
     assert len(mock_rivian.writes) == 2
+    assert state(hass, "sensor", "control_state") == "lease_active"
 
     hass.states.async_set(LIVENESS_ENTITY, "unavailable")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data.observation().controller_alive is False
+    assert state(hass, "switch", "solar_charging") == "off"  # the request is dropped
+    # The pause waits only for the 5 s spacing after the renewal.
+    await advance(hass, freezer, TICK_INTERVAL)
+    assert len(mock_rivian.writes) == 3
+    [parked] = mock_rivian.writes[-1]
+    assert parked["duration"] == 20  # a parked window: it ended 5 minutes ago
+    assert state(hass, "sensor", "control_state") == "paused"
+    assert read_journal(hass)["desired_charge"] is None
+
     for _ in range(4):
         await advance(hass, freezer, timedelta(minutes=6))
-    assert len(mock_rivian.writes) == 2
-    assert state(hass, "sensor", "control_state") == "lease_lapsed"
+    assert len(mock_rivian.writes) == 3
 
     # A missing entity counts as evcc being down too.
     hass.states.async_remove(LIVENESS_ENTITY)
     await advance(hass, freezer, TICK_INTERVAL)
     assert entry.runtime_data.observation().controller_alive is False
-    assert len(mock_rivian.writes) == 2
+    assert len(mock_rivian.writes) == 3
 
+    # evcc is back, but has not asked again: nothing is started on its old request.
     hass.states.async_set(LIVENESS_ENTITY, "pv")
     await hass.async_block_till_done(wait_background_tasks=True)
+    await advance(hass, freezer, TICK_INTERVAL)
     assert len(mock_rivian.writes) == 3
+    assert state(hass, "sensor", "control_state") == "paused"
+
+    await start_charging(hass)
+    assert len(mock_rivian.writes) == 4
     assert state(hass, "sensor", "control_state") == "lease_active"
 
 
@@ -603,31 +757,111 @@ async def test_fault_notification_and_clear(
     assert release_id not in notifications(hass)
 
 
+async def test_restore_rejected_fault_explains_recovery(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
+) -> None:
+    """Rivian refusing the owner's list back faults with a remedy that works."""
+    await start_charging(hass)
+    lease = mock_rivian.schedules
+    accept = mock_rivian.set_charging_schedules
+
+    async def refuse_owner_list(vehicle_id: str, schedules: list) -> FakeResponse:
+        if len(schedules) > 1:  # the owner's list, not the adapter's single window
+            raise RivianBadRequestError("invalid input")
+        return await accept(vehicle_id, schedules)
+
+    mock_rivian.set_charging_schedules = refuse_owner_list
+    await call(hass, BUTTON_DOMAIN, SERVICE_PRESS, "button", "release")
+    assert attributes(hass)["fault_code"] == "restore_rejected"
+    assert mock_rivian.schedules == lease
+    writes = len(mock_rivian.writes)
+
+    message = notifications(hass)[f"{DOMAIN}_{loaded_entry.entry_id}_fault"]["message"]
+    assert "upstream PR #308" in message
+    assert "First: " in message
+    assert "Recreate the owner's schedules in the Rivian app" in message
+    assert "do not use force restore" in message
+    assert "abandon ownership" in message
+    assert not any(fragment in message for fragment in COORDINATE_FRAGMENTS)
+
+    # The owner recreates the schedules in the Rivian app; clearing the fault then
+    # lets go of the vehicle without writing.
+    mock_rivian.schedules = deepcopy(OWNER_SCHEDULES)
+    await call(hass, BUTTON_DOMAIN, SERVICE_PRESS, "button", "clear_fault")
+    assert state(hass, "sensor", "control_state") == "handed_back"
+    assert read_journal(hass)["phase"] == "idle"
+    assert len(mock_rivian.writes) == writes
+    assert f"{DOMAIN}_{loaded_entry.entry_id}_fault" not in notifications(hass)
+
+
 async def test_lease_renewal_switch(
     hass: HomeAssistant,
     loaded_entry: MockConfigEntry,
     mock_rivian: FakeRivian,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """With renewal off, an active lease is left to lapse; the setting is persisted."""
+    """With renewal off, an active lease is left to lapse; the setting is persisted.
+
+    Once the lease has lapsed it is parked, so its window cannot recur a week later.
+    """
     await start_charging(hass)
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "lease_renewal")
     assert state(hass, "switch", "lease_renewal") == "off"
     assert loaded_entry.runtime_data.controller.renewal_enabled is False
     assert read_journal(hass)["renewal_enabled"] is False
+    assert attributes(hass)["start_blocked_by"] == ["renewal_off"]
 
-    await advance(hass, freezer, timedelta(minutes=21))
+    # Not renewed: still the first lease shortly before it ends.
+    await advance(hass, freezer, timedelta(minutes=19))
     assert len(mock_rivian.writes) == 1
-    assert state(hass, "sensor", "control_state") == "lease_lapsed"
+    assert state(hass, "sensor", "control_state") == "lease_active"
+
+    await advance(hass, freezer, timedelta(minutes=2))
+    assert len(mock_rivian.writes) == 2
+    [parked] = mock_rivian.writes[-1]
+    assert parked["duration"] == 20  # a parked window, not a new lease
+    assert state(hass, "sensor", "control_state") == "paused"
+    assert state(hass, "switch", "solar_charging") == "on"  # still requested
 
     assert await hass.config_entries.async_reload(loaded_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert state(hass, "switch", "lease_renewal") == "off"
+    assert len(mock_rivian.writes) == 2
 
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, "switch", "lease_renewal")
     assert loaded_entry.runtime_data.controller.renewal_enabled is True
-    assert len(mock_rivian.writes) == 2
+    assert len(mock_rivian.writes) == 3
     assert state(hass, "sensor", "control_state") == "lease_active"
+    assert attributes(hass)["start_blocked_by"] == []
+
+
+async def test_start_blocked_by_attribute(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
+) -> None:
+    """The control state names what keeps a requested start from happening."""
+    hass.states.async_set(PLUGGED_ENTITY, "unavailable")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await start_charging(hass)
+    assert attributes(hass)["start_blocked_by"] == ["vehicle_state_unknown"]
+    assert state(hass, "sensor", "control_state") == "waiting_for_vehicle"
+    assert mock_rivian.reads == 0
+
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "not_home")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert attributes(hass)["start_blocked_by"] == ["vehicle_not_at_charger"]
+
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert state(hass, "sensor", "control_state") == "lease_active"
+    attrs = attributes(hass)
+    assert attrs["start_blocked_by"] == []
+    # The attributes still carry no coordinates now that the adapter owns the schedule.
+    text = str(attrs)
+    for fragment in COORDINATE_FRAGMENTS:
+        assert fragment not in text, fragment
+    assert str(hass.config.latitude)[:5] not in text
+    assert str(hass.config.longitude)[:6] not in text
 
 
 async def test_read_schedules_button_notifies_without_coordinates(
@@ -678,6 +912,37 @@ async def test_missing_mapped_entity_raises_repair_issue(
     hass.states.async_set(PLUGGED_ENTITY, "on")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert issues.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_missing_liveness_entity_raises_repair_issue(
+    hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
+) -> None:
+    """A mapped liveness entity that does not exist blocks charging; it is reported."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = make_entry(evcc_liveness_entity=LIVENESS_ENTITY)
+    await set_up(hass, entry)
+    issues = ir.async_get(hass)
+    issue_id = f"missing_entity_{entry.entry_id}_evcc_liveness_entity"
+    assert entry.runtime_data.observation().controller_alive is False
+
+    # Missing means evcc is down: no lease is started.
+    await start_charging(hass)
+    assert not any(window["duration"] == 30 for write in mock_rivian.writes for window in write)
+    assert state(hass, "sensor", "control_state") != "lease_active"
+
+    await advance(hass, freezer, timedelta(minutes=4))
+    assert issues.async_get_issue(DOMAIN, issue_id) is None
+    await advance(hass, freezer, timedelta(minutes=1, seconds=15))
+    issue = issues.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == "missing_evcc_liveness_entity"
+    assert issue.translation_placeholders == {"entity_id": LIVENESS_ENTITY, "title": VEHICLE_NAME}
+
+    hass.states.async_set(LIVENESS_ENTITY, "pv")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert issues.async_get_issue(DOMAIN, issue_id) is None
+    assert entry.runtime_data.observation().controller_alive is True
 
 
 async def test_unexpected_tick_error_logged_once(
@@ -905,6 +1170,42 @@ async def test_force_restore(
     assert attributes(hass)["fault_code"] == "force_restore_unverified"
 
 
+async def test_force_restore_uses_archive_only_over_adapter_window(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
+) -> None:
+    """An archived owner list never replaces schedules the owner has set up since."""
+    lease = await fault_by_owner_edit(hass, mock_rivian)
+    await call_adapter(hass, "abandon_ownership", loaded_entry)
+    assert read_journal(hass)["archived_original"] == OWNER_SCHEDULES
+
+    # Later, Rivian holds the adapter's old window again, so the next takeover faults.
+    mock_rivian.schedules = lease
+    hass.states.async_set(PLUGGED_ENTITY, "off")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await start_charging(hass)
+    assert attributes(hass)["fault_code"] == "adapter_window_present"
+    assert read_journal(hass)["original"] is None
+
+    # The owner sets up new schedules in the Rivian app first: the archive is stale.
+    mock_rivian.schedules = [OWNER_SCHEDULES[1]]
+    writes = len(mock_rivian.writes)
+    with pytest.raises(HomeAssistantError) as err:
+        await call_adapter(hass, "force_restore", loaded_entry)
+    assert err.value.translation_key == "force_restore_archive_unsafe"
+    assert len(mock_rivian.writes) == writes
+    assert mock_rivian.schedules == [OWNER_SCHEDULES[1]]
+    assert attributes(hass)["fault_code"] == "adapter_window_present"
+
+    # While Rivian holds the adapter's window, the archived list is written.
+    mock_rivian.schedules = lease
+    await call_adapter(hass, "force_restore", loaded_entry)
+    assert mock_rivian.writes[-1] == OWNER_SCHEDULES
+    assert mock_rivian.schedules == OWNER_SCHEDULES
+    assert state(hass, "sensor", "control_state") == "handed_back"
+
+
 async def test_services_reject_unknown_and_unloaded_entries(
     hass: HomeAssistant, loaded_entry: MockConfigEntry
 ) -> None:
@@ -965,6 +1266,7 @@ async def test_diagnostics_redacted(
     assert diagnostics["entry"]["data"]["vehicle_id"] == "**REDACTED**"
     assert diagnostics["control_state"] == "lease_active"
     assert diagnostics["controller"]["lease_amps"] == 8
+    assert diagnostics["controller"]["start_blocked_by"] == []
     check(attributes(hass))
 
     # The archived owner list of an abandoned journal is redacted too.
@@ -1066,6 +1368,65 @@ async def test_disable_while_faulted_notifies(
     assert read_journal(hass)["original"] == OWNER_SCHEDULES
 
 
+async def test_disable_during_error_backoff_restores(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    mock_rivian: FakeRivian,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A disable right after a failed request still restores: it ignores the backoff."""
+    await start_charging(hass)
+    mock_rivian.read_error = RivianApiException("unreachable")
+    await advance(hass, freezer, timedelta(minutes=12, seconds=15))  # the renewal's read fails
+    assert attributes(hass)["backoff_until"] is not None
+    assert attributes(hass)["last_error"] == "Rivian request failed (RivianApiException)"
+
+    # Rivian is reachable again, and the owner disables within the backoff.
+    mock_rivian.read_error = None
+    assert await hass.config_entries.async_set_disabled_by(
+        loaded_entry.entry_id, ConfigEntryDisabler.USER
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert mock_rivian.writes[-1] == OWNER_SCHEDULES
+    assert mock_rivian.schedules == OWNER_SCHEDULES
+    assert read_journal(hass)["phase"] == "idle"
+    assert restore_failed_notification_id(VEHICLE_ID) not in notifications(hass)
+
+
+@pytest.mark.usefixtures("fast_restore")
+async def test_restore_failed_reason_is_from_this_attempt(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    mock_rivian: FakeRivian,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A restore notification never blames an error from before the restore."""
+    await start_charging(hass)
+    lease = mock_rivian.schedules
+    mock_rivian.read_error = RivianApiException("unreachable")
+    await advance(hass, freezer, timedelta(minutes=12, seconds=15))
+    assert attributes(hass)["last_error"] == "Rivian request failed (RivianApiException)"
+    mock_rivian.read_error = None
+
+    # Rivian now accepts writes without applying them, and reports no error.
+    async def accept_without_applying(vehicle_id: str, schedules: list) -> FakeResponse:
+        mock_rivian.writes.append(schedules)
+        return FakeResponse({"data": {"setChargingSchedules": {"success": True}}})
+
+    mock_rivian.set_charging_schedules = accept_without_applying
+    assert await hass.config_entries.async_set_disabled_by(
+        loaded_entry.entry_id, ConfigEntryDisabler.USER
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert mock_rivian.writes[-1] == OWNER_SCHEDULES  # the restore was sent
+    assert mock_rivian.schedules == lease
+    message = notifications(hass)[restore_failed_notification_id(VEHICLE_ID)]["message"]
+    assert "RivianApiException" not in message
+    assert "the restore was not confirmed; the adapter was still in phase writing" in message
+
+
 async def test_remove_restores_owner_schedule(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
 ) -> None:
@@ -1092,26 +1453,42 @@ async def test_remove_keeps_journal_and_readd_inherits_it(
     await start_charging(hass)
     lease = mock_rivian.schedules
     mock_rivian.write_error = RivianApiException("down")
+    reads = mock_rivian.reads
 
     await hass.config_entries.async_remove(loaded_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert mock_rivian.schedules == lease
+    # The guard read and readback of the failed restore, then one more read once
+    # settled: that tick ignores the backoff the failed write started.
+    assert mock_rivian.reads - reads == 3
     assert read_journal(hass)["original"] == OWNER_SCHEDULES
     notification_id = restore_failed_notification_id(VEHICLE_ID)
     notification = notifications(hass)[notification_id]
     assert "manual" in notification["title"]
     assert "removed" in notification["message"]
+    # The reason is the error of this restore attempt.
+    assert "Rivian request failed (RivianApiException)" in notification["message"]
     assert not any(fragment in notification["message"] for fragment in COORDINATE_FRAGMENTS)
 
     # Added again, the entry uses the vehicle's journal, never the lease as "original".
+    # The first tick is held at its read so the journal can be checked before it acts.
     mock_rivian.write_error = None
+    mock_rivian.read_gate = asyncio.Event()
     entry = make_entry()
-    await set_up(hass, entry)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
     assert entry.runtime_data.controller.journal.original == OWNER_SCHEDULES
+    assert entry.runtime_data.controller.journal.release_requested == "integration removed"
     assert notification_id not in notifications(hass)
+    mock_rivian.read_gate.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    # The interrupted restore is resolved by reading Rivian, then sent again.
     await advance(hass, freezer, timedelta(seconds=31))
+    assert mock_rivian.writes[-1] == OWNER_SCHEDULES
     assert mock_rivian.schedules == OWNER_SCHEDULES
+    assert read_journal(hass)["phase"] == "idle"
     assert state(hass, "sensor", "control_state") == "idle"
 
 

@@ -17,7 +17,7 @@ TICK_INTERVAL: Final = timedelta(seconds=15)
 AUTH_RETRY_INTERVAL: Final = timedelta(minutes=5)
 # How long disabling or removing the integration may spend restoring the owner's schedule.
 REMOVE_RESTORE_TIMEOUT: Final = 60
-# How long a mapped plug or location entity may be missing before a repair issue.
+# How long a mapped plug, location or evcc liveness entity may be missing before a repair issue.
 MISSING_ENTITY_GRACE: Final = timedelta(minutes=5)
 # How long unloading waits for a tick in flight before it is cancelled.
 STOP_TIMEOUT: Final = 10
@@ -66,8 +66,10 @@ ENTITY_OPTIONS: Final = (
     CONF_LIVENESS_ENTITY,
     CONF_OVERRIDE_ENTITY,
 )
-# Mapped entities whose absence is reported as a repair issue.
-MONITORED_ENTITY_OPTIONS: Final = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY)
+# Mapped entities whose absence is reported as a repair issue. A missing plug or
+# location entity is unknown; a missing liveness entity means evcc is down, which
+# blocks every start and renewal.
+MONITORED_ENTITY_OPTIONS: Final = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY, CONF_LIVENESS_ENTITY)
 # Override entity states that leave the evcc status to the adapter.
 OVERRIDE_PASS_STATES: Final = frozenset({"auto", "rivian"})
 

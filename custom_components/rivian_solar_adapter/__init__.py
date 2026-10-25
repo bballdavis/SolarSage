@@ -8,7 +8,7 @@ restore of the owner's schedules.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 import logging
 from typing import Any
@@ -29,7 +29,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
@@ -54,12 +54,13 @@ from .const import (
     SERVICE_READ_SCHEDULES,
     SERVICE_RELEASE,
 )
-from .controller import Observation, Phase, RivianScheduleController
+from .controller import Journal, Observation, Phase, RivianScheduleController
 from .runtime import (
     AdapterRuntime,
     RivianSolarAdapterConfigEntry,
     adapter_config_from_entry,
     restore_failed_notification_id,
+    setup_failed_issue_id,
 )
 from .store import JournalFileStore, JournalLoadError, async_check_legacy_journal
 
@@ -107,6 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
 
     store = JournalFileStore(hass, vehicle_id)
     api = RivianScheduleApi(create_client(hass, entry.data), vehicle_id)
+    time_zone = hass.config.time_zone
     controller = RivianScheduleController(api, store, adapter_config_from_entry(hass, entry))
     # Never start over without the journal: it may hold the owner's original
     # schedules. An unreadable file is left untouched for inspection.
@@ -123,6 +125,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
         ) from err
 
     try:
+        await _async_start_session(api)
+    except (ConfigEntryNotReady, ConfigEntryAuthFailed, ConfigEntryError) as err:
+        _async_report_setup_failure(hass, entry, controller.journal, store.relative_path, err)
+        raise
+
+    # The adapter is back in charge of the journal it could not restore.
+    persistent_notification.async_dismiss(hass, restore_failed_notification_id(vehicle_id))
+    ir.async_delete_issue(hass, DOMAIN, setup_failed_issue_id(entry.entry_id))
+    integration = await async_get_integration(hass, DOMAIN)
+    runtime = AdapterRuntime(
+        hass,
+        entry,
+        controller,
+        journal_path=store.relative_path,
+        sw_version=str(integration.version or "") or None,
+        time_zone=time_zone,
+    )
+    entry.runtime_data = runtime
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    runtime.async_start()
+    return True
+
+
+async def _async_start_session(api: RivianScheduleApi) -> None:
+    """Create the Rivian app session, mapping failures to setup exceptions."""
+    try:
         await api.async_start_session()
     except AuthError as err:
         raise ConfigEntryAuthFailed(
@@ -135,20 +163,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
             translation_placeholders={"error": str(err)},
         ) from err
 
-    # The adapter is back in charge of the journal it could not restore.
-    persistent_notification.async_dismiss(hass, restore_failed_notification_id(vehicle_id))
-    integration = await async_get_integration(hass, DOMAIN)
-    runtime = AdapterRuntime(
+
+@callback
+def _async_report_setup_failure(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    journal: Journal,
+    path: str,
+    err: Exception,
+) -> None:
+    """Raise a persistent repair issue when setup fails while the adapter owns the schedule.
+
+    Home Assistant does not unload an entry that failed to set up, so neither a
+    retry nor disabling it restores the owner's schedule; only removal does.
+    The issue is persistent so it survives restarts and a later disable.
+    """
+    issue_id = setup_failed_issue_id(entry.entry_id)
+    if journal.phase is Phase.IDLE:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    # The cause carries Rivian's error class or code, never a response body.
+    cause = err.__cause__ or err
+    ir.async_create_issue(
         hass,
-        entry,
-        controller,
-        journal_path=store.relative_path,
-        sw_version=str(integration.version or "") or None,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        is_persistent=True,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="setup_failed_while_owning",
+        translation_placeholders={
+            "title": entry.title,
+            "error": str(cause) or type(cause).__name__,
+            "path": path,
+        },
     )
-    entry.runtime_data = runtime
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    runtime.async_start()
-    return True
 
 
 @callback
@@ -158,7 +207,8 @@ def _async_warn_if_utc(hass: HomeAssistant) -> None:
         _LOGGER.warning(
             "Home Assistant's time zone is %s. The vehicle evaluates charging schedules on "
             "its local clock, so set Home Assistant's time zone to the vehicle's; otherwise "
-            "the adapter's charging windows are written at the wrong local time",
+            "the adapter's charging windows are written at the wrong local time. A change "
+            "takes effect automatically: the adapter reloads and rewrites its window",
             zone,
         )
 
@@ -173,15 +223,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfi
     runtime = entry.runtime_data
     await runtime.async_stop()
     if entry.disabled_by is not None and runtime.controller.journal.phase is not Phase.IDLE:
-        try:
-            async with asyncio.timeout(REMOVE_RESTORE_TIMEOUT):
-                await _async_restore_owner_schedule(runtime.controller, "integration disabled")
-        except Exception as err:
-            _LOGGER.warning(
-                "Could not restore the owner's charging schedule on disable: %s",
-                str(err) or type(err).__name__,
-            )
-        if (reason := _unrestored_reason(runtime.controller)) is not None:
+        reason = await _async_restore_owner_schedule(runtime.controller, "integration disabled")
+        if reason is not None:
             _async_notify_restore_failed(hass, entry, runtime.journal_path, reason, removed=False)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
@@ -193,6 +236,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     same vehicle inherits it.
     """
     vehicle_id: str = entry.data[CONF_VEHICLE_ID]
+    # The entry is gone, so its setup issue no longer applies. A failed restore
+    # below is reported by its own notification.
+    ir.async_delete_issue(hass, DOMAIN, setup_failed_issue_id(entry.entry_id))
     store = JournalFileStore(hass, vehicle_id)
     try:
         data = await store.async_load()
@@ -207,54 +253,76 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await _async_finish_removal(hass, entry, store, data)
         return
 
-    controller: RivianScheduleController | None = None
+    api = RivianScheduleApi(create_client(hass, entry.data), vehicle_id)
+    controller = RivianScheduleController(api, store, adapter_config_from_entry(hass, entry))
     try:
-        async with asyncio.timeout(REMOVE_RESTORE_TIMEOUT):
-            api = RivianScheduleApi(create_client(hass, entry.data), vehicle_id)
-            controller = RivianScheduleController(
-                api, store, adapter_config_from_entry(hass, entry)
-            )
-            await controller.async_load()
-            await api.async_start_session()
-            await _async_restore_owner_schedule(controller, "integration removed")
-    except Exception as err:
-        _LOGGER.warning(
-            "Could not restore the owner's charging schedule on removal: %s",
-            str(err) or type(err).__name__,
+        await controller.async_load()
+    except (JournalLoadError, KeyError, TypeError, ValueError) as err:
+        _async_notify_restore_failed(
+            hass,
+            entry,
+            store.relative_path,
+            f"the journal is unreadable: {str(err) or type(err).__name__}",
+            removed=True,
         )
-        reason = (controller and _unrestored_reason(controller)) or str(err) or type(err).__name__
-        _async_notify_restore_failed(hass, entry, store.relative_path, reason, removed=True)
         return
-
-    if (reason := _unrestored_reason(controller)) is not None:
+    reason = await _async_restore_owner_schedule(
+        controller, "integration removed", start_session=api.async_start_session
+    )
+    if reason is not None:
         _async_notify_restore_failed(hass, entry, store.relative_path, reason, removed=True)
         return
     _LOGGER.info("Owner's charging schedule restored on removal")
     await _async_finish_removal(hass, entry, store, controller.journal.to_dict())
 
 
-async def _async_restore_owner_schedule(controller: RivianScheduleController, reason: str) -> None:
-    """Release without handing back, then tick until the restore is settled.
+async def _async_restore_owner_schedule(
+    controller: RivianScheduleController,
+    reason: str,
+    *,
+    start_session: Callable[[], Awaitable[None]] | None = None,
+) -> str | None:
+    """Restore the owner's schedule for a disable or removal, within a time limit.
 
+    Releases without handing back, then ticks until the restore is settled.
     The observation is unknown: this release is explicit, not location based.
-    The caller bounds the time this takes.
+    The ticks ignore an error backoff left by earlier ticks: this restore is a
+    single, bounded attempt.
+
+    Returns None once the adapter owns nothing, or why the owner's schedule is
+    not back. The reason comes from this attempt only, never from an error
+    recorded before it.
     """
-    await controller.async_request_release(reason, hand_back=False)
-    await controller.async_tick(dt_util.utcnow(), Observation())
-    if controller.journal.phase is Phase.WRITING:
-        # The readback still showed the previous list; read again once settled.
-        await asyncio.sleep(RESTORE_SETTLE_WAIT.total_seconds())
-        await controller.async_tick(dt_util.utcnow(), Observation())
-
-
-def _unrestored_reason(controller: RivianScheduleController) -> str | None:
-    """Why the owner's schedule is not back, or None if the adapter owns nothing."""
+    error_before = (controller.last_error, controller.last_error_at)
+    failure: str | None = None
+    try:
+        async with asyncio.timeout(REMOVE_RESTORE_TIMEOUT):
+            if start_session is not None:
+                await start_session()
+            await controller.async_request_release(reason, hand_back=False)
+            await controller.async_tick(dt_util.utcnow(), Observation(), force=True)
+            if controller.journal.phase is Phase.WRITING:
+                # The readback still showed the previous list; read again once settled.
+                await asyncio.sleep(RESTORE_SETTLE_WAIT.total_seconds())
+                await controller.async_tick(dt_util.utcnow(), Observation(), force=True)
+    except Exception as err:
+        failure = (
+            f"the restore did not finish within {REMOVE_RESTORE_TIMEOUT} seconds"
+            if isinstance(err, TimeoutError)
+            else str(err) or type(err).__name__
+        )
+        _LOGGER.warning("Could not restore the owner's charging schedule (%s): %s", reason, failure)
     journal = controller.journal
     if journal.phase is Phase.IDLE and journal.original is None:
         return None
     if journal.fault is not None:
         return f"fault {journal.fault.code}: {journal.fault.message}"
-    return controller.last_error or f"the adapter was still in phase {journal.phase.value}"
+    if failure is not None:
+        return failure
+    if (controller.last_error, controller.last_error_at) != error_before:
+        # Recorded by this attempt's ticks.
+        return controller.last_error
+    return f"the restore was not confirmed; the adapter was still in phase {journal.phase.value}"
 
 
 async def _async_finish_removal(

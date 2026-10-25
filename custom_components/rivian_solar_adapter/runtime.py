@@ -19,6 +19,7 @@ from typing import Any
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    EVENT_CORE_CONFIG_UPDATE,
     EVENT_HOMEASSISTANT_STOP,
     STATE_OFF,
     STATE_ON,
@@ -150,6 +151,11 @@ def restore_failed_notification_id(vehicle_id: str) -> str:
     return f"{journal_key(vehicle_id)}_restore_failed"
 
 
+def setup_failed_issue_id(entry_id: str) -> str:
+    """Repair issue for an entry that owns the schedule but could not be set up."""
+    return f"setup_failed_while_owning_{entry_id}"
+
+
 class AdapterRuntime:
     """Owns the controller of one config entry and drives it from Home Assistant."""
 
@@ -161,12 +167,15 @@ class AdapterRuntime:
         *,
         journal_path: str,
         sw_version: str | None = None,
+        time_zone: str | None = None,
     ) -> None:
         self.hass = hass
         self.entry = entry
         self.controller = controller
         self.journal_path = journal_path
         self.sw_version = sw_version
+        # Home Assistant's time zone when the controller's config was built.
+        self.time_zone: str = time_zone if time_zone is not None else hass.config.time_zone
         self.vehicle_id: str = entry.data[CONF_VEHICLE_ID]
         self.last_provider_read: dict[str, Any] | None = None
         self.last_provider_read_at: datetime | None = None
@@ -262,6 +271,11 @@ class AdapterRuntime:
         self._unsubscribe.append(
             self.hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, self._async_handle_stop)
         )
+        self._unsubscribe.append(
+            self.hass.bus.async_listen(
+                EVENT_CORE_CONFIG_UPDATE, self._async_handle_core_config_update
+            )
+        )
         if entity_ids := [
             entity_id for key in ENTITY_OPTIONS if (entity_id := self.entry.options.get(key))
         ]:
@@ -273,6 +287,8 @@ class AdapterRuntime:
         if self.controller.journal.phase is not Phase.FAULT:
             # Left over from before a reload.
             self._async_dismiss_fault_notifications()
+        # The time zone may have changed while the entry was being set up.
+        self._async_handle_core_config_update(None)
         self.request_tick()
 
     async def async_stop(self) -> None:
@@ -300,6 +316,25 @@ class AdapterRuntime:
     def _async_handle_stop(self, _event: Event) -> None:
         """No ticks while Home Assistant stops; a lease lapses on its own."""
         self._stopped = True
+
+    @callback
+    def _async_handle_core_config_update(self, _event: Event | None) -> None:
+        """Reload when Home Assistant's time zone changes.
+
+        The vehicle evaluates windows on its local clock, and the controller's
+        time zone is fixed when it is created. After the reload, the next tick
+        rewrites the window held on the vehicle for the new zone.
+        """
+        if self._stopped or self.hass.config.time_zone == self.time_zone:
+            return
+        _LOGGER.info(
+            "Home Assistant's time zone changed from %s to %s; reloading the solar adapter "
+            "so its charging windows follow the new local time",
+            self.time_zone,
+            self.hass.config.time_zone,
+        )
+        self._stopped = True  # no tick with the old zone until the reload
+        self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
 
     @callback
     def async_add_listener(self, update_callback: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -413,7 +448,12 @@ class AdapterRuntime:
 
     @callback
     def _async_check_entities(self, now: datetime) -> None:
-        """Raise a repair issue while a mapped plug or location entity is missing."""
+        """Raise a repair issue while a mapped plug, location or liveness entity is missing.
+
+        A missing plug or location entity is treated as unknown. A missing
+        liveness entity is treated as evcc being down, which blocks every start
+        and renewal.
+        """
         for option in MONITORED_ENTITY_OPTIONS:
             if not (entity_id := self.entry.options.get(option)):
                 continue
@@ -428,10 +468,12 @@ class AdapterRuntime:
                 continue
             self._missing_issues.add(option)
             _LOGGER.warning(
-                "%s is mapped as the vehicle's %s but does not exist; the adapter treats "
-                "it as unknown",
+                "%s, mapped as the adapter's %s entity, does not exist; %s",
                 entity_id,
                 option.removesuffix("_entity"),
+                "evcc is treated as down, so no charging is started or renewed"
+                if option == CONF_LIVENESS_ENTITY
+                else "the adapter treats its state as unknown",
             )
             ir.async_create_issue(
                 self.hass,
@@ -573,7 +615,11 @@ class AdapterRuntime:
         self.request_tick()
 
     async def async_force_restore(self) -> None:
-        """While faulted, write the owner's saved schedules whatever Rivian holds."""
+        """While faulted, write the owner's saved schedules whatever Rivian holds.
+
+        A copy archived by abandon ownership is only written while Rivian holds a
+        window this adapter wrote; otherwise nothing is written.
+        """
         journal = self.controller.journal
         if journal.phase is not Phase.FAULT:
             raise ServiceValidationError(
@@ -583,6 +629,7 @@ class AdapterRuntime:
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="force_restore_no_snapshot"
             )
+        fault_before = journal.fault
         try:
             restored = await self._async_provider_call(
                 self.controller.async_force_restore(dt_util.utcnow())
@@ -590,8 +637,14 @@ class AdapterRuntime:
         finally:
             self.async_notify()
         if not restored:
+            # A write that could not be verified records a new fault. An unchanged
+            # fault means nothing was written: the archived copy was not safe to apply.
+            written = self.controller.journal.fault is not fault_before
             raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="force_restore_unverified"
+                translation_domain=DOMAIN,
+                translation_key=(
+                    "force_restore_unverified" if written else "force_restore_archive_unsafe"
+                ),
             )
         self.request_tick()
 
@@ -659,7 +712,31 @@ class AdapterRuntime:
         return result
 
 
+# What to do first for faults whose general remedies do not fit or need a warning.
+_FAULT_REMEDIES: dict[str, str] = {
+    "restore_rejected": (
+        "Rivian refused the owner's schedules when they were written back as one list. "
+        "Some accounts return schedules that Rivian then will not accept back together "
+        "(upstream PR #308), so writing the same list again is refused again: do not use "
+        "force restore, and do not clear the fault while Rivian still shows the adapter's "
+        "window, because the release then sends the same list again. Recreate the owner's "
+        "schedules in the Rivian app, then press **Clear fault**; once Rivian shows the "
+        "same schedules as the adapter's saved copy, the adapter lets go of the vehicle. "
+        "If clearing is refused because the recreated schedules differ, use **abandon "
+        "ownership**: it writes nothing and keeps the saved copy archived."
+    ),
+    "write_rejected": (
+        "Rivian repeatedly refused the adapter's schedule writes, so none of them was "
+        "applied. Check that the vehicle is online and that its charging schedules can be "
+        "edited in the Rivian app, then press **Clear fault**. If the fault comes back, "
+        "Rivian may have changed its schedule interface; report it with the adapter's "
+        "diagnostics."
+    ),
+}
+
+
 def _fault_message(title: str, fault: Fault) -> str:
+    remedy = _FAULT_REMEDIES.get(fault.code)
     return "\n".join(
         [
             f"The solar adapter for {title} stopped writing the vehicle's charging schedule "
@@ -667,6 +744,7 @@ def _fault_message(title: str, fault: Fault) -> str:
             "",
             f"Fault: {fault.code}",
             fault.message,
+            *(["", f"First: {remedy}"] if remedy else []),
             "",
             "What you can do:",
             "- Check the charging schedules in the Rivian app.",
@@ -676,7 +754,9 @@ def _fault_message(title: str, fault: Fault) -> str:
             "owner's schedules and hands control back. A release requested during the fault "
             "runs once it is cleared.",
             "- The **force restore** action writes the saved owner schedules now, overwriting "
-            "whatever Rivian holds, and checks them by reading them back.",
+            "whatever Rivian holds, and checks them by reading them back. A copy archived by "
+            "abandon ownership is only written while Rivian holds a window this adapter "
+            "wrote, so it never replaces schedules the owner has set up since.",
             "- The **abandon ownership** action stops controlling the vehicle without writing "
             "anything; the saved owner schedules are archived and listed in a notification.",
         ]

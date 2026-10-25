@@ -10,6 +10,7 @@ returning, raises when it cannot, and refuses to load a file it cannot parse.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import contextlib
 import json
 import os
@@ -34,7 +35,8 @@ class JournalFileStore:
         self.key = journal_key(vehicle_id)
         self.path = hass.config.path(STORAGE_DIR, self.key)
         # Saves run in executor threads; the lock keeps them in call order so
-        # an older journal never replaces a newer one.
+        # an older journal never replaces a newer one. It is held until the
+        # thread has finished, even if the caller is cancelled.
         self._lock = asyncio.Lock()
 
     @property
@@ -53,13 +55,37 @@ class JournalFileStore:
             {"version": STORAGE_VERSION, "minor_version": 1, "key": self.key, "data": data},
             indent=2,
         )
-        async with self._lock:
-            await self.hass.async_add_executor_job(_write_journal, self.path, payload)
+        await self._async_run_locked(_write_journal, self.path, payload)
 
     async def async_remove(self) -> None:
         """Delete the journal file, if there is one."""
+        await self._async_run_locked(_remove_file, self.path)
+
+    async def _async_run_locked(self, job: Callable[..., None], *args: Any) -> None:
+        """Run a file job in an executor thread while holding the lock.
+
+        A cancelled caller cannot stop the thread. Releasing the lock at once
+        would let a newer save finish first and then be overwritten by this
+        one, so the lock is held until the thread is done, then the
+        cancellation goes on.
+        """
         async with self._lock:
-            await self.hass.async_add_executor_job(_remove_file, self.path)
+            future = self.hass.async_add_executor_job(job, *args)
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                await _async_wait_done(future)
+                raise
+
+
+async def _async_wait_done(future: asyncio.Future[None]) -> None:
+    """Wait for ``future`` to finish, even if the waiting task is cancelled again."""
+    while not future.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait({future})
+    if not future.cancelled():
+        # The caller was cancelled and never sees the outcome; mark it as retrieved.
+        future.exception()
 
 
 def _read_journal(path: str, key: str) -> dict[str, Any] | None:
