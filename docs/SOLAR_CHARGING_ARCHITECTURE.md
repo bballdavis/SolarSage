@@ -8,7 +8,7 @@ Use **[evcc](https://github.com/evcc-io/evcc)**, run as the Home Assistant add-o
 
 1. **evcc decides; vehicles act.** evcc reads the Sol-Ark through Home Assistant and polls the Tesla Wall Connector Gen 3 (TWC3) directly. The TWC3 cannot be commanded, so evcc's `twc3` charger forwards start/stop and current to the vehicle evcc has identified or assigned on that loadpoint ([`charger/twc3.go#L121-L150`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/charger/twc3.go#L121-L150)). Until a vehicle is identified, those control commands fail.
 2. **Each car is an ordinary set of HA entities.** Each vehicle is configured as an evcc `homeassistant` vehicle. That vehicle type maps an HA `switch` or `script` pair to start/stop and an HA `number` to the charge current.
-3. **Tesla: existing integration.** Its entities come from an existing integration. The preferred one is HA core Teslemetry with the local Bluetooth vehicle sub-entry.
+3. **Tesla: local Bluetooth through Home Assistant.** Its entities come from [`yoziru/esphome-tesla-ble`](https://github.com/yoziru/esphome-tesla-ble) firmware on an ESP32 in the garage, which holds its own charging-only key to the car and appears in HA as an ESPHome device. No Tesla cloud API, Teslemetry subscription or per-command cost, and it keeps working without internet.
 4. **Rivian: upstream telemetry plus one adapter.** Telemetry comes from upstream [`bretterer/home-assistant-rivian`](https://github.com/bretterer/home-assistant-rivian) 2.x. Control goes through this project's **[Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md)**, which signs in to Rivian itself and writes the vehicle's charging schedule. That adapter is the only control code this project owns.
 5. **Hardware fallback.** An attended trial may show that a Gen 2 R1S does not reliably follow charging-schedule changes. In that case, replace the TWC3 with a locally controllable NACS EVSE; OpenEVSE is the reference choice. evcc then controls both cars at the charger, and the vehicle adapters become read-only.
 
@@ -46,12 +46,12 @@ flowchart LR
   HA -->|"homeassistant meters: grid, PV, battery (sign-inverted), SoC"| EVCC["evcc add-on (policy)"]
   HA -->|"Energy dashboard solar forecast"| EVCC
   TWC3["Tesla Wall Connector Gen 3"] -->|"local /api/1/vitals: status, power, current"| EVCC
-  EVCC -->|"HA services: switch + number"| TeslaEnt["Tesla entities: Teslemetry + Bluetooth"]
+  EVCC -->|"HA services: switch + number"| TeslaEnt["Tesla entities: ESPHome Tesla BLE (garage ESP32)"]
   EVCC -->|"HA services: switch + number"| Adapter["Rivian charge adapter (this project)"]
   RivInt["home-assistant-rivian 2.x (telemetry)"] -->|"plugged, location, charger state"| Adapter
   Adapter -->|"own Rivian login: charging schedule GraphQL"| R1S["Rivian R1S (Gen 2)"]
   R1S -->|"Rivian cloud GraphQL"| RivInt
-  TeslaEnt -->|"BLE, cloud fallback"| Tesla["Tesla"]
+  TeslaEnt -->|"Bluetooth LE, local only"| Tesla["Tesla"]
   EVCC -->|"ha-evcc: modes, plans, sensors"| HA
 ```
 
@@ -61,7 +61,7 @@ flowchart LR
 | Site meters | evcc `homeassistant` meter template over the existing Sol-Ark HA entities | HA already has the data. A leading `-` inverts the battery sign. evcc has no Sol-Ark template. Its non-three-phase Deye/Sunsynk hybrid template [`deye-storage`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/templates/definition/meter/deye-storage.yaml) probably matches the Deye-based Sol-Ark, but it needs direct RS485 or TCP Modbus access (low: inference; see the [survey](ECOSYSTEM_SURVEY.md#energy-site)). | Direct Modbus (`deye-storage`) only if HA latency proves inadequate |
 | Charger telemetry | evcc `twc3` charger polling the TWC3 locally | Independent of the HA `tesla_wall_connector` integration, which showed timeouts and stale values | HA sensors remain for dashboards and diagnosis |
 | Solar forecast | evcc `homeassistant` solar tariff, which reads the HA Energy-dashboard forecast (Solcast) | No extra Solcast API calls. Display-only by default. Only the sponsor-only, experimental optimizer consumes it. Its docs call it advisory, but 0.318.0 code adds an opt-in automatic level that can start and stop Smart-mode loadpoints ([`core/site.go#L1157-L1165`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/core/site.go#L1157-L1165), [`core/loadpoint_optimizer.go#L74-L100`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/core/loadpoint_optimizer.go#L74-L100)). | evcc optimizer later, if wanted |
-| Tesla actuation | HA core **Teslemetry** with the Bluetooth vehicle sub-entry, via an ESPHome Bluetooth proxy | Local commands at no per-command cost, per-command cloud fallback, streamed charge data | `esphome-tesla-ble` or `tesla_fleet`; evcc `tesla-ble` with TeslaBleHttpProxy |
+| Tesla actuation | **`esphome-tesla-ble`** on an ESP32 near the parking spot, in HA through ESPHome ([config](../config/esphome/tesla-ble.example.yaml)), with a `CHARGING_MANAGER` key | Fully local and free, no cloud account; in use since July 2024; the key cannot unlock or drive the car | `ha-tesla-ble` (same author, HA's own Bluetooth stack through a stock ESPHome proxy, same ESP32; first released October 2026); evcc `tesla-ble` with TeslaBleHttpProxy |
 | Rivian actuation | The Rivian charge adapter, with its own Rivian login, writing the charging schedule; upstream Rivian 2.x for telemetry. evcc control is **gated on an attended trial**. | Only software lever on a Gen 2 car is the charging schedule. Upstream 2.0.0 has no schedule services. | Replace the TWC3 with OpenEVSE (NACS) |
 | Vehicle identification | Status sensors that report `a` unless the car is home and plugged into the TWC3: an HA template sensor for the Tesla, the adapter's `evcc status` sensor for the Rivian. **No default vehicle** in evcc. | evcc detection uses status only, not location | Manual assignment through the `ha-evcc` select |
 | UI | evcc UI (ingress) plus `ha-evcc` entities on an HA dashboard | Already built and maintained | Prototype panel kept only as reference |
@@ -73,11 +73,11 @@ flowchart LR
   - **An HA "glue" package.** It holds the Tesla status sensor for evcc vehicle detection, a manual vehicle override that both cars' status sensors honor, safety watchdogs, and the Tesla amp restore at unplug. Write spacing and the current deadband for the Rivian live in the adapter.
   - **Commissioning protocols and evidence notes.**
   - **Optional upstream contributions:** full-list schedule services for `home-assistant-rivian`, which would let the adapter drop its own Rivian login, and fixes found during the trial.
-- **Reuse:** evcc, `ha-evcc`, HA core Teslemetry/ESPHome, upstream `home-assistant-rivian` and `rivian-python-client`, and the existing Sol-Ark and Solcast integrations.
+- **Reuse:** evcc, `ha-evcc`, ESPHome with `esphome-tesla-ble`, upstream `home-assistant-rivian` and `rivian-python-client`, and the existing Sol-Ark and Solcast integrations.
 - **Retire:**
   - the prototype `solar_ev_charging` engine, coordinator, and panel;
   - the combined Rivian fork (move back to upstream 2.x);
-  - `tesla_custom`, once Teslemetry is commissioned.
+  - `tesla_custom`, once the ESPHome Tesla BLE device is commissioned. Teslemetry is not used.
 
   The [`reference/`](../reference/) snapshot stays as history.
 - **Ported from the prototype into the adapter:** schedule normalization and canonical hashing ([prototype `schedule.py`](../reference/ha-prototype-source/custom_components/rivian/schedule.py)), and the journaled ownership/restore discipline. The adapter has its own tests in [`tests/`](../tests/).
@@ -87,17 +87,19 @@ flowchart LR
 ### Tesla
 
 - **evcc vehicle:** `homeassistant` template, with `phases: 1`.
-  - `start_charging`: the Teslemetry charge `switch`;
-  - `setMaxCurrent`: the charge-current `number`;
-  - `soc` and `limitSoc` from Teslemetry;
-  - `status` from the glue package's location-aware sensor.
+  - `start_charging`: the ESPHome Tesla BLE `Charger` switch, which also mirrors whether the car is charging;
+  - `setMaxCurrent`: its `Charging Amps` number, configured up to 48 A (the firmware defaults to 32 A);
+  - `soc` and `limitSoc`: its `Battery` sensor and `Charging Limit` number;
+  - `wakeup`: its `Wake up` button;
+  - `status` from the glue package's sensor: the ESP32's Bluetooth link to the car stands in for "home", plus the car's cable sensor and the TWC3's vehicle-connected sensor.
 - **Current floor:** 6 A. Two independent codebases send a second command around 5 A: `teslajsonpy` 3.14.0 (used by `tesla_custom`) for any setting below 5 A, and TeslaSolarCharger for a setting that crosses 5 A ([`TeslaBleService.cs#L242-L248`](https://github.com/pkuehnel/TeslaSolarCharger/blob/e342e39d820812568aea3954d2875a4eb4125bd1/TeslaSolarCharger/Server/Services/TeslaBleService.cs#L242-L248)). The car's base load also makes 1–4 A inefficient. Amps change live without restarting the session.
 - **Physical feedback:** evcc measures charging through the TWC3, independently of the car's command acknowledgement.
 - **Failure mode:** if evcc or HA stops mid-session, the Tesla keeps charging at the last current until its own charge limit.
   - The glue watchdog should stop the car when evcc is unavailable.
   - The Tesla's charge limit is the final backstop.
   - The Tesla remembers the last current, so a later manual charge would start at evcc's last setting, possibly 6 A. evcc sets no current when a vehicle disconnects ([`core/loadpoint.go#L627-L672`](https://github.com/evcc-io/evcc/blob/bf5c276cdb395443fda4601b99151c0a962d0db4/core/loadpoint.go#L627-L672)). The glue package therefore sets a configurable normal amperage (default 32 A) when the Tesla unplugs at home.
-- **Cost:** Bluetooth commands are free. Cloud fallback uses Teslemetry credits; see the [survey cost model](ECOSYSTEM_SURVEY.md#tesla).
+- **Cost:** none. Every command and reading goes over Bluetooth to the garage ESP32 (about $15–25 of hardware).
+- **Bluetooth link down:** if the ESP32 loses power, Wi-Fi or range mid-session, nothing can stop or slow the Tesla, which keeps its last current up to its charge limit. The glue package posts a notification after 5 minutes. Tesla's own app still works as a manual stop.
 
 ### Rivian (Gen 2 R1S)
 
@@ -186,7 +188,7 @@ The EVSE swap is the single biggest lever toward "flawless for both". The softwa
 | --- | --- | --- | --- |
 | evcc stops | Charges at last current to its limit unless the watchdog stops it | Once the evcc liveness entity is unavailable, the adapter stops renewing. After 3 minutes it holds evcc's earlier request and parks the window, if Rivian's cloud is reachable. A single failed reading, or Home Assistant starting before the sensor, does not do this. When evcc is back, evcc's loadpoint `enabled` state (also from `/api/state`) decides: a running evcc keeps it on, so charging resumes; a restarted evcc starts with it off, so the old request is dropped. If the cloud is unreachable, the lease lapses within 25 minutes of the last write (20-minute lease plus the 5-minute clock margin), and the car stops if T4 passes. evcc must ask again after it restarts. The glue watchdog also turns the adapter's switch off after 5 minutes. | EVSE holds its last claim; the watchdog can pause it locally |
 | HA host down | Same as evcc (the add-on runs on HA) | Nothing renews; the lease lapses within 25 minutes. After a restart, evcc's old request may keep a still-live lease running, but it starts nothing until evcc confirms it, so a power cut cannot restart charging from the grid. | EVSE keeps its last state; OpenEVSE's own solar divert is a possible local fallback |
-| Internet down | Bluetooth commands keep working only while the Teslemetry entry is already loaded and the charge entities are streaming. Polling entities go unavailable, and HA skips unavailable entities in a service call, so evcc's command would do nothing. After an HA restart during an outage Teslemetry cannot load ([`entity.py#L70-L74`](https://github.com/home-assistant/core/blob/3902d41667731e9a2cb911d73b023b859ba5b299/homeassistant/components/teslemetry/entity.py#L70-L74), [`__init__.py#L177-L196`](https://github.com/home-assistant/core/blob/3902d41667731e9a2cb911d73b023b859ba5b299/homeassistant/components/teslemetry/__init__.py#L177-L196)). Verify this during commissioning. | Writes fail and the adapter backs off; the lease lapses | Unaffected |
+| Internet down | Unaffected: the ESP32 talks to the car over Bluetooth and to HA over the local network. | Writes fail and the adapter backs off; the lease lapses | Unaffected |
 | Rivian cloud or rate limit | n/a | A rate limit pauses writes for 5 minutes; other errors back off from 15 s to 15 minutes. The lease lapses meanwhile. An expired login starts HA's re-authentication. | Unaffected for control |
 
 ## Alternatives considered
@@ -216,8 +218,8 @@ The EVSE swap is the single biggest lever toward "flawless for both". The softwa
 ## Open questions for the owner
 
 1. **Hardware.** If the Rivian trial disappoints, is a roughly $600–700 EVSE swap (plus electrician) acceptable? Or should the Rivian stay on manual and schedule-only charging?
-2. **Tesla.** What model and year is the Tesla (BLE phone-key support)? How far is its parking spot from the HA host? Can an ESPHome Bluetooth proxy go in the garage?
-3. **`tesla_custom` proxy.** Does `tesla_custom` currently send commands through the unmaintained Tesla HTTP Proxy add-on?
+2. **Tesla.** What model and year is the Tesla? Every BLE-capable Tesla works except pre-2021 Model S/X. What is its maximum AC current on the Wall Connector (32 or 48 A)? Is there power and Wi-Fi for an ESP32 within a few metres of where it parks?
+3. **`tesla_custom`.** Is anything else commanding the Tesla today, such as `tesla_custom` automations? They must be retired so evcc is the only writer.
 4. **Rivian schedules.** How many charging schedules does the R1S have today, and what are they (off-peak window, location)? The adapter's **Read schedules** button lists them without coordinates, including any inactive entries.
 5. **Rivian plug adapter.** Which NACS-to-J1772 adapter does the Rivian use on the TWC3? Does the TWC3 report it as connected?
 6. **Tariff.** Is there a time-of-use tariff? evcc plans and night charging use it.

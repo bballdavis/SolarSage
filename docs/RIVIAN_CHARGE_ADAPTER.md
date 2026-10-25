@@ -174,7 +174,7 @@ Entering a fault posts a Home Assistant notification. While faulted, the adapter
 
 ## Known limits
 
-- **Vehicle behavior is unproven.** No Gen 2 vehicle has been observed following these writes. The trial exists to establish that.
+- **Vehicle behavior is unproven on a Gen 2.** The technique is in use: two open-source projects ([`rchav/rivian_solar_charge_ha`](https://github.com/rchav/rivian_solar_charge_ha), [`ostap-korkuna/rivian-charging-automation`](https://github.com/ostap-korkuna/rivian-charging-automation), "tested on R1S") modulate charging through the schedule amperage, and an owner reports the app's schedule amperage changing the rate mid-charge ([upstream issue #244](https://github.com/bretterer/home-assistant-rivian/issues/244)). None of them states a Gen 2 vehicle or documents how reliably a moved or lapsed window stops a session. The trial establishes that for this car.
 - **Owner schedules are suspended while owned.** While owned, the owner's schedules are replaced by a single lease or parked window. A parked window recurs weekly while the adapter cannot write.
 - **Lease lapse is the only cloud-free stop.** A cloud or network outage cannot stop a lease that is already active; it lapses on its own after at most `lease_minutes` + clock skew. The trial (T4) must show that a lapsing window stops a session.
 - **The vehicle's time zone must match Home Assistant's.** Windows are built in Home Assistant's local time, and the setup warns if that is UTC.
