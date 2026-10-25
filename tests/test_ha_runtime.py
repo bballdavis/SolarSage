@@ -172,7 +172,8 @@ def test_describe_schedules() -> None:
         }
     )
     assert text.splitlines() == [
-        "Rivian reports 1 charging schedule (fingerprint 0123456789ab, written by this adapter).",
+        "Rivian reports 1 charging schedule (fingerprint 0123456789ab, written by Rivian "
+        "schedule control).",
         "1. Sunday from 01:15 for 45 min at 40 A, enabled",
     ]
 
@@ -180,7 +181,7 @@ def test_describe_schedules() -> None:
 @pytest.mark.parametrize(
     ("code", "remedy"),
     [
-        ("write_rejected", "Rivian repeatedly refused the adapter's schedule writes"),
+        ("write_rejected", "Rivian repeatedly refused schedule control's writes"),
         ("restore_rejected", "Rivian refused the owner's schedules when they were written back"),
     ],
 )
@@ -197,12 +198,12 @@ def test_fault_message_without_specific_remedy() -> None:
     """Other faults get the general remedies, including the archive rule of force restore."""
     message = _fault_message("Test R1S", Fault("external_edit", "Changed.", dt_util.utcnow()))
     assert "First: " not in message
-    assert "only written while Rivian holds a window this adapter wrote" in message
+    assert "only written while Rivian holds a window that schedule control wrote" in message
 
 
 @pytest.mark.parametrize("name", ["strings.json", "translations/en.json"])
 def test_translations_cover_issues_and_errors(name: str) -> None:
-    """Every repair issue and error the adapter raises has a translation."""
+    """Every repair issue and error schedule control raises has a translation."""
     strings = json.loads((COMPONENT / name).read_text())
     for option in MONITORED_ENTITY_OPTIONS:
         issue = strings["issues"][f"missing_{option}"]

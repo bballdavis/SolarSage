@@ -1,4 +1,4 @@
-"""Sensors: the adapter's control state and the vehicle's charger status."""
+"""Sensors: the control state and the vehicle's charger status."""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from homeassistant.util import dt as dt_util
 
 from .const import CHARGER_STATUS_KEY, CHARGER_STATUSES
 from .controller import ControlState
-from .entity import RivianSolarAdapterEntity
-from .runtime import AdapterRuntime, RivianSolarAdapterConfigEntry
+from .entity import RivianScheduleControlEntity
+from .runtime import RivianScheduleControlConfigEntry, ScheduleControlRuntime
 
 PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: RivianSolarAdapterConfigEntry,
+    entry: RivianScheduleControlConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the sensors."""
@@ -27,13 +27,13 @@ async def async_setup_entry(
     async_add_entities([ControlStateSensor(runtime), ChargerStatusSensor(runtime)])
 
 
-class ControlStateSensor(RivianSolarAdapterEntity, SensorEntity):
-    """What the adapter is doing, with its journal summary as attributes."""
+class ControlStateSensor(RivianScheduleControlEntity, SensorEntity):
+    """What schedule control is doing, with its journal summary as attributes."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [state.value for state in ControlState]
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "control_state")
 
     @property
@@ -47,13 +47,13 @@ class ControlStateSensor(RivianSolarAdapterEntity, SensorEntity):
         return self.runtime.attributes(dt_util.utcnow())
 
 
-class ChargerStatusSensor(RivianSolarAdapterEntity, SensorEntity):
+class ChargerStatusSensor(RivianScheduleControlEntity, SensorEntity):
     """The vehicle's charger status (IEC 61851 states): a, b or c."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = CHARGER_STATUSES
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, CHARGER_STATUS_KEY)
 
     @property

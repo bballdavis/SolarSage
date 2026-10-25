@@ -32,7 +32,7 @@ Tools for testing the planner with your real Home Assistant data and connections
    | --- | --- |
    | `site` | The Sol-Ark, Wall Connector, Solcast and free-hours entities |
    | `units` | The unit of each power sensor (`W` or `kW`). The Sol-Ark powers are W and the Wall Connector's total power is kW. |
-   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the adapter's entities (the control state, charger status, lease renewal switch and buttons) and its own charger state sensor, `sensor.r1s_charger_state`, which the adapter's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car. |
+   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the entities of [Rivian schedule control](../docs/RIVIAN_SCHEDULE_CONTROL.md) (the control state, charger status, lease renewal switch and buttons) and the car's own charger state sensor, `sensor.r1s_charger_state`, which the schedule control's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car. |
    | `planner` | The planner integration's heartbeat, Planning and Shadow mode switches, and its mode, reason and car-on-charger sensors. Until the planner is installed the check only notes that it is missing. |
    | `tariff` | `price`, `buyback`, and `free_hours_fallback`, used when no Schedule helper is readable |
    | `battery` | Home battery limits for replays (capacity, 9 kW each way, 92% efficiency, 10% reserve) |
@@ -63,10 +63,10 @@ It checks:
   - The p10/p50/p90 of the energy remaining today.
 - **The free-hours Schedule helper** and its weekly blocks.
 - **Tesla Fleet.** The car's entities exist and come from the `tesla_fleet` integration, along with the current number's range. When only the tesla_custom names exist, the check fails and says so.
-- **The Rivian adapter.** Its entities exist. It shows the control state, the dry-run flag, the standing request (`desired_charge`, `requested_amps`, `lease_amps`) and why a start is blocked. A fault is a FAIL and handed-back is a WARN.
-- **Which car the Wall Connector sees.** The Wall Connector sees a vehicle, and exactly one car reports its cable in while at home, as the planner decides it. Both cars or neither is a WARN. So is a Rivian on the charger whose adapter charger status says `a`.
+- **Rivian schedule control.** Its entities exist. It shows the control state, the dry-run flag, the standing request (`desired_charge`, `requested_amps`, `lease_amps`) and why a start is blocked. A fault is a FAIL and handed-back is a WARN.
+- **Which car the Wall Connector sees.** The Wall Connector sees a vehicle, and exactly one car reports its cable in while at home, as the planner decides it. Both cars or neither is a WARN. So is a Rivian on the charger while the schedule control's charger status says `a`.
 - **The planner** ([docs/PLANNER.md](../docs/PLANNER.md)), once installed: its heartbeat (`shadow` is OK; unavailable is a WARN: Planning is off or it cannot plan), Planning, Shadow mode, and its mode, car on the charger and reason.
-- **The adapter's controller options,** as the adapter itself reads them (the control state's `observation`): `controller_liveness_entity` must follow the planner's heartbeat and `controller_charging_entity` the car's charging-wanted sensor. Unmapped, or mapped to something else, is a WARN.
+- **The schedule control's controller options,** as it reads them itself (the control state's `observation`): `controller_liveness_entity` must follow the planner's heartbeat and `controller_charging_entity` the car's charging-wanted sensor. Unmapped, or mapped to something else, is a WARN.
 
 ## snapshot.py: real days as a file
 
@@ -154,9 +154,9 @@ This is the only tool that sends commands.
 4. At the end, also after `q` or an error, it offers to restore the current and the charge switch as they were (Enter = yes).
 5. It refuses at the charge limit unless you confirm.
 
-**Rivian** (through the [charge adapter](../docs/RIVIAN_SCHEDULE_CONTROL.md#attended-trial); it never writes the Rivian itself):
+**Rivian** (through [Rivian schedule control](../docs/RIVIAN_SCHEDULE_CONTROL.md#attended-trial); it never writes the Rivian itself):
 
-- **It refuses** while the adapter is in dry run (turn dry run off in its options first), faulted, or handed back, and while the adapter reads its controller as down: with the adapter mapped to the planner, the heartbeat must show `shadow`.
+- **It refuses** while the schedule control is in dry run (turn dry run off in its options first), faulted, or handed back, and while it reads its controller as down: with the schedule control mapped to the planner, the heartbeat must show `shadow`.
 - **It guides the trial's steps,** watching `control_state`, `lease_amps` and the Wall Connector:
   - **Inventory:** Read schedules.
   - **T1 write and readback:** with the charge limit set below the car's level, 16 A, on, off, then Restore owner schedule; then unplug and replug.

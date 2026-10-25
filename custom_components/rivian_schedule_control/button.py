@@ -10,15 +10,15 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import RivianSolarAdapterEntity
-from .runtime import AdapterRuntime, RivianSolarAdapterConfigEntry, describe_schedules
+from .entity import RivianScheduleControlEntity
+from .runtime import RivianScheduleControlConfigEntry, ScheduleControlRuntime, describe_schedules
 
 PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: RivianSolarAdapterConfigEntry,
+    entry: RivianScheduleControlConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the buttons."""
@@ -28,10 +28,10 @@ async def async_setup_entry(
     )
 
 
-class ReleaseButton(RivianSolarAdapterEntity, ButtonEntity):
+class ReleaseButton(RivianScheduleControlEntity, ButtonEntity):
     """Restore the owner's schedule and hand control back until the next unplug."""
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "release")
 
     async def async_press(self) -> None:
@@ -42,12 +42,12 @@ class ReleaseButton(RivianSolarAdapterEntity, ButtonEntity):
         await self.runtime.async_request_release("manual")
 
 
-class ClearFaultButton(RivianSolarAdapterEntity, ButtonEntity):
-    """Resume after a fault once Rivian holds a schedule the adapter knows."""
+class ClearFaultButton(RivianScheduleControlEntity, ButtonEntity):
+    """Resume after a fault once Rivian holds a known schedule: its own window or the owner's."""
 
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "clear_fault")
 
     async def async_press(self) -> None:
@@ -58,12 +58,12 @@ class ClearFaultButton(RivianSolarAdapterEntity, ButtonEntity):
             )
 
 
-class ReadSchedulesButton(RivianSolarAdapterEntity, ButtonEntity):
+class ReadSchedulesButton(RivianScheduleControlEntity, ButtonEntity):
     """Read Rivian's schedule list and show it in a notification."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "read_schedules")
 
     async def async_press(self) -> None:

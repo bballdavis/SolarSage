@@ -13,11 +13,12 @@ plugged in at home and charging, it steps the charge current 16 -> 10 -> 6 -> 16
 the Wall Connector's measured current follow each step, then restores the current and the
 charge switch as they were.
 
-**Rivian** (through this repo's charge adapter; it never writes the Rivian itself): it guides
-the adapter's attended trial (docs/RIVIAN_SCHEDULE_CONTROL.md): inventory, T1 write and
-readback, T2 current steps, T2b continuity, T3 stop, T4 lease expiry, T5 resume, T6 plug-in
-while parked, T7 exact restore. It uses the adapter's switch, current number, lease-renewal
-switch and buttons, and refuses while the adapter is in dry run.
+**Rivian** (through this repo's Rivian schedule control; it never writes the Rivian itself):
+it guides the schedule control's attended trial (docs/RIVIAN_SCHEDULE_CONTROL.md): inventory,
+T1 write and readback, T2 current steps, T2b continuity, T3 stop, T4 lease expiry, T5 resume,
+T6 plug-in while parked, T7 exact restore. It uses the schedule control's switch, current
+number, lease-renewal switch and buttons, and refuses while the schedule control is in dry
+run.
 
 Every observation and answer goes to ``tools/out/attended_<car>_<time>.jsonl``.
 """
@@ -45,7 +46,7 @@ from tools.sanitize import scrub, tracker_state  # noqa: E402
 
 TESLA_STEPS = (16, 10, 6, 16)
 RIVIAN_STEPS = ("inventory", "t1", "t2", "t2b", "t3", "t4", "t5", "t6", "t7")
-ADAPTER_ATTRS = (
+SCHEDULE_CONTROL_ATTRS = (
     "dry_run",
     "phase",
     "desired_charge",
@@ -185,7 +186,9 @@ class Session:
                 out["current_min"], out["current_max"] = attrs.get("min"), attrs.get("max")
             if name == "control_state" and st:
                 attrs = st.get("attributes") or {}
-                out["schedule_control"] = {k: attrs.get(k) for k in ADAPTER_ATTRS if k in attrs}
+                out["schedule_control"] = {
+                    k: attrs.get(k) for k in SCHEDULE_CONTROL_ATTRS if k in attrs
+                }
                 out["last_provider_read"] = attrs.get("last_provider_read")
         for other_id, (plugged, location) in others.items():
             at_home = tracker_state((states.get(location) or {}).get("state")) == "home"
@@ -378,7 +381,7 @@ async def tesla_restore(s: Session, current: float | None, was_on: bool) -> None
 # --------------------------------------------------------------------------- Rivian
 
 
-def _adapter(obs: Mapping[str, Any]) -> dict[str, Any]:
+def _control(obs: Mapping[str, Any]) -> dict[str, Any]:
     return obs.get("schedule_control") or {}
 
 
@@ -395,25 +398,33 @@ async def rivian_preflight(s: Session) -> dict[str, Any]:
     s.record("preflight", "observe", obs=obs)
     state = _state(obs)
     if state in UNAVAILABLE:
-        raise Refused(f"{car['control_state']} is missing or unavailable: is the adapter set up?")
-    a = _adapter(obs)
+        raise Refused(
+            f"{car['control_state']} is missing or unavailable: is Rivian schedule control set up?"
+        )
+    a = _control(obs)
     if a.get("dry_run") or state == "dry_run":
         raise Refused(
-            "the adapter is in dry run: it writes nothing. Turn dry run off in the adapter's "
+            "the schedule control is in dry run: it writes nothing. Turn dry run off in its "
             "options for the trial (and back on afterwards if you like)"
         )
     if state == "fault":
-        raise Refused(f"the adapter is faulted ({a.get('fault_code')}): clear the fault first")
+        raise Refused(
+            f"the schedule control is faulted ({a.get('fault_code')}): clear the fault first"
+        )
     if state == "handed_back":
-        raise Refused("the adapter is handed back to you until unplug: unplug and plug in again")
+        raise Refused(
+            "the schedule control is handed back to you until unplug: unplug and plug in again"
+        )
     _on_charger(obs, s.car_id)
     _planner_quiet(obs)
     if obs.get("charger_status") == "a":
-        raise Refused("the adapter's charger status is 'a': it does not see the car at home")
+        raise Refused(
+            "the schedule control's charger status is 'a': it does not see the car at home"
+        )
     if (a.get("observation") or {}).get("controller_alive") is False:
         raise Refused(
-            "the adapter sees its controller as down (its controller_liveness_entity is "
-            "unavailable), so it starts nothing: the planner's heartbeat must show 'shadow'"
+            "the schedule control sees its controller as down (its controller_liveness_entity "
+            "is unavailable), so it starts nothing: the planner's heartbeat must show 'shadow'"
         )
     return obs
 
@@ -423,8 +434,8 @@ async def rivian_trial(s: Session, only: Sequence[str] = RIVIAN_STEPS, settle_s:
     obs = await rivian_preflight(s)
     s.console.say(
         f"The {car.get('name') or s.car_id} is on the charger at {obs.get('soc')}% (limit "
-        f"{obs.get('limit')}%). Adapter state {_state(obs)}. Pause other schedule writers and "
-        "do not edit the schedule in the Rivian app during the test."
+        f"{obs.get('limit')}%). Schedule control state {_state(obs)}. Pause other schedule "
+        "writers and do not edit the schedule in the Rivian app during the test."
     )
     ctx: dict[str, Any] = {"renewal_off": False}
     try:
@@ -444,23 +455,23 @@ async def _press(s: Session, step: str, key: str) -> bool:
 
 
 def _lease(amps: int) -> Callable[[dict[str, Any]], bool]:
-    return lambda o: _state(o) == "lease_active" and _adapter(o).get("lease_amps") == amps
+    return lambda o: _state(o) == "lease_active" and _control(o).get("lease_amps") == amps
 
 
 async def r_inventory(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     step = "inventory"
     if not s.begin(step, "press Read schedules and note the owner's schedule list"):
         return
-    before = _adapter(await s.observe()).get("last_provider_read_at")
+    before = _control(await s.observe()).get("last_provider_read_at")
     if not await _press(s, step, "read_schedules_button"):
         return
     ok, lat, obs = await s.watch(
         step,
         "a new schedule read",
-        lambda o: _adapter(o).get("last_provider_read_at") not in (None, before),
+        lambda o: _control(o).get("last_provider_read_at") not in (None, before),
         120,
     )
-    count = _adapter(obs).get("provider_schedule_count")
+    count = _control(obs).get("provider_schedule_count")
     ctx["inventory_count"] = count
     s.record(step, "inventory", summary=obs.get("last_provider_read"), count=count)
     s.result(step, ok, f"{count} schedule(s) on the vehicle", lat)
@@ -492,7 +503,7 @@ async def r_t1(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     )
     seen = s.console.text("  What did the Rivian app show at each change? (Enter to skip)")
     s.record(step, "owner_note", note=seen)
-    fault = _adapter(obs).get("fault_code")
+    fault = _control(obs).get("fault_code")
     s.result(
         step,
         ok1 and ok2 and ok3 and not fault,
@@ -501,11 +512,14 @@ async def r_t1(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     )
     s.console.say(
         "  Now restore the charge limit in the app. Then unplug, wait at least the release "
-        "delay (60 s), and plug in again: the adapter ignores requests until unplug."
+        "delay (60 s), and plug in again: the schedule control ignores requests until unplug."
     )
     s.console.text("  Press Enter when the car is plugged in again.")
     ok, lat, _ = await s.watch(
-        step, "the adapter leaving handed_back", lambda o: _state(o) != "handed_back", 600
+        step,
+        "the schedule control leaving handed_back",
+        lambda o: _state(o) != "handed_back",
+        600,
     )
     s.result("replug", ok, "control returned" if ok else "still handed_back", lat)
 
@@ -521,7 +535,7 @@ async def r_t2(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
             return s.result(step, None, "command not sent")
         if amps == 16 and not await s.act(sub, "switch", "turn_on", car["switch"]):
             return s.result(step, None, "command not sent")
-        wait = settle_s + (150 if amps == 20 else 0)  # the adapter's increase interval
+        wait = settle_s + (150 if amps == 20 else 0)  # the schedule control's increase interval
         ok, lat, obs = await s.watch(
             sub,
             f"lease at {amps} A and the car near {amps} A",
@@ -529,7 +543,7 @@ async def r_t2(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
             wait,
         )
         s.result(
-            sub, ok, f"lease {_adapter(obs).get('lease_amps')} A, car {obs.get('wall_a')} A", lat
+            sub, ok, f"lease {_control(obs).get('lease_amps')} A, car {obs.get('wall_a')} A", lat
         )
 
 
@@ -543,7 +557,7 @@ async def r_t2b(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     while s.clock() - t0 < minutes * 60:
         obs = await s.observe()
         s.record(step, "sample", obs=obs)
-        written = _adapter(obs).get("lease_written_at")
+        written = _control(obs).get("lease_written_at")
         if last is not None and written != last:
             renewals += 1
         last = written
@@ -587,8 +601,8 @@ async def r_t4(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     if not await s.act(step, "switch", "turn_off", car["lease_renewal"]):
         return s.result(step, None, "command not sent")
     ctx["renewal_off"] = True
-    written = _adapter(obs).get("last_write_at")
-    expires = _adapter(obs).get("lease_expires_at")
+    written = _control(obs).get("last_write_at")
+    expires = _control(obs).get("lease_expires_at")
     wait = 30 * 60.0
     if expires:
         try:
@@ -602,12 +616,12 @@ async def r_t4(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
         lambda o: _state(o) == "lease_lapsed" and stopped(o),
         wait,
     )
-    unchanged = _adapter(obs).get("last_write_at") == written
+    unchanged = _control(obs).get("last_write_at") == written
     s.result(
         step,
         ok and unchanged,
         f"state {_state(obs)}, car {obs.get('wall_a')} A, "
-        + ("no write" if unchanged else "the adapter wrote meanwhile"),
+        + ("no write" if unchanged else "the schedule control wrote meanwhile"),
         lat,
     )
     ok, lat, _ = await s.watch(
@@ -654,12 +668,13 @@ async def r_t6(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     ok2, _, obs = await s.watch(
         step, "a fault (external_edit)", lambda o: _state(o) == "fault", 120
     )
-    fault = _adapter(obs).get("fault_code") if ok2 else None
+    fault = _control(obs).get("fault_code") if ok2 else None
+    hint = f"; schedule control fault {fault}: clear it with the Clear fault button"
     s.result(
         step,
         waited,
         f"car waited: {'yes' if waited else 'no'}; charge now: {note or '-'}"
-        + (f"; adapter fault {fault}: clear it with the Clear fault button" if fault else ""),
+        + (hint if fault else ""),
     )
 
 
@@ -670,15 +685,15 @@ async def r_t7(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     if not await _press(s, step, "restore_button"):
         return
     ok, lat, _ = await s.watch(step, "handed_back", lambda o: _state(o) == "handed_back", settle_s)
-    before = _adapter(await s.observe()).get("last_provider_read_at")
+    before = _control(await s.observe()).get("last_provider_read_at")
     if await _press(s, step, "read_schedules_button"):
         _, _, obs = await s.watch(
             step,
             "a new schedule read",
-            lambda o: _adapter(o).get("last_provider_read_at") not in (None, before),
+            lambda o: _control(o).get("last_provider_read_at") not in (None, before),
             120,
         )
-        count = _adapter(obs).get("provider_schedule_count")
+        count = _control(obs).get("provider_schedule_count")
         s.record(step, "inventory", summary=obs.get("last_provider_read"), count=count)
         same = ctx.get("inventory_count") is None or count == ctx.get("inventory_count")
         app = s.console.choose("  Does the Rivian app show your own schedules again? [y/n]", "n")
@@ -709,7 +724,7 @@ async def rivian_cleanup(s: Session, ctx: dict[str, Any]) -> None:
     try:
         obs = await s.observe()
     except HassError as err:
-        s.console.say(f"  cannot read the adapter to clean up: {err}")
+        s.console.say(f"  cannot read the schedule control to clean up: {err}")
         return
     todo = []
     if car.get("lease_renewal") and (ctx.get("renewal_off") or obs.get("lease_renewal") == "off"):
@@ -729,7 +744,11 @@ async def rivian_cleanup(s: Session, ctx: dict[str, Any]) -> None:
     except KeyboardInterrupt:
         ans = "n"
     if ans != "y":
-        s.result("clean up", False, "left as is: restore the owner's schedule from the adapter")
+        s.result(
+            "clean up",
+            False,
+            "left as is: restore the owner's schedule with the Restore owner schedule button",
+        )
         return
     for domain, service, eid in todo:
         await s.client.call_service(domain, service, {}, target={"entity_id": eid})

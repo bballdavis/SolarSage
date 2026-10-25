@@ -9,15 +9,15 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .entity import RivianSolarAdapterEntity
-from .runtime import AdapterRuntime, RivianSolarAdapterConfigEntry
+from .entity import RivianScheduleControlEntity
+from .runtime import RivianScheduleControlConfigEntry, ScheduleControlRuntime
 
 PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: RivianSolarAdapterConfigEntry,
+    entry: RivianScheduleControlConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the switches."""
@@ -25,14 +25,14 @@ async def async_setup_entry(
     async_add_entities([SolarChargingSwitch(runtime), LeaseRenewalSwitch(runtime)])
 
 
-class SolarChargingSwitch(RivianSolarAdapterEntity, SwitchEntity):
+class SolarChargingSwitch(RivianScheduleControlEntity, SwitchEntity):
     """Charging allowed or paused, set by the controller (the solar planner).
 
     Turning it on or off records the request and returns at once. The schedule
     write happens in the background.
     """
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "solar_charging")
 
     @property
@@ -49,7 +49,7 @@ class SolarChargingSwitch(RivianSolarAdapterEntity, SwitchEntity):
         await self.runtime.async_request_charge(False)
 
 
-class LeaseRenewalSwitch(RivianSolarAdapterEntity, SwitchEntity):
+class LeaseRenewalSwitch(RivianScheduleControlEntity, SwitchEntity):
     """Lease renewal; turn off only for the attended lease-expiry trial.
 
     The setting is kept in the journal, so it survives restarts.
@@ -57,7 +57,7 @@ class LeaseRenewalSwitch(RivianSolarAdapterEntity, SwitchEntity):
 
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "lease_renewal")
 
     @property

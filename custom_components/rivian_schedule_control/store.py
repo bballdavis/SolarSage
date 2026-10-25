@@ -105,7 +105,7 @@ def _read_journal(path: str, key: str) -> dict[str, Any] | None:
         or content.get("key") != key
         or not isinstance(content.get("data"), dict)
     ):
-        raise JournalLoadError("the file is not an adapter journal")
+        raise JournalLoadError("the file is not a schedule control journal")
     return content["data"]
 
 

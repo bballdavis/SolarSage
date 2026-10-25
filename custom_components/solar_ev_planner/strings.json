@@ -183,7 +183,7 @@
         },
         "car": {
           "title": "Car entities",
-          "description": "Map the {kind} car's entities. Each Tesla command is billed by Tesla's API; each Rivian change is a charging-schedule write through the charge adapter.",
+          "description": "Map the {kind} car's entities. Each Tesla command is billed by Tesla's API; each Rivian change is a charging-schedule write through Rivian schedule control.",
           "data": {
             "name": "Name",
             "switch": "Charge switch",
@@ -192,7 +192,7 @@
             "limit": "Charge limit",
             "plugged": "Charge cable connected",
             "location": "Location",
-            "control_state": "Adapter control state",
+            "control_state": "Schedule control state",
             "min_a": "Minimum current",
             "max_a": "Maximum current",
             "step_a": "Current step",
@@ -200,13 +200,13 @@
           },
           "data_description": {
             "name": "Used for the car's device and entity IDs, for example R1S or Roxxo.",
-            "switch": "Tesla: the Tesla Fleet charge switch (switch.roxxo_charge). Rivian: the charge adapter's Solar charging switch (switch.r1s_schedule_control_solar_charging).",
-            "current": "Tesla: the Tesla Fleet charge current (number.roxxo_charge_current). Rivian: the adapter's Solar current (number.r1s_schedule_control_solar_current).",
+            "switch": "Tesla: the Tesla Fleet charge switch (switch.roxxo_charge). Rivian: Rivian schedule control's Solar charging switch (switch.r1s_schedule_control_solar_charging).",
+            "current": "Tesla: the Tesla Fleet charge current (number.roxxo_charge_current). Rivian: Rivian schedule control's Solar current (number.r1s_schedule_control_solar_current).",
             "soc": "The car's battery level in %.",
             "limit": "The car's own charge limit in %.",
             "plugged": "On while this car's cable is connected (any charger). The planner commands a car only while it is plugged in, at home, and the Wall Connector does not report no vehicle.",
             "location": "Recommended. The car's own device tracker (home), not a person, or a binary sensor that is on at home.",
-            "control_state": "Optional, recommended for a Rivian: sensor.r1s_schedule_control_control_state. Its attributes tell a pause from no request, so a request the adapter dropped is sent again.",
+            "control_state": "Optional, recommended for a Rivian: sensor.r1s_schedule_control_control_state. Its attributes tell a pause from no request, so a request that Rivian schedule control dropped is sent again.",
             "min_a": "Rivian 8 A, Tesla 6 A.",
             "max_a": "48 A for both on a 48 A Wall Connector. The current number's own maximum also applies.",
             "step_a": "Rivian 2 A (even currents), Tesla 1 A.",
@@ -224,7 +224,7 @@
             "limit": "Charge limit",
             "plugged": "Charge cable connected",
             "location": "Location",
-            "control_state": "Adapter control state",
+            "control_state": "Schedule control state",
             "min_a": "Minimum current",
             "max_a": "Maximum current",
             "step_a": "Current step",
@@ -232,13 +232,13 @@
           },
           "data_description": {
             "name": "Used for the car's device and entity IDs, for example R1S or Roxxo.",
-            "switch": "Tesla: the Tesla Fleet charge switch (switch.roxxo_charge). Rivian: the charge adapter's Solar charging switch (switch.r1s_schedule_control_solar_charging).",
-            "current": "Tesla: the Tesla Fleet charge current (number.roxxo_charge_current). Rivian: the adapter's Solar current (number.r1s_schedule_control_solar_current).",
+            "switch": "Tesla: the Tesla Fleet charge switch (switch.roxxo_charge). Rivian: Rivian schedule control's Solar charging switch (switch.r1s_schedule_control_solar_charging).",
+            "current": "Tesla: the Tesla Fleet charge current (number.roxxo_charge_current). Rivian: Rivian schedule control's Solar current (number.r1s_schedule_control_solar_current).",
             "soc": "The car's battery level in %.",
             "limit": "The car's own charge limit in %.",
             "plugged": "On while this car's cable is connected (any charger). The planner commands a car only while it is plugged in, at home, and the Wall Connector does not report no vehicle.",
             "location": "Recommended. The car's own device tracker (home), not a person, or a binary sensor that is on at home.",
-            "control_state": "Optional, recommended for a Rivian: sensor.r1s_schedule_control_control_state. Its attributes tell a pause from no request, so a request the adapter dropped is sent again.",
+            "control_state": "Optional, recommended for a Rivian: sensor.r1s_schedule_control_control_state. Its attributes tell a pause from no request, so a request that Rivian schedule control dropped is sent again.",
             "min_a": "Rivian 8 A, Tesla 6 A.",
             "max_a": "48 A for both on a 48 A Wall Connector. The current number's own maximum also applies.",
             "step_a": "Rivian 2 A (even currents), Tesla 1 A.",
@@ -307,7 +307,7 @@
     },
     "car_kind": {
       "options": {
-        "rivian": "Rivian (through the charge adapter)",
+        "rivian": "Rivian (through Rivian schedule control)",
         "tesla": "Tesla (through Tesla Fleet)"
       }
     }

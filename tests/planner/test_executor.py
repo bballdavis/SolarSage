@@ -1,6 +1,6 @@
 """Commanding the car on the charger: nothing in shadow mode, the right service calls with
-the rate limits once shadow mode is off, the Rivian adapter's dropped requests, the Tesla
-restore at unplug, and failures."""
+the rate limits once shadow mode is off, the requests Rivian schedule control dropped, the
+Tesla restore at unplug, and failures."""
 
 from __future__ import annotations
 
@@ -143,7 +143,8 @@ async def test_a_dropped_request_is_sent_again(
     await turn(hass, SHADOW, False)
     amps = coordinator.runtime["rivian"].commanded_a
     fake_cars.clear()
-    # the adapter dropped the request (a restart it could not confirm): switch off, no request
+    # the schedule control dropped the request (a restart it could not confirm): switch off,
+    # no request
     set_rivian(hass, desired=None, requested=amps, schedule_control_state="idle")
     await cycle(hass, coordinator, freezer)
     assert fake_cars.calls == [("switch", "turn_on", RIV["switch"])]

@@ -60,9 +60,9 @@ from .const import (
 )
 from .controller import Journal, Observation, Phase, RivianScheduleController
 from .runtime import (
-    AdapterRuntime,
-    RivianSolarAdapterConfigEntry,
-    adapter_config_from_entry,
+    RivianScheduleControlConfigEntry,
+    ScheduleControlRuntime,
+    control_config_from_entry,
     restore_failed_issue_id,
     restore_failed_notification_id,
     setup_failed_issue_id,
@@ -100,8 +100,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfigEntry) -> bool:
-    """Set up the adapter for one vehicle."""
+async def async_setup_entry(hass: HomeAssistant, entry: RivianScheduleControlConfigEntry) -> bool:
+    """Set up schedule control for one vehicle."""
     vehicle_id: str = entry.data[CONF_VEHICLE_ID]
     _async_warn_if_utc(hass)
     if legacy := await async_check_legacy_journal(hass, entry.entry_id):
@@ -114,7 +114,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
     store = JournalFileStore(hass, vehicle_id)
     api = RivianScheduleApi(create_client(hass, entry.data), vehicle_id)
     time_zone = hass.config.time_zone
-    controller = RivianScheduleController(api, store, adapter_config_from_entry(hass, entry))
+    controller = RivianScheduleController(api, store, control_config_from_entry(hass, entry))
     # Never start over without the journal: it may hold the owner's original
     # schedules. An unreadable file is left untouched for inspection.
     try:
@@ -135,12 +135,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfig
         _async_report_setup_failure(hass, entry, controller.journal, store.relative_path, err)
         raise
 
-    # The adapter is back in charge of the journal it could not restore.
+    # Schedule control is back in charge of the journal it could not restore.
     persistent_notification.async_dismiss(hass, restore_failed_notification_id(vehicle_id))
     ir.async_delete_issue(hass, DOMAIN, restore_failed_issue_id(vehicle_id))
     ir.async_delete_issue(hass, DOMAIN, setup_failed_issue_id(entry.entry_id))
     integration = await async_get_integration(hass, DOMAIN)
-    runtime = AdapterRuntime(
+    runtime = ScheduleControlRuntime(
         hass,
         entry,
         controller,
@@ -178,7 +178,7 @@ def _async_report_setup_failure(
     path: str,
     err: Exception,
 ) -> None:
-    """Raise a persistent repair issue when setup fails while the adapter owns the schedule.
+    """Raise a persistent repair issue when setup fails while schedule control owns the schedule.
 
     Home Assistant does not unload an entry that failed to set up, so neither a
     retry nor disabling it restores the owner's schedule; only removal does.
@@ -213,14 +213,15 @@ def _async_warn_if_utc(hass: HomeAssistant) -> None:
         _LOGGER.warning(
             "Home Assistant's time zone is %s. The vehicle evaluates charging schedules on "
             "its local clock, so set Home Assistant's time zone to the vehicle's; otherwise "
-            "the adapter's charging windows are written at the wrong local time. A change "
-            "takes effect automatically: the adapter reloads and rewrites its window",
+            "Rivian schedule control writes its charging windows at the wrong local time. "
+            "A change takes effect automatically: schedule control reloads and rewrites "
+            "its window",
             zone,
         )
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfigEntry) -> bool:
-    """Unload the adapter.
+async def async_unload_entry(hass: HomeAssistant, entry: RivianScheduleControlConfigEntry) -> bool:
+    """Unload schedule control for one vehicle.
 
     A reload or restart keeps ownership: the journal persists, the lease
     lapses on its own if it is not renewed, and control resumes on setup.
@@ -236,7 +237,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfi
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Restore the owner's schedule, best effort, when the adapter is removed.
+    """Restore the owner's schedule, best effort, when schedule control is removed.
 
     The journal is kept when it still matters, and a re-added entry for the
     same vehicle inherits it.
@@ -260,7 +261,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     api = RivianScheduleApi(create_client(hass, entry.data), vehicle_id)
-    controller = RivianScheduleController(api, store, adapter_config_from_entry(hass, entry))
+    controller = RivianScheduleController(api, store, control_config_from_entry(hass, entry))
     try:
         await controller.async_load()
     except (JournalLoadError, KeyError, TypeError, ValueError) as err:
@@ -295,7 +296,7 @@ async def _async_restore_owner_schedule(
     The ticks ignore an error backoff left by earlier ticks: this restore is a
     single, bounded attempt.
 
-    Returns None once the adapter owns nothing, or why the owner's schedule is
+    Returns None once schedule control owns nothing, or why the owner's schedule is
     not back. The reason comes from this attempt only, never from an error
     recorded before it.
     """
@@ -328,7 +329,9 @@ async def _async_restore_owner_schedule(
     if (controller.last_error, controller.last_error_at) != error_before:
         # Recorded by this attempt's ticks.
         return controller.last_error
-    return f"the restore was not confirmed; the adapter was still in phase {journal.phase.value}"
+    return (
+        f"the restore was not confirmed; schedule control was still in phase {journal.phase.value}"
+    )
 
 
 async def _async_finish_removal(
@@ -342,10 +345,11 @@ async def _async_finish_removal(
     persistent_notification.async_create(
         hass,
         (
-            f"The Rivian Schedule Control for {entry.title} was removed. Its journal at "
+            f"Rivian schedule control for {entry.title} was removed. Its journal at "
             f"`{store.relative_path}` was kept because it holds the owner's charging "
             "schedules archived by abandon ownership. Delete the file once the schedules in "
-            "the Rivian app are correct; adding the adapter again for this vehicle reuses it."
+            "the Rivian app are correct; adding schedule control again for this vehicle "
+            "reuses it."
         ),
         title="Rivian schedule control journal kept",
         notification_id=restore_failed_notification_id(entry.data[CONF_VEHICLE_ID]),
@@ -358,19 +362,19 @@ def _async_notify_restore_failed(
 ) -> None:
     action = "removed" if removed else "disabled"
     then = (
-        "Adding the adapter again for this vehicle reuses the journal and resumes the restore."
+        "Adding schedule control again for this vehicle reuses the journal and resumes the restore."
         if removed
-        else "Enabling the adapter again resumes the restore."
+        else "Enabling schedule control again resumes the restore."
     )
     persistent_notification.async_create(
         hass,
         (
-            f"The Rivian Schedule Control for {entry.title} was {action} while it "
+            f"Rivian schedule control for {entry.title} was {action} while it "
             "controlled the vehicle's charging schedule, and the owner's schedules could "
             f"not be restored automatically ({reason}).\n\n"
-            "Until they are restored, the vehicle keeps the adapter's short charging "
+            "Until they are restored, the vehicle keeps schedule control's short charging "
             "window, which recurs weekly. Check the charging schedules in the Rivian app "
-            f"and restore them by hand. {then} The adapter's journal, which holds the "
+            f"and restore them by hand. {then} Schedule control's journal, which holds the "
             f"owner's schedules, was kept at `{path}`; delete it once the schedules are "
             "correct."
         ),
@@ -394,7 +398,7 @@ def _async_notify_restore_failed(
 # Services ----------------------------------------------------------------
 
 
-def _async_get_runtime(hass: HomeAssistant, call: ServiceCall) -> AdapterRuntime:
+def _async_get_runtime(hass: HomeAssistant, call: ServiceCall) -> ScheduleControlRuntime:
     entry_id: str = call.data[ATTR_CONFIG_ENTRY_ID]
     entry = hass.config_entries.async_get_entry(entry_id)
     if entry is None or entry.domain != DOMAIN:

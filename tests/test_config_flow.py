@@ -205,7 +205,7 @@ async def test_user_flow_login_errors(
 async def test_user_flow_duplicate_vehicle(
     hass: HomeAssistant, mock_rivian: FakeRivian, mock_setup_entry: AsyncMock
 ) -> None:
-    """A vehicle that already has an adapter is not added twice."""
+    """A vehicle that already has Rivian schedule control set up is not added twice."""
     make_entry().add_to_hass(hass)
     result = await _sign_in(hass)
     result = await hass.config_entries.flow.async_configure(
@@ -372,7 +372,7 @@ async def test_location_accepts_only_device_trackers(
             result["flow_id"],
             options | {CONF_LOCATION_ENTITY: LOCATION_ENTITY, CONF_OVERRIDE_ENTITY: "sensor.x"},
         )
-    # The controller's charging entity is a binary sensor: the adapter's own
+    # The controller's charging entity is a binary sensor: schedule control's own
     # charging switch must never confirm its own request.
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(

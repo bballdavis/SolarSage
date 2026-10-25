@@ -1,10 +1,11 @@
 """The planner driving the real Rivian schedule control (with the in-memory Rivian fake).
 
-The other planner tests stand in for the adapter with plain states. Here both integrations
-run, wired as docs/PLANNER.md says: the adapter's controller liveness option points at the
-planner's heartbeat, its controller charging option at the R1S's charging-wanted sensor,
-and its vehicle override at the planner's charger car override. The planner's car maps the
-adapter's switch, number and control state. Nothing talks to a real system.
+The other planner tests stand in for the schedule control with plain states. Here both
+integrations run, wired as docs/PLANNER.md says: the schedule control's controller liveness
+option points at the planner's heartbeat, its controller charging option at the R1S's
+charging-wanted sensor, and its vehicle override at the planner's charger car override. The
+planner's car maps the schedule control's switch, number and control state. Nothing talks to
+a real system.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from custom_components.rivian_schedule_control.const import (
     CONF_VEHICLE_ID,
     CONF_WALL_CONNECTOR_ENTITY,
     DEFAULT_OPTIONS,
-    DOMAIN as ADAPTER_DOMAIN,
+    DOMAIN as SCHEDULE_CONTROL_DOMAIN,
     ENTRY_MINOR_VERSION,
     ENTRY_VERSION,
 )
@@ -64,17 +65,19 @@ PLANNING = "switch.solar_ev_planner_planning"
 
 
 def set_rivian_telemetry(hass: HomeAssistant, *, plugged: str = "on", soc: float = 46) -> None:
-    """The upstream Rivian integration's entities (the adapter provides the controls)."""
+    """The upstream Rivian integration's entities (Rivian schedule control provides the
+    controls)."""
     hass.states.async_set(RIV["soc"], str(soc), {"unit_of_measurement": "%"})
     hass.states.async_set(RIV["limit"], "85", {"unit_of_measurement": "%"})
     hass.states.async_set(RIV["plugged"], plugged)
     hass.states.async_set(RIV["location"], "home")
 
 
-def adapter_entry(vehicle_id: str, **options: Any) -> MockConfigEntry:
-    """The adapter for the R1S (entry title R1S), mapped to the planner's entities."""
+def schedule_control_entry(vehicle_id: str, **options: Any) -> MockConfigEntry:
+    """Rivian schedule control for the R1S (entry title R1S), mapped to the planner's
+    entities."""
     return MockConfigEntry(
-        domain=ADAPTER_DOMAIN,
+        domain=SCHEDULE_CONTROL_DOMAIN,
         title="R1S",
         unique_id=vehicle_id,
         data={
@@ -107,12 +110,12 @@ def control(hass: HomeAssistant) -> dict[str, Any]:
 
 
 def lease_amps(writes: list[list[dict[str, Any]]]) -> list[int]:
-    """The amperage of each window the adapter wrote (one window per write)."""
+    """The amperage of each window Rivian schedule control wrote (one window per write)."""
     return [w[0]["amperage"] for w in writes if len(w) == 1]
 
 
 async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
-    """Let time pass in 15-second adapter ticks, without a planning cycle."""
+    """Let time pass in Rivian schedule control's 15-second ticks, without a planning cycle."""
     step = timedelta(seconds=15)
     left = timedelta(seconds=seconds)
     while left > timedelta(0):
@@ -127,7 +130,7 @@ async def both(
     planner_hass: HomeAssistant, mock_rivian: Any, freezer: FrozenDateTimeFactory
 ) -> AsyncGenerator[tuple[HomeAssistant, PlannerCoordinator, Any]]:
     """Noon on a sunny Monday, the R1S plugged in at home; the planner (in its default shadow
-    mode) and then the adapter (dry run off) set up."""
+    mode) and then Rivian schedule control (dry run off) set up."""
     freezer.move_to(NOON_UTC)
     hass = planner_hass
     await import_statistics(hass)
@@ -136,7 +139,7 @@ async def both(
     set_tesla(hass)
     await setup_free_hours(hass)
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA))
-    entry = adapter_entry(mock_rivian.vehicles[0]["id"])
+    entry = schedule_control_entry(mock_rivian.vehicles[0]["id"])
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -154,7 +157,8 @@ async def test_shadow_mode_leaves_the_rivian_alone(
         await cycle(hass, coordinator, freezer, minutes=5)
     assert coordinator.data.mode == "day"
     assert int(hass.states.get("sensor.r1s_planner_planned_current").state) >= 8
-    # the adapter sees the planner alive (so the attended trial is not blocked), no request
+    # the schedule control sees the planner alive (so the attended trial is not blocked),
+    # no request
     assert hass.states.get(HEARTBEAT).state == "shadow"
     assert hass.states.get(WANTED).state == "unknown"
     c = control(hass)
@@ -168,7 +172,7 @@ async def test_shadow_mode_leaves_the_rivian_alone(
     assert hass.states.get("sensor.r1s_schedule_control_charger_status").state == "b"
 
 
-async def test_planner_commands_the_adapter(
+async def test_planner_commands_schedule_control(
     both: tuple[HomeAssistant, PlannerCoordinator, Any], freezer: FrozenDateTimeFactory
 ) -> None:
     hass, coordinator, rivian = both
@@ -186,7 +190,7 @@ async def test_planner_commands_the_adapter(
     assert c["observation"]["controller_charging"] is True
     assert hass.states.get(HEARTBEAT).state == "active"
 
-    # unchanged decisions: the planner sends nothing, the adapter writes nothing new
+    # unchanged decisions: the planner sends nothing, the schedule control writes nothing new
     writes = len(rivian.writes)
     for _ in range(3):
         await cycle(hass, coordinator, freezer)
@@ -216,8 +220,8 @@ async def test_planning_off_parks_the_rivian_and_on_resumes(
     amps = coordinator.runtime["rivian"].commanded_a
     assert control(hass)["state"] == "lease_active"
 
-    # Planning off: the heartbeat goes unavailable; the adapter stops renewing at once and
-    # parks the window after 3 minutes
+    # Planning off: the heartbeat goes unavailable; the schedule control stops renewing at
+    # once and parks the window after 3 minutes
     await turn(hass, PLANNING, False)
     assert hass.states.get(HEARTBEAT).state == "unavailable"
     assert hass.states.get(WANTED).state == "unknown"
@@ -253,7 +257,7 @@ async def test_unplug_ends_the_session_on_both_sides(
     set_rivian_telemetry(hass, plugged="off")
     hass.states.async_set(E["wall_connected"], "off")
     await cycle(hass, coordinator, freezer)
-    await tick(hass, freezer, 120)  # past the adapter's release delay (60 s)
+    await tick(hass, freezer, 120)  # past the schedule control's release delay (60 s)
     c = control(hass)
     assert c["desired_charge"] is None
     assert c["state"] == "idle"
@@ -276,7 +280,7 @@ async def test_unplug_ends_the_session_on_both_sides(
 async def test_override_naming_the_tesla(
     both: tuple[HomeAssistant, PlannerCoordinator, Any], freezer: FrozenDateTimeFactory
 ) -> None:
-    """The planner's override select is also the adapter's vehicle override."""
+    """The planner's override select is also Rivian schedule control's vehicle override."""
     hass, coordinator, rivian = both
     await hass.services.async_call(
         "select", "select_option", {"entity_id": OVERRIDE, "option": "tesla"}, blocking=True

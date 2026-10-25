@@ -42,9 +42,9 @@ WRITE_COORD_DIGITS = 6
 def normalize_schedule(schedule: dict[str, Any], *, strict: bool) -> dict[str, Any]:
     """Validate one schedule and return a copy.
 
-    ``strict`` applies the limits this adapter writes (even 8-48 A, at most one
-    day). Non-strict validation is for schedules read from the provider, which
-    are only restored, never modified.
+    ``strict`` applies the limits of the windows schedule control writes (even
+    8-48 A, at most one day). Non-strict validation is for schedules read from
+    the provider, which are only restored, never modified.
     """
     if not isinstance(schedule, dict):
         raise TypeError("Each charging schedule must be an object")
@@ -193,7 +193,7 @@ def lease_window(
     amps: int,
     location: dict[str, float],
 ) -> dict[str, Any]:
-    """Build the single schedule the adapter writes while it owns the vehicle.
+    """Build the single window that schedule control writes while it owns the vehicle.
 
     ``local_now`` must be timezone-aware in the vehicle's local time, because
     the provider schedule uses the local weekday and minutes after midnight.

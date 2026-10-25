@@ -9,11 +9,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.redact import async_redact_data
 from homeassistant.util import dt as dt_util
 
-from .runtime import REDACT_KEYS, RivianSolarAdapterConfigEntry
+from .runtime import REDACT_KEYS, RivianScheduleControlConfigEntry
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: RivianSolarAdapterConfigEntry
+    hass: HomeAssistant, entry: RivianScheduleControlConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics without credentials, the vehicle ID or any coordinates.
 

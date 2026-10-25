@@ -16,7 +16,7 @@ PARALLEL_UPDATES = 0
 
 # translation key -> setting
 SWITCHES = {
-    # off sends nothing; the heartbeat goes unavailable, so the Rivian adapter parks its window
+    # off sends nothing; the heartbeat goes unavailable, so Rivian schedule control parks its window
     "planning": S_ENABLED,
     "shadow_mode": S_SHADOW,  # plan and explain, never call a service
     "daytime_solar_charging": S_DAYTIME_SOLAR,

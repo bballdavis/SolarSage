@@ -32,8 +32,8 @@ async def async_setup_entry(
         [
             SettingSelect(coordinator, "caution", S_CAUTION, list(CAUTION_OPTIONS)),
             # "auto" decides from the Wall Connector and the cars' own sensors; naming a car
-            # leaves only that car. The Rivian adapter's vehicle override option can point
-            # here too: it treats "auto" and "rivian" as no override.
+            # leaves only that car. Rivian schedule control's vehicle override option can
+            # point here too: it treats "auto" and "rivian" as no override.
             SettingSelect(
                 coordinator,
                 "charger_car_override",

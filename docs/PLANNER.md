@@ -1,8 +1,8 @@
 # Solar EV planner
 
-**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [charge adapter](RIVIAN_SCHEDULE_CONTROL.md). How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
+**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [Rivian schedule control](RIVIAN_SCHEDULE_CONTROL.md), which writes the Rivian's charging schedule through Rivian's API. How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
 
-**Status: software-tested only.** Its tests run against Home Assistant 2026.10.3, with made-up states, a real recorder and Schedule helper, and the real Rivian adapter over a simulated Rivian account. It has not been run against the owner's Home Assistant. **It starts in shadow mode: it plans and explains, but sends nothing until you turn shadow mode off.**
+**Status: software-tested only.** Its tests run against Home Assistant 2026.10.3, with made-up states, a real recorder and Schedule helper, and the real Rivian schedule control over a simulated Rivian account. It has not been run against the owner's Home Assistant. **It starts in shadow mode: it plans and explains, but sends nothing until you turn shadow mode off.**
 
 ## What it does
 
@@ -17,7 +17,7 @@
 
 ### Both integrations come from this repository
 
-HACS installs one integration per repository: the first folder under `custom_components/`, which here is the Rivian adapter. [`hacs.json`](../hacs.json) names the adapter for that reason. So:
+HACS installs one integration per repository: the first folder under `custom_components/`, which here is Rivian schedule control. [`hacs.json`](../hacs.json) names it for that reason. So:
 
 | Integration | Install with |
 | --- | --- |
@@ -32,7 +32,7 @@ git clone --depth 1 https://github.com/bballdavis/HASS-Solar-Rivian.git
 mkdir -p /config/custom_components
 rm -rf /config/custom_components/solar_ev_planner
 cp -r HASS-Solar-Rivian/custom_components/solar_ev_planner /config/custom_components/
-# Only if the adapter is not installed through HACS:
+# Only if Rivian schedule control is not installed through HACS:
 # rm -rf /config/custom_components/rivian_schedule_control
 # cp -r HASS-Solar-Rivian/custom_components/rivian_schedule_control /config/custom_components/
 rm -rf HASS-Solar-Rivian
@@ -51,7 +51,7 @@ Without a terminal, download the repository as a ZIP from GitHub and copy the `c
 1. **Solcast** ([BJReplay/ha-solcast-solar](https://github.com/BJReplay/ha-solcast-solar)) with its forecast-today and forecast-tomorrow sensors. Their `detailedForecast` attribute gives the half hours with `pv_estimate10`, `pv_estimate` and `pv_estimate90`.
 2. **A Schedule helper for the free hours.** Settings → Devices & services → Helpers → Create helper → Schedule. Name it "Free hours" (it becomes `schedule.free_hours`) and paint 00:00–06:00 and 20:00–24:00 on every day. Repaint it when the electricity plan changes. Leave it out for a flat or time-of-use plan.
 3. **Tesla Fleet** set up for the Tesla, with the virtual key approved in the car. Until then the planner can map today's tesla_custom entities instead.
-4. **The Rivian adapter** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
+4. **Rivian schedule control** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
 
 ## Configure
 
@@ -88,19 +88,19 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 | Field | Rivian (R1S) | Tesla (Roxxo, Tesla Fleet) |
 | --- | --- | --- |
 | Name | `R1S` | `Roxxo` |
-| Charge switch | `switch.r1s_schedule_control_solar_charging` (the adapter) | `switch.roxxo_charge` (tesla_custom: `switch.roxxo_charger`) |
-| Charge current | `number.r1s_schedule_control_solar_current` (the adapter) | `number.roxxo_charge_current` (tesla_custom: `number.roxxo_charging_amps`) |
+| Charge switch | `switch.r1s_schedule_control_solar_charging` (Rivian schedule control) | `switch.roxxo_charge` (tesla_custom: `switch.roxxo_charger`) |
+| Charge current | `number.r1s_schedule_control_solar_current` (Rivian schedule control) | `number.roxxo_charge_current` (tesla_custom: `number.roxxo_charging_amps`) |
 | Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.roxxo_battery_level` |
 | Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `number.roxxo_charge_limit` |
 | Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.roxxo_charge_cable` |
 | Location | `device_tracker.r1s_location` | `device_tracker.roxxo_location` |
-| Adapter control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
+| Schedule control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
 | Minimum, maximum, step | 8 A, 48 A, 2 A | 6 A, 48 A, 1 A |
 | Usable pack energy | 135 kWh | 75 kWh |
 
 - **The name sets the car's entity IDs:** R1S gives `…r1s_planner_…`, Roxxo gives `…roxxo_planner_…`.
 - **The car's own current number caps the maximum:** Tesla Fleet's says what the car accepts on this charger.
-- **Car ids** are `rivian` and `tesla` (a second car of a kind becomes `rivian_2`). The charger car override uses them, and the Rivian adapter's vehicle override treats `rivian` as its own car.
+- **Car ids** are `rivian` and `tesla` (a second car of a kind becomes `rivian_2`). The charger car override uses them, and Rivian schedule control's vehicle override treats `rivian` as its own car.
 - **Never map the planner's own entities** as a car's switch or current; the form refuses them.
 
 ### Electricity plans
@@ -114,22 +114,22 @@ The free hours are the main entry's Schedule helper, at $0. In them, by night or
 | Flat | No free hours, no price windows; Import price |
 | Free weekends | Free hours schedule painted over the weekend (and any free nights) |
 
-## Pointing the Rivian adapter at the planner
+## Pointing Rivian schedule control at the planner
 
-The adapter parks the Rivian if the planner stops, and settles its requests after a restart, through two entities the planner provides. In the adapter's **Configure**:
+Rivian schedule control parks the Rivian's charging window if the planner stops, and settles the planner's requests after a restart, through two entities the planner provides. In the schedule control's **Configure**:
 
-| Adapter option | Set it to | What the planner's entity does |
+| Schedule control option | Set it to | What the planner's entity does |
 | --- | --- | --- |
 | Controller liveness (`controller_liveness_entity`) | `sensor.solar_ev_planner_heartbeat` | `shadow` or `active` while the planner is on and has decided within the last 3 minutes; unavailable while Planning is off, while it cannot plan (missing site readings, an unreadable schedule, an error) or once it has stopped deciding. It re-checks itself every 30 seconds. |
 | Controller wants charging (`controller_charging_entity`) | `binary_sensor.r1s_planner_charging_wanted` | On while the last command the car accepted was a current, off while it was a pause; unknown in shadow mode, while Planning is off, and before the first command of a plug-in. It survives restarts. |
-| Wall Connector vehicle override (`vehicle_override_entity`) | `select.solar_ev_planner_charger_car_override` | `auto`, `rivian` or `tesla`; the adapter treats `auto` and `rivian` as no override |
+| Wall Connector vehicle override (`vehicle_override_entity`) | `select.solar_ev_planner_charger_car_override` | `auto`, `rivian` or `tesla`; the schedule control treats `auto` and `rivian` as no override |
 | Wall Connector vehicle connected (`wall_connector_entity`) | `binary_sensor.tesla_wall_connector_vehicle_connected` | The same sensor the planner reads |
 
 - **Leave the increase margin and the ceiling hold at 0**, their defaults; the planner asks for exact currents and paces itself.
-- **The heartbeat stays up in shadow mode,** so mapping it does not block the adapter's attended trial.
-- **To check the mapping,** run `python -m tools.check` ([TESTING.md](TESTING.md)): the rows "rivian controller liveness" and "rivian controller charging" read what the adapter itself sees.
+- **The heartbeat stays up in shadow mode,** so mapping it does not block the attended Rivian trial.
+- **To check the mapping,** run `python -m tools.check` ([TESTING.md](TESTING.md)): the rows "rivian controller liveness" and "rivian controller charging" read what the schedule control itself sees.
 
-What the planner sends the adapter, and the adapter's rules for requests, are in [Driving the adapter from the planner](RIVIAN_SCHEDULE_CONTROL.md#driving-the-adapter-from-the-planner).
+What the planner sends the schedule control, and the schedule control's rules for requests, are in [Driving schedule control from the planner](RIVIAN_SCHEDULE_CONTROL.md#driving-schedule-control-from-the-planner).
 
 ## Entities
 
@@ -144,19 +144,19 @@ What the planner sends the adapter, and the adapter's rules for requests, are in
 | `sensor.solar_ev_planner_battery_minimum_time` | When that minimum is reached |
 | `sensor.solar_ev_planner_forecast_correction` | The factor today's production so far puts on the rest of today's forecast; attributes: the evidence weight, the multi-day bias, the forecast's age, and p10/p50/p90 left today |
 | `sensor.solar_ev_planner_car_on_charger` | `none`, `rivian` or `tesla`, with why, the candidates, the Wall Connector readings and `tonight_car`: the car that should be on the charger in the coming free hours |
-| `sensor.solar_ev_planner_heartbeat` | The adapter's liveness entity (above) |
+| `sensor.solar_ev_planner_heartbeat` | Rivian schedule control's liveness entity (above) |
 
 ### Each car (device "R1S planner", "Roxxo planner")
 
 | Entity | What it shows or sets |
 | --- | --- |
-| `binary_sensor.r1s_planner_charging_wanted` | The adapter's controller charging entity (above) |
-| `sensor.r1s_planner_planned_current` | The current the plan has the car at now (in shadow mode, the virtual car's); 0 off the charger. Attributes: the wanted and commanded current, what the car or adapter holds, the adapter state, why a command waits, the last error. |
+| `binary_sensor.r1s_planner_charging_wanted` | Rivian schedule control's controller charging entity (above) |
+| `sensor.r1s_planner_planned_current` | The current the plan has the car at now (in shadow mode, the virtual car's); 0 off the charger. Attributes: the wanted and commanded current, what the car or Rivian schedule control holds, the schedule control state, why a command waits, the last error. |
 | `sensor.r1s_planner_outlook` | Where the car's energy will come from, in words ("covered by sun", "about 7 kWh in free hours", "about 3 kWh paid") |
 | `sensor.r1s_planner_energy_from_sun`, `_energy_in_free_hours`, `_energy_paid` | The same in kWh |
 | `number.r1s_planner_charge_limit` | The limit the planner charges to; 0 uses the car's own (default) |
 | `number.r1s_planner_plan_target`, `time.r1s_planner_plan_time`, `select.r1s_planner_plan_days` | A plan: "target % by time", on `off` (default), `once`, `weekdays`, `daily` or `weekends`. `once` is for the next such time and turns itself off afterwards. |
-| `number.roxxo_planner_restore_current_at_unplug` | Tesla only: the current set back when the Tesla is unplugged at home after the planner changed it (default 48 A; 0 turns it off). The Rivian adapter restores the owner's schedule itself. |
+| `number.roxxo_planner_restore_current_at_unplug` | Tesla only: the current set back when the Tesla is unplugged at home after the planner changed it (default 48 A; 0 turns it off). Rivian schedule control restores the owner's schedule itself. |
 
 ## Settings
 
@@ -183,7 +183,7 @@ All settings are entities on the planner's device. They are kept in the planner'
 
 - The planner plans every cycle **as if it had been obeyed**: a virtual car follows its plan, and the dashboard shows that plan.
 - **It calls no service.** The only call it makes is reading the Schedule helpers' weekly configuration (`schedule.get_schedule`), which changes nothing.
-- The heartbeat shows `shadow`, and charging-wanted stays unknown, so the Rivian adapter neither starts nor drops anything because of the planner.
+- The heartbeat shows `shadow`, and charging-wanted stays unknown, so Rivian schedule control neither starts nor drops anything because of the planner.
 - The cars charge as they do today, from their own schedules or apps. The planner's reasons describe what it would do; while a car draws on its own, the measured import and battery differ from the plan.
 
 ### Turning shadow mode off
@@ -192,7 +192,7 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 
 1. The planner starts a fresh session and sends its first decision at once to the car on the charger, and only to that car.
 2. **Tesla:** the charge current, then the charge switch. Every command is billed by Tesla's API, so a command is never repeated on the planner's own initiative.
-3. **Rivian:** the adapter's current, then its switch. If the adapter drops the request (after a restart, an outage or a replug), the planner sends it again, except while the adapter is handed back, faulted or waiting for the vehicle. With the adapter still in dry run, the requests are recorded but nothing is written to Rivian.
+3. **Rivian:** Rivian schedule control's current, then its switch. If the schedule control drops the request (after a restart, an outage or a replug), the planner sends it again, except while the schedule control is handed back, faulted or waiting for the vehicle. With the schedule control still in dry run, the requests are recorded but nothing is written to Rivian.
 4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure.
 5. **At unplug** the Tesla's current is set back to its restore current, if the planner changed it during that plug-in.
 
@@ -204,9 +204,9 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 | Heartbeat | `shadow` | `active` | unavailable |
 | Charging wanted | unknown | on or off | unknown |
 | Tesla | as you left it | follows the plan | keeps its last current, up to its own limit |
-| Rivian (adapter mapped) | as you left it | follows the plan | the adapter stops renewing at once and parks its window after 3 minutes, so charging stops; the owner's schedule comes back at unplug or with **Restore owner schedule** |
+| Rivian (schedule control pointed at the planner) | as you left it | follows the plan | the schedule control stops renewing at once and parks its window after 3 minutes, so charging stops; the owner's schedule comes back at unplug or with **Restore owner schedule** |
 
-- **Going back to shadow mode** sends nothing, so each car keeps its last command: the Tesla its current, and the Rivian its request, which the adapter keeps renewing while the heartbeat is up. To stop a car as well, pause it first (in its app, or with the adapter's **Restore owner schedule** for the Rivian), or turn Planning off.
+- **Going back to shadow mode** sends nothing, so each car keeps its last command: the Tesla its current, and the Rivian its request, which Rivian schedule control keeps renewing while the heartbeat is up. To stop a car as well, pause it first (in its app, or for the Rivian with the schedule control's **Restore owner schedule**), or turn Planning off.
 - **When the planner cannot plan** (mode `no_data`: a site reading missing, the free-hours schedule unreadable, an error), the heartbeat goes unavailable just as with Planning off. The reason sensor says why. A stale car (its own data unavailable) is not commanded, but the heartbeat stays up, so the Rivian keeps its last current until its data returns.
 
 ### Which car is on the charger

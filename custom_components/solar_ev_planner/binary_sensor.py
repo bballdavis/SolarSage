@@ -1,10 +1,10 @@
 """Binary sensors: whether the planner wants each car charging.
 
-Map a Rivian's sensor to the charge adapter's ``controller_charging_entity`` option. It is on
+Map a Rivian's sensor to Rivian schedule control's ``controller_charging_entity`` option. It is on
 while the planner's last command to the car on the charger was a current, off while it was a
 pause, and unknown while the planner sends nothing: shadow mode, planner off, or no command
 yet in this plug-in session. It follows the commands the car accepted, so it stays in step
-with the adapter's switch.
+with the schedule control's switch.
 """
 
 from __future__ import annotations

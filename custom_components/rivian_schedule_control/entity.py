@@ -6,16 +6,16 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 
 from .const import DEVICE_MANUFACTURER, DEVICE_MODEL, DOMAIN
-from .runtime import AdapterRuntime
+from .runtime import ScheduleControlRuntime
 
 
-class RivianSolarAdapterEntity(Entity):
-    """An entity that writes its state after every adapter tick and request."""
+class RivianScheduleControlEntity(Entity):
+    """A schedule control entity; it writes its state after every tick and request."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, runtime: AdapterRuntime, key: str) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime, key: str) -> None:
         self.runtime = runtime
         self._attr_translation_key = key
         self._attr_unique_id = f"{runtime.vehicle_id}_{key}"

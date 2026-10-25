@@ -75,7 +75,7 @@ def test_free_hours_send_full_current_once(settings):
     car = rivian(soc=60.0, since=now - timedelta(minutes=5))
     assert p.decide(snapshot(now, soc=50.0, cars=[car])).amps == 48
     # the car holds 48 A: nothing is repeated (a Tesla the owner stopped from its app stays
-    # stopped; the executor re-sends only a request the Rivian adapter dropped)
+    # stopped; the executor re-sends only a request Rivian schedule control dropped)
     car = replace(car, commanded_a=48)
     d = p.decide(snapshot(now + timedelta(minutes=1), soc=50.0, cars=[car]))
     assert d.mode == "night" and d.amps is None

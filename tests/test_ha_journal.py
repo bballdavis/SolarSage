@@ -188,7 +188,7 @@ async def test_legacy_journal_with_ownership_stops_setup(
     assert legacy_storage_key(entry.entry_id) in (entry.reason or "")
     assert path.exists()
 
-    # Once the owner has dealt with it and deleted it, the adapter starts.
+    # Once the owner has dealt with it and deleted it, schedule control starts.
     path.unlink()
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)

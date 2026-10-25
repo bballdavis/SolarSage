@@ -2,8 +2,8 @@
 
 Plans each car's charging current on the Wall Connector from the Solcast forecast, recent
 house use (recorder statistics) and the home battery's predicted level, and commands the car
-on the charger: the Tesla through Tesla Fleet, the Rivian through this repository's charge
-adapter. Shadow mode (on by default) plans and explains but never calls a service. The
+on the charger: the Tesla through Tesla Fleet, the Rivian through this repository's Rivian
+schedule control. Shadow mode (on by default) plans and explains but never calls a service. The
 algorithm is the pure-Python package in ``core`` (docs/PLANNER_DESIGN.md); installing and
 configuring it is in docs/PLANNER.md.
 """

@@ -248,7 +248,7 @@ def mock_recorder_before_hass(request: pytest.FixtureRequest) -> None:
 def hass_config_dir(hass_tmp_config_dir: str) -> str:
     """Give each Home Assistant test its own configuration directory.
 
-    The adapter writes its journal straight to ``.storage``, not through the
+    Schedule control writes its journal straight to ``.storage``, not through the
     storage mock, so each test needs an empty directory.
     """
     return hass_tmp_config_dir

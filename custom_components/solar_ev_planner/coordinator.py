@@ -31,7 +31,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    ADAPTER_WRITING,
     C_LIMIT,
     C_PLAN_DAYS,
     C_PLAN_ONCE_AT,
@@ -99,6 +98,7 @@ from .const import (
     S_PRICE,
     S_SHADOW,
     S_WANTED,
+    SCHEDULE_CONTROL_WRITING,
     SCHEDULE_REFRESH,
     SITE_QUIET_AFTER,
     STORAGE_VERSION,
@@ -149,10 +149,10 @@ _LOGGER = logging.getLogger(__name__)
 
 HISTORY_RETRY = timedelta(minutes=15)
 # The core says the cars are left alone. Here the heartbeat goes down with the planner, so
-# the Rivian adapter stops renewing and parks its window.
+# Rivian schedule control stops renewing and parks its window.
 OFF_REASON = (
-    "The planner is off and sends nothing. The Tesla keeps its last current; the Rivian "
-    "adapter sees the heartbeat down and parks its charging window within a few minutes."
+    "The planner is off and sends nothing. The Tesla keeps its last current; Rivian schedule "
+    "control sees the heartbeat down and parks its charging window within a few minutes."
 )
 # Start-up waits this long (seconds) for the recorder; then the planner starts with a flat
 # house profile and keeps trying in the background.
@@ -740,7 +740,9 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         )
         pending = rt.last_sent is not None and now - rt.last_sent < PENDING_AFTER_SEND
         if on and not pending:
-            pending = standing_request(self.hass, car).schedule_control_state == ADAPTER_WRITING
+            pending = (
+                standing_request(self.hass, car).schedule_control_state == SCHEDULE_CONTROL_WRITING
+            )
         known = soc if soc is not None else (limit if limit is not None else 0.0)
         return CarState(
             car_id,

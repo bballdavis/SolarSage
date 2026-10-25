@@ -17,14 +17,14 @@ Safety rules:
    before the first write. Write intent is persisted before every side effect,
    and a failed save sends nothing.
 2. **Guard every write.** Each write is preceded by a fresh read. If the provider
-   holds neither the state this adapter last verified nor one of its own
+   holds neither the state schedule control last verified nor one of its own
    unverified writes, nothing is overwritten and the controller faults.
 3. **Readback decides.** A write's result is decided by fresh reads, never by
    the mutation response. A readback showing the old state is only "not
    applied" once it has settled.
 4. **Exact restore.** On release (unplug, away, manual, dry run, disable or
    removal), the original list is restored exactly, subject to the same guard.
-5. **Never adopt our own window.** A list this adapter wrote is never
+5. **Never adopt our own window.** A list schedule control wrote is never
    snapshotted as the owner's original.
 
 All interval arithmetic is in UTC. Local time is used only to build windows,
@@ -104,7 +104,7 @@ class Phase(StrEnum):
 
 
 class ControlState(StrEnum):
-    """What the adapter is doing; this is not a physical charging state."""
+    """What schedule control is doing; this is not a physical charging state."""
 
     IDLE = "idle"
     WAITING_FOR_VEHICLE = "waiting_for_vehicle"
@@ -162,7 +162,7 @@ class Observation:
 
 
 @dataclass(frozen=True)
-class AdapterConfig:
+class ScheduleControlConfig:
     """Tuning; see the options flow for user-facing descriptions."""
 
     home_location: dict[str, float]
@@ -191,7 +191,7 @@ class AdapterConfig:
     repark_after: timedelta = timedelta(days=6)
     max_unapplied_writes: int = 3
     attempt_history: int = 8
-    adapter_history: int = 32
+    written_history: int = 32
     dry_run: bool = True
 
 
@@ -295,7 +295,7 @@ class Journal:
     pending: Attempt | None = None
     # Writes sent but never verified, newest last; recognized as our own.
     attempts: list[Attempt] = field(default_factory=list)
-    # Every list this adapter ever wrote (not restores); kept across releases.
+    # Every list schedule control ever wrote (not restores); kept across releases.
     written_states: list[Fingerprint] = field(default_factory=list)
     lease: Lease | None = None
     fault: Fault | None = None
@@ -413,7 +413,9 @@ def summarize_schedules(schedules: list[dict[str, Any]] | None) -> list[dict[str
 class RivianScheduleController:
     """Drive one vehicle's charging schedule from charge and current requests."""
 
-    def __init__(self, api: ScheduleProvider, store: JournalStore, config: AdapterConfig) -> None:
+    def __init__(
+        self, api: ScheduleProvider, store: JournalStore, config: ScheduleControlConfig
+    ) -> None:
         self._api = api
         self._store = store
         self.config = config
@@ -664,14 +666,14 @@ class RivianScheduleController:
         original_fp = fingerprint(original)
         if any(original_fp.matches(state) for state in journal.written_states) or (
             (journal.written_states or journal.archived_original)
-            and self._looks_like_adapter_window(original)
+            and self._looks_like_own_window(original)
         ):
             self._fault(
                 now,
                 "own_window_present",
-                "Rivian holds a schedule this adapter wrote, not the owner's. Recreate the "
-                "owner's schedule in the Rivian app, or use force restore if a snapshot is "
-                "archived.",
+                "Rivian holds a schedule that Rivian schedule control wrote, not the owner's. "
+                "Recreate the owner's schedule in the Rivian app, or use force restore if a "
+                "snapshot is archived.",
             )
             await self._save()
             return
@@ -869,7 +871,7 @@ class RivianScheduleController:
             attempt.target.matches(state) for state in journal.written_states
         ):
             journal.written_states = [*journal.written_states, attempt.target][
-                -self.config.adapter_history :
+                -self.config.written_history :
             ]
         try:
             await self._save()
@@ -895,7 +897,7 @@ class RivianScheduleController:
                 self._fault(
                     now,
                     "external_edit",
-                    "The charging schedule changed outside this adapter; it was not "
+                    "The charging schedule changed outside Rivian schedule control; it was not "
                     "overwritten. Check the Rivian app, then clear the fault.",
                 )
                 await self._save()
@@ -1031,8 +1033,8 @@ class RivianScheduleController:
             "restore_rejected",
             "Rivian refused the owner's schedule list when it was written back. Some "
             "accounts return entries that Rivian will not accept back as one list "
-            "(upstream PR #308). The adapter's window is still on the car: recreate the "
-            "owner's schedule in the Rivian app, then clear the fault.",
+            "(upstream PR #308). The window written by schedule control is still on the car: "
+            "recreate the owner's schedule in the Rivian app, then clear the fault.",
         )
 
     def _withdraw(self, attempt: Attempt, *, keep: bool = False) -> None:
@@ -1092,7 +1094,7 @@ class RivianScheduleController:
     # Operator actions -----------------------------------------------------
 
     async def async_clear_fault(self, now: datetime) -> bool:
-        """Resume after a fault if the provider holds a state this adapter knows."""
+        """Resume after a fault if the provider holds a state schedule control knows."""
         async with self._lock:
             now = now.astimezone(UTC)
             journal = self._journal
@@ -1132,7 +1134,7 @@ class RivianScheduleController:
 
         An explicit operator action for when the provider state is unknown.
         An archived snapshot (from an earlier abandon) is used only while Rivian
-        holds a window this adapter wrote, so a stale archive never replaces a
+        holds a window schedule control wrote, so a stale archive never replaces a
         list the owner has since set up. Returns True once a readback shows the
         owner's list.
         """
@@ -1154,7 +1156,7 @@ class RivianScheduleController:
                 current_fp = fingerprint(current_list)
                 if not (
                     any(current_fp.matches(state) for state in journal.written_states)
-                    or self._looks_like_adapter_window(current_list)
+                    or self._looks_like_own_window(current_list)
                 ):
                     return False
             normalized = normalize_schedules(target, strict=False)
@@ -1235,7 +1237,7 @@ class RivianScheduleController:
     # Reporting ------------------------------------------------------------
 
     def state(self, now: datetime) -> ControlState:
-        """Summarize the adapter's state."""
+        """Summarize the control state."""
         now = now.astimezone(UTC)
         journal = self._journal
         if journal.phase is Phase.FAULT:
@@ -1434,8 +1436,8 @@ class RivianScheduleController:
             and lease.expires_at > now
         )
 
-    def _looks_like_adapter_window(self, schedules: list[dict[str, Any]]) -> bool:
-        """A single short single-day window at home, as this adapter writes."""
+    def _looks_like_own_window(self, schedules: list[dict[str, Any]]) -> bool:
+        """A single short single-day window at home, as schedule control writes."""
         if len(schedules) != 1:
             return False
         schedule = schedules[0]
@@ -1478,6 +1480,6 @@ class RivianScheduleController:
             await self._store.async_save(self._journal.to_dict())
         except Exception as err:
             raise JournalSaveError(
-                f"Could not save the adapter journal ({type(err).__name__}); nothing was sent"
+                f"Could not save the ownership journal ({type(err).__name__}); nothing was sent"
             ) from err
         self._request_unsaved = False

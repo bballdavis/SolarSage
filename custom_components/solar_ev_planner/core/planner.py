@@ -709,8 +709,9 @@ class Planner:
         dbg: dict,
     ) -> tuple[int | None, str, int]:
         """(amps to send or None, reason, the current the plan wants). An unchanged current
-        is sent again only on a new session or mode (the executor re-sends a request the
-        Rivian adapter dropped, and never repeats a Tesla command the owner overrode)."""
+        is sent again only on a new session or mode (the executor re-sends a request that
+        Rivian schedule control dropped, and never repeats a Tesla command the owner
+        overrode)."""
         now, s, cur = snap.now, self.settings, car.commanded_a
         dbg["want_a"] = want
         if want == cur and not fresh:

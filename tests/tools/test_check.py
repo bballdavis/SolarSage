@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from fake_hass import FakeHass
 import pytest
-from synthetic import TZ, E, adapter_attrs, build_site
+from synthetic import TZ, E, build_site, schedule_control_attrs
 
 from tools import check
 from tools.config import load_config
@@ -125,17 +125,19 @@ async def test_tesla_custom_only(client: HassClient, fake: FakeHass) -> None:
     assert row.status == check.FAIL and "switch.roxxo_charger" in row.detail
 
 
-async def test_adapter_fault_and_handed_back(client: HassClient, fake: FakeHass) -> None:
-    build_site(fake, NOW, adapter_dry_run=False)
+async def test_schedule_control_fault_and_handed_back(client: HassClient, fake: FakeHass) -> None:
+    build_site(fake, NOW, schedule_control_dry_run=False)
     fake.set_state(
         E["r_state"],
         "fault",
-        adapter_attrs(dry_run=False, fault_code="external_edit", fault_message="edited"),
+        schedule_control_attrs(dry_run=False, fault_code="external_edit", fault_message="edited"),
     )
     by = await run(client)
     assert by["rivian control state"].status == check.FAIL
     assert "external_edit" in by["rivian control state"].detail
-    fake.set_state(E["r_state"], "handed_back", adapter_attrs(dry_run=False, handed_back=True))
+    fake.set_state(
+        E["r_state"], "handed_back", schedule_control_attrs(dry_run=False, handed_back=True)
+    )
     by = await run(client)
     assert by["rivian control state"].status == check.WARN
 
@@ -180,9 +182,9 @@ def add_planner(fake: FakeHass, heartbeat: str = "shadow", wanted: str = "unknow
 
 
 def observe(fake: FakeHass, **obs: object) -> None:
-    """The adapter's control state, with what it reads from its controller options."""
+    """Rivian schedule control's control state, with what it reads from its controller options."""
     base = {"plugged": True, "home": True, "at_charger": True}
-    fake.set_state(E["r_state"], "dry_run", adapter_attrs(observation=base | obs))
+    fake.set_state(E["r_state"], "dry_run", schedule_control_attrs(observation=base | obs))
 
 
 async def test_planner_not_installed_is_only_information(
@@ -194,7 +196,7 @@ async def test_planner_not_installed_is_only_information(
     assert by["rivian controller liveness"].status == check.INFO
 
 
-async def test_planner_in_shadow_mode_with_the_adapter_mapped(
+async def test_planner_in_shadow_mode_with_the_schedule_control_mapped(
     client: HassClient, fake: FakeHass
 ) -> None:
     build_site(fake, NOW)
@@ -209,7 +211,7 @@ async def test_planner_in_shadow_mode_with_the_adapter_mapped(
     assert fake.service_calls == []
 
 
-async def test_adapter_options_not_pointing_at_the_planner(
+async def test_schedule_control_options_not_pointing_at_the_planner(
     client: HassClient, fake: FakeHass
 ) -> None:
     build_site(fake, NOW)
@@ -221,7 +223,7 @@ async def test_adapter_options_not_pointing_at_the_planner(
     assert HEARTBEAT in by["rivian controller liveness"].detail
     assert by["rivian controller charging"].status == check.WARN
     assert R_WANTED in by["rivian controller charging"].detail
-    # mapped to something else: the adapter reads down and off while the planner is up and on
+    # mapped elsewhere: the schedule control reads down and off while the planner is up and on
     observe(fake, controller_alive=False, controller_charging=False)
     by = await run(client)
     assert by["rivian controller liveness"].value == "mapped elsewhere"

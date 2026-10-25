@@ -87,7 +87,7 @@ def local_iso(v: Any, tz: tzinfo) -> str | None:
 
 
 def attribute_entities(cfg: Config) -> set[str]:
-    """Entities whose history needs attributes: Solcast totals, the adapter's state."""
+    """Entities whose history needs attributes: Solcast totals, Rivian schedule control's state."""
     ids = {cfg.site[r] for r in FORECAST_ROLES if cfg.site.get(r)}
     ids |= {c["control_state"] for c in cfg.cars.values() if c.get("control_state")}
     return ids

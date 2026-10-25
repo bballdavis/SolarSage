@@ -218,7 +218,7 @@ def default_car_settings(kind: str, max_a: int) -> dict[str, Any]:
         C_PLAN_DAYS: PLAN_OFF,
         C_PLAN_ONCE_AT: None,
         # The Tesla keeps the last current it was given; restore its maximum at unplug so a
-        # later charge elsewhere does not start at 6 A. The Rivian adapter restores itself.
+        # later charge elsewhere does not start at 6 A. Rivian schedule control restores itself.
         C_RESTORE: max_a if kind == KIND_TESLA else 0,
     }
 
@@ -227,9 +227,9 @@ def default_car_settings(kind: str, max_a: int) -> dict[str, Any]:
 MODE_NO_DATA: Final = "no_data"
 MODES: Final = ["off", "empty", "stale", "full", "day", "night", MODE_NO_DATA]
 
-# The Rivian adapter's control states in which the planner does not repeat a request.
-ADAPTER_IGNORES: Final = frozenset({"handed_back", "fault", "waiting_for_vehicle"})
-ADAPTER_WRITING: Final = "writing"
+# Rivian schedule control's control states in which the planner does not repeat a request.
+SCHEDULE_CONTROL_IGNORES: Final = frozenset({"handed_back", "fault", "waiting_for_vehicle"})
+SCHEDULE_CONTROL_WRITING: Final = "writing"
 
 DEVICE_MANUFACTURER: Final = "HASS-Solar-Rivian"
 DEVICE_MODEL: Final = "Solar EV planner"

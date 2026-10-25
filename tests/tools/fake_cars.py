@@ -1,8 +1,8 @@
-"""How the Tesla (Fleet entities) and the Rivian adapter answer commands, inside a FakeHass.
+"""How the Tesla (Fleet entities) and Rivian schedule control answer commands, in a FakeHass.
 
 A crude stand-in for the real integrations, enough for attended_test.py: the Wall Connector's
-current follows the commanded current, the adapter moves through its control states, and the
-lease renews and lapses on a fake clock. Nothing here reaches a real system.
+current follows the commanded current, the schedule control moves through its control states,
+and the lease renews and lapses on a fake clock. Nothing here reaches a real system.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fake_hass import FakeHass
-from synthetic import E, adapter_attrs
+from synthetic import E, schedule_control_attrs
 
 
 def applied(amps: float) -> int:
-    """The adapter's rounding: even 8-48 A."""
+    """The schedule control's rounding: even 8-48 A."""
     a = int(min(48, max(8, amps)))
     return a - a % 2
 
@@ -48,7 +48,7 @@ class FakeCars:
         self.set("wall", round(amps * 0.24, 2))
         self.set("wall_contactor", "on" if amps > 0 else "off")
 
-    def adapter(self, state: str, **attrs: Any) -> None:
+    def control(self, state: str, **attrs: Any) -> None:
         cur = dict(self.fake.states[E["r_state"]]["attributes"])
         cur.update(attrs)
         self.fake.set_state(E["r_state"], state, cur)
@@ -61,7 +61,7 @@ class FakeCars:
         now = datetime.now(UTC)
         self.lease_t = self.clock()
         self.lapsed_t = None
-        self.adapter(
+        self.control(
             "lease_active",
             desired_charge=True,
             lease_active=True,
@@ -86,7 +86,7 @@ class FakeCars:
             self.wall(float(self.st("t_current")) if on else 0)
         elif eid == E["r_current"]:
             self.set("r_current", data["value"])
-            self.adapter(self.st("r_state"), requested_amps=data["value"])
+            self.control(self.st("r_state"), requested_amps=data["value"])
             if self.a("desired_charge"):
                 self.write_lease()
         elif eid == E["r_switch"]:
@@ -95,7 +95,7 @@ class FakeCars:
                 self.write_lease()
             else:
                 self.set("r_switch", "off")
-                self.adapter("paused", desired_charge=False, lease_active=False)
+                self.control("paused", desired_charge=False, lease_active=False)
                 self.wall(0)
         elif eid == E["r_renewal"]:
             self.renewal = service == "turn_on"
@@ -104,15 +104,15 @@ class FakeCars:
                 self.write_lease()
         elif eid == E["r_restore"]:
             self.set("r_switch", "off")
-            self.adapter("handed_back", desired_charge=None, handed_back=True, lease_active=False)
+            self.control("handed_back", desired_charge=None, handed_back=True, lease_active=False)
             self.wall(0)
         elif eid == E["r_read"]:
             self.read_count += 1
-            self.adapter(
+            self.control(
                 self.st("r_state"),
                 last_provider_read_at=f"read-{self.read_count}",
                 provider_schedule_count=2,
-                last_provider_read={"count": 2, "owned_by_adapter": self.read_count > 1},
+                last_provider_read={"count": 2, "written_by_schedule_control": self.read_count > 1},
             )
 
     def on_poll(self) -> None:
@@ -124,16 +124,16 @@ class FakeCars:
             self.write_lease()
         elif not self.renewal and self.st("r_state") == "lease_active" and age >= 25 * 60:
             self.lapsed_t = self.clock()
-            self.adapter("lease_lapsed", lease_active=False)
+            self.control("lease_lapsed", lease_active=False)
             self.wall(0)
         elif self.lapsed_t is not None and self.clock() - self.lapsed_t >= 60:
-            self.adapter("paused")
+            self.control("paused")
             self.lapsed_t = None
 
 
-def live_adapter(fake: FakeHass) -> None:
-    """The adapter out of dry run, idle, with the Rivian on the charger and not charging."""
-    fake.set_state(E["r_state"], "idle", adapter_attrs(dry_run=False))
+def live_schedule_control(fake: FakeHass) -> None:
+    """The schedule control out of dry run, idle, with the Rivian on the charger, not charging."""
+    fake.set_state(E["r_state"], "idle", schedule_control_attrs(dry_run=False))
     fake.set_state(E["wall_current"], 0)
     fake.set_state(E["wall_contactor"], "off")
 

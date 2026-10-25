@@ -5,12 +5,12 @@ This is the path from "the software passes its tests" to "the planner charges bo
 | Stage | Plan phase | What changes in the house | Commands sent |
 | --- | --- | --- | --- |
 | [0. Set up the tools](#0-set-up-the-tools) | 0 | Nothing | None |
-| [1. Read everything for a week](#1-read-everything-for-a-week) | 1 | Tesla Fleet, the Rivian adapter (dry run) and the free-hours schedule are added | None |
+| [1. Read everything for a week](#1-read-everything-for-a-week) | 1 | Tesla Fleet, Rivian schedule control (dry run) and the free-hours schedule are added | None |
 | [2. Replay real days](#2-replay-real-days) | 2 | Nothing | None |
 | [3. Shadow mode for a week](#3-shadow-mode-for-a-week) | 3 | The planner is installed in shadow mode | None |
-| [4. The Tesla under the planner](#4-the-tesla-under-the-planner) | 4 | Attended Tesla test, then shadow mode off with the adapter in dry run | Tesla only |
-| [5. The attended Rivian trial](#5-the-attended-rivian-trial) | 5 | The adapter's dry run off, shadow mode on | Rivian, by you |
-| [6. The Rivian under the planner](#6-the-rivian-under-the-planner) | 6 | Shadow mode off with the adapter live | Both cars |
+| [4. The Tesla under the planner](#4-the-tesla-under-the-planner) | 4 | Attended Tesla test, then shadow mode off with Rivian schedule control in dry run | Tesla only |
+| [5. The attended Rivian trial](#5-the-attended-rivian-trial) | 5 | Rivian schedule control's dry run off, shadow mode on | Rivian, by you |
+| [6. The Rivian under the planner](#6-the-rivian-under-the-planner) | 6 | Shadow mode off with Rivian schedule control live | Both cars |
 
 [Turning shadow mode off](#turning-shadow-mode-off) and [stopping quickly](#stopping-quickly) apply from stage 4 on.
 
@@ -40,7 +40,7 @@ Run every tool from the repository root, for example `.venv/bin/python -m tools.
 Plan phase 1: every planner input is present and fresh, with no control yet.
 
 1. **Tesla Fleet.** Add the HA core Tesla Fleet integration with your Tesla developer app and approve its virtual key in the car ([plan phase 0](PLAN.md#phases) covers the app and the key's domain). The Tesla's entities should become `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable` and `device_tracker.roxxo_location`; if they are named differently, put the real names in `tools/config.json`.
-2. **The Rivian adapter, in dry run.** Install and configure it ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the two controller options empty until stage 3. Keep **dry run on**.
+2. **Rivian schedule control, in dry run.** Install and configure it ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the two controller options empty until stage 3. Keep **dry run on**.
 3. **The free-hours Schedule helper.** Settings → Devices & services → Helpers → Create helper → Schedule, named "Free hours" (`schedule.free_hours`), painted 00:00–06:00 and 20:00–24:00 every day.
 4. **Start recording forecasts.** Home Assistant's history does not keep Solcast's half hours, so start the recorder now on an always-on machine and leave it running:
 
@@ -100,7 +100,7 @@ Plan phase 3: the planner runs in Home Assistant, plans and explains, and sends 
 2. **Add it:** Settings → Devices & services → Add integration → Solar EV Planner. Check the prefilled entities in the three steps.
 3. **Add both cars** (Add car → Rivian, then Add car → Tesla) with the entities in [PLANNER.md, cars](PLANNER.md#cars).
 4. **Check that it is in shadow mode:** `switch.solar_ev_planner_shadow_mode` on, and `sensor.solar_ev_planner_heartbeat` showing `shadow`.
-5. **Point the Rivian adapter at the planner:** in the adapter's Configure, set controller liveness to `sensor.solar_ev_planner_heartbeat`, controller wants charging to `binary_sensor.r1s_planner_charging_wanted` and the vehicle override to `select.solar_ev_planner_charger_car_override`. Keep its dry run on.
+5. **Point Rivian schedule control at the planner:** in its Configure, set controller liveness to `sensor.solar_ev_planner_heartbeat`, controller wants charging to `binary_sensor.r1s_planner_charging_wanted` and the vehicle override to `select.solar_ev_planner_charger_car_override`. Keep its dry run on.
 6. **Add the dashboard** from [PLANNER.md](PLANNER.md#a-starting-dashboard), if you like.
 7. **Run the check:** the planner rows show the heartbeat `shadow` and shadow mode on, and **rivian controller liveness** is OK. **rivian controller charging** stays INFO ("unknown") in shadow mode.
 8. **For a week, every day:**
@@ -130,7 +130,7 @@ It confirms every command before sending it (Tesla bills each one). It sets 16 �
 
 ### 4b. Shadow mode off, the Rivian kept out
 
-1. Make sure the **Rivian adapter is in dry run**: the planner may then send the Rivian requests, but the adapter writes nothing to Rivian. While plugged in, the Rivian charges from its own schedule.
+1. Make sure **Rivian schedule control is in dry run**: the planner may then send the Rivian requests, but the schedule control writes nothing to Rivian. While plugged in, the Rivian charges from its own schedule.
 2. Run `python -m tools.check --strict` and fix any WARN.
 3. Turn shadow mode off ([what happens](#turning-shadow-mode-off)).
 
@@ -149,10 +149,10 @@ Every day with the Tesla on the charger, look at:
 
 ## 5. The attended Rivian trial
 
-Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are in the [adapter guide](RIVIAN_SCHEDULE_CONTROL.md#attended-trial); the tool walks you through them.
+Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are in the [Rivian schedule control guide](RIVIAN_SCHEDULE_CONTROL.md#attended-trial); the tool walks you through them.
 
 1. **Turn shadow mode on** (the tool refuses while the planner commands). The Tesla keeps its last current, so unplug it.
-2. **Turn the adapter's dry run off** (its Configure).
+2. **Turn Rivian schedule control's dry run off** (its Configure).
 3. Plug the Rivian in at home. The check should show **car on the charger** `rivian`, **rivian controller liveness** OK and the heartbeat `shadow`.
 4. Run the trial:
 
@@ -160,7 +160,7 @@ Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are
    python -m tools.attended_test rivian --i-am-at-the-car
    ```
 
-   It refuses while the adapter is in dry run, faulted or handed back, or while the adapter sees its controller as down. It asks before every command, and asks you for what only you can see, such as the Rivian app's schedule screen.
+   It refuses while the schedule control is in dry run, faulted or handed back, or while the schedule control sees its controller as down. It asks before every command, and asks you for what only you can see, such as the Rivian app's schedule screen.
 
 **Pass:** T1 to T5 and T7 pass with acceptable latency, and **Read schedules** at the end matches the inventory. If the car does not follow schedule changes reliably, decide as the plan's phase 5 says.
 
@@ -168,10 +168,10 @@ Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are
 
 Plan phase 6.
 
-1. The adapter's dry run stays **off**, and its controller options point at the planner (stage 3).
+1. Rivian schedule control's dry run stays **off**, and its controller options point at the planner (stage 3).
 2. Run `python -m tools.check --strict` and fix any WARN.
 3. Turn shadow mode off. The planner now commands whichever car is on the charger.
-4. **Once, while the Rivian charges under the planner,** check the stop path: turn Planning off. About 3 minutes later the adapter's control state turns `paused`, and the Wall Connector current drops to 0 a minute or two after that. Turn Planning on again, and charging resumes at the planned current.
+4. **Once, while the Rivian charges under the planner,** check the stop path: turn Planning off. About 3 minutes later `sensor.r1s_schedule_control_control_state` turns `paused`, and the Wall Connector current drops to 0 a minute or two after that. Turn Planning on again, and charging resumes at the planned current.
 5. **Once,** unplug the Rivian and press **Read schedules** a few minutes later: the owner's schedule is back exactly.
 6. For a week, the same checks as stage 4c, with the Rivian's `lease_amps` (control state attribute) and the Wall Connector following the planned current.
 
@@ -183,18 +183,18 @@ Before you do it:
 
 - `python -m tools.check --strict` passes;
 - the car you want commanded is plugged in, or you are happy for whichever car is plugged in to be commanded;
-- the Rivian adapter is in dry run (stage 4) or has passed the trial (stage 6).
+- Rivian schedule control is in dry run (stage 4) or has passed the trial (stage 6).
 
 Then turn `switch.solar_ev_planner_shadow_mode` off. The heartbeat changes to `active`, and the planner sends its first decision to the car on the charger at once. From then on it sends only changes, at most one per car per minute and a few an hour.
 
-**Going back to shadow mode** sends nothing: each car keeps its last command, and the Rivian adapter keeps renewing it while the heartbeat is up. Stop the car as well if you want it to stop (below).
+**Going back to shadow mode** sends nothing: each car keeps its last command, and Rivian schedule control keeps renewing it while the heartbeat is up. Stop the car as well if you want it to stop (below).
 
 ## Stopping quickly
 
 | To stop | Do this | What happens |
 | --- | --- | --- |
-| The Rivian | The adapter's **Restore owner schedule** button | The owner's schedule is written back and the adapter ignores the planner until the next unplug |
-| The Rivian | Turn Planning off | The adapter stops renewing at once and parks the window after 3 minutes |
+| The Rivian | Rivian schedule control's **Restore owner schedule** button | The owner's schedule is written back and the schedule control ignores the planner until the next unplug |
+| The Rivian | Turn Planning off | Rivian schedule control stops renewing at once and parks the window after 3 minutes |
 | The Tesla | Turn shadow mode on (or Planning off), then stop charging in the Tesla app | The planner sends nothing more; the Tesla keeps what the app set |
 | Everything | Turn Planning off, and unplug | No commands; the Rivian's own schedule returns after unplug |
 
@@ -202,4 +202,4 @@ If Home Assistant itself is down, the Rivian's charging window lapses on its own
 
 ## The software tests
 
-The repository's own tests (adapter, planner and tools, against fakes only) are run before any of this; the commands are in the [README](../README.md#checks).
+The repository's own tests (Rivian schedule control, planner and tools, against fakes only) are run before any of this; the commands are in the [README](../README.md#checks).

@@ -1,5 +1,6 @@
 """attended_test.py against the fake Home Assistant with emulated cars: the opt-in gates,
-the refusals, the Tesla current steps with restore, and the Rivian trial through the adapter."""
+the refusals, the Tesla current steps with restore, and the Rivian trial through Rivian
+schedule control."""
 
 from __future__ import annotations
 
@@ -9,10 +10,10 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from fake_cars import FakeCars, live_adapter, tesla_on_charger
+from fake_cars import FakeCars, live_schedule_control, tesla_on_charger
 from fake_hass import TOKEN, FakeHass
 import pytest
-from synthetic import TZ, E, adapter_attrs, build_site
+from synthetic import TZ, E, build_site, schedule_control_attrs
 
 from tools import attended_test as at
 from tools.hass_client import HassClient
@@ -147,13 +148,15 @@ async def test_refuses_while_the_planner_commands(live, fake, tmp_path) -> None:
     assert fake.service_calls == []
 
 
-async def test_rivian_refuses_while_the_adapter_sees_its_controller_down(
+async def test_rivian_refuses_while_the_schedule_control_sees_its_controller_down(
     live, fake, tmp_path
 ) -> None:
     build_site(fake, NOW)
-    live_adapter(fake)
+    live_schedule_control(fake)
     observation = {"plugged": True, "home": True, "at_charger": True, "controller_alive": False}
-    fake.set_state(E["r_state"], "idle", adapter_attrs(dry_run=False, observation=observation))
+    fake.set_state(
+        E["r_state"], "idle", schedule_control_attrs(dry_run=False, observation=observation)
+    )
     owner = Owner()
     code = await run(live, owner, Clock(), "rivian", "--i-am-at-the-car", tmp=tmp_path)
     assert code == 3 and "controller as down" in owner.text
@@ -261,20 +264,20 @@ async def test_tesla_refusals(live, fake, tmp_path, setup, why) -> None:
 )
 async def test_rivian_refusals(live, fake, tmp_path, state, attrs, why) -> None:
     build_site(fake, NOW)
-    fake.set_state(E["r_state"], state, adapter_attrs(**attrs))
+    fake.set_state(E["r_state"], state, schedule_control_attrs(**attrs))
     owner = Owner()
     code = await run(live, owner, Clock(), "rivian", "--i-am-at-the-car", tmp=tmp_path)
     assert code == 3 and why in owner.text
     assert fake.service_calls == []
 
 
-async def test_rivian_refuses_without_the_adapter(live, fake, tmp_path) -> None:
+async def test_rivian_refuses_without_schedule_control(live, fake, tmp_path) -> None:
     build_site(fake, NOW)
     fake.remove(E["r_state"])
     owner = Owner()
     assert await run(live, owner, Clock(), "rivian", "--i-am-at-the-car", tmp=tmp_path) == 3
-    assert "is the adapter set up" in owner.text
-    live_adapter(fake)
+    assert "is Rivian schedule control set up" in owner.text
+    live_schedule_control(fake)
     fake.set_state(E["r_status"], "a")
     owner = Owner()
     assert await run(live, owner, Clock(), "rivian", "--i-am-at-the-car", tmp=tmp_path) == 3
@@ -283,12 +286,12 @@ async def test_rivian_refuses_without_the_adapter(live, fake, tmp_path) -> None:
 
 async def test_rivian_full_trial(live, fake, tmp_path) -> None:
     build_site(fake, NOW)
-    live_adapter(fake)
+    live_schedule_control(fake)
     clock = Clock()
     FakeCars(fake, clock)
 
     def replugged() -> str:
-        fake.set_state(E["r_state"], "idle", adapter_attrs(dry_run=False))
+        fake.set_state(E["r_state"], "idle", schedule_control_attrs(dry_run=False))
         return ""
 
     owner = Owner(
@@ -317,7 +320,7 @@ async def test_rivian_full_trial(live, fake, tmp_path) -> None:
         "T7 exact restore",
     ):
         assert f"[PASS] {step}" in owner.text, step
-    # only the adapter's entities were commanded, never a Rivian service
+    # only the schedule control's entities were commanded, never a Rivian service
     targets = {c["target"]["entity_id"] for c in fake.service_calls}
     assert targets <= {E[k] for k in ("r_switch", "r_current", "r_renewal", "r_restore", "r_read")}
     assert fake.states[E["r_renewal"]]["state"] == "on"
@@ -328,7 +331,7 @@ async def test_rivian_full_trial(live, fake, tmp_path) -> None:
 async def test_rivian_selected_steps_and_cleanup(live, fake, tmp_path) -> None:
     """Only T2; stopping there leaves charging on, so the clean-up offers to undo it."""
     build_site(fake, NOW)
-    live_adapter(fake)
+    live_schedule_control(fake)
     clock = Clock()
     FakeCars(fake, clock)
     owner = Owner()
@@ -344,7 +347,7 @@ async def test_rivian_selected_steps_and_cleanup(live, fake, tmp_path) -> None:
 
 async def test_rivian_skip_everything(live, fake, tmp_path) -> None:
     build_site(fake, NOW)
-    live_adapter(fake)
+    live_schedule_control(fake)
     owner = Owner([("*run this step", "s")])
     code = await run(live, owner, Clock(), "rivian", "--i-am-at-the-car", tmp=tmp_path)
     assert code == 0, owner.text

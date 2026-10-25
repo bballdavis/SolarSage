@@ -299,7 +299,7 @@ def car_fields(kind: str) -> dict[str, tuple[bool, Any]]:
     """What the planner reads and commands for a car of this kind."""
     fields: dict[str, tuple[bool, Any]] = {
         CONF_NAME: (True, TextSelector()),
-        # Tesla Fleet's charge switch and charge current, or the Rivian adapter's solar
+        # Tesla Fleet's charge switch and charge current, or Rivian schedule control's solar
         # charging switch and solar current
         CONF_SWITCH: (True, _entity(["switch", "input_boolean"])),
         CONF_CURRENT: (True, _entity(["number", "input_number"])),
@@ -426,7 +426,7 @@ class CarSubentryFlow(ConfigSubentryFlow):
 
     def _new_car_id(self) -> str:
         """The kind ("rivian", "tesla"), numbered from the second car of a kind on. The
-        Rivian adapter's vehicle override treats "rivian" as its own car."""
+        Rivian schedule control's vehicle override treats "rivian" as its own car."""
         taken = {sub.data.get(CONF_CAR_ID) for sub in self._get_entry().subentries.values()}
         car_id, n = self._kind, 2
         while car_id in taken:

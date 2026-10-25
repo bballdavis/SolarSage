@@ -23,8 +23,9 @@ How each input of a ``Snapshot`` is read:
                        when its integration has gone quiet, never from its own timestamp.
 
 Commands (CarCommand.amps): None = no service call; 0 = switch off; > 0 = set the current
-number, then switch on if it was off. Rivian: the adapter's switch and number (each change is
-a cloud schedule write, ~1-2 min). Tesla (Fleet): charge switch and charge current (billed).
+number, then switch on if it was off. Rivian: Rivian schedule control's switch and number
+(each change is a cloud schedule write, ~1-2 min). Tesla (Fleet): charge switch and charge
+current (billed).
 """
 
 from __future__ import annotations

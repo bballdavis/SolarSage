@@ -16,7 +16,6 @@ from custom_components.rivian_schedule_control.api import (
     WriteRejectedError,
 )
 from custom_components.rivian_schedule_control.controller import (
-    AdapterConfig,
     ControlState,
     Journal,
     JournalSaveError,
@@ -24,6 +23,7 @@ from custom_components.rivian_schedule_control.controller import (
     Phase,
     ReleaseResult,
     RivianScheduleController,
+    ScheduleControlConfig,
 )
 
 CDT = timezone(timedelta(hours=-5))
@@ -120,7 +120,11 @@ def make(
     store = store or FakeStore()
     provider = FakeProvider(schedules, store)
     options = {"home_location": HOME, "time_zone": CDT, "dry_run": False} | config
-    return RivianScheduleController(provider, store, AdapterConfig(**options)), provider, store
+    return (
+        RivianScheduleController(provider, store, ScheduleControlConfig(**options)),
+        provider,
+        store,
+    )
 
 
 async def start(controller, *, amps=16, obs=PLUGGED, now=T0):
@@ -344,7 +348,7 @@ async def test_increase_reaches_the_ceiling_without_a_margin():
 
 async def test_decrease_from_the_ceiling_holds_the_margin_there():
     # Surplus just short of 48 A: evcc's +2 A allowance, clamped at 48, must not
-    # make the adapter chase it up and down.
+    # make schedule control chase it up and down.
     controller, provider, _ = make(**EVCC_RULES)
     await start(controller, amps=48)
     await controller.async_request_amps(46.4)
@@ -795,7 +799,7 @@ async def test_abandon_only_while_faulted_and_archives_the_original():
     assert controller.journal.archived_original == OWNER
 
 
-async def test_takeover_refuses_the_adapters_own_window_and_force_restore_recovers():
+async def test_takeover_refuses_its_own_window_and_force_restore_recovers():
     controller, provider, _ = make()
     await start(controller)
     lease_list = deepcopy(provider.schedules)
@@ -803,7 +807,7 @@ async def test_takeover_refuses_the_adapters_own_window_and_force_restore_recove
     await controller.async_request_amps(10)  # the next write's guard read sees the edit
     await controller.async_tick(at(minutes=1), CHARGING)
     assert await controller.async_abandon()
-    # The owner puts the adapter's own window back by accident (or a late write lands).
+    # The owner puts schedule control's own window back by accident (or a late write lands).
     provider.schedules = lease_list
     await controller.async_request_charge(True)
     await controller.async_tick(at(minutes=2), CHARGING)
@@ -1133,7 +1137,7 @@ async def test_possibly_sent_write_is_kept_when_an_older_write_is_adopted():
     provider.apply_set = True
     await restarted.async_request_amps(8)
     await restarted.async_tick(at(minutes=3, seconds=20), CHARGING)
-    assert restarted.journal.fault is None  # W2 is recognized as the adapter's own
+    assert restarted.journal.fault is None  # W2 is recognized as schedule control's own
     assert provider.sets[-1][0]["amperage"] == 8
 
 
@@ -1164,10 +1168,10 @@ async def test_release_during_the_takeover_save_writes_no_lease():
     assert provider.sets == []
 
 
-async def test_owner_edited_adapter_window_is_refused_after_abandon():
+async def test_owner_edited_lease_window_is_refused_after_abandon():
     controller, provider, _ = make()
     await start(controller)
-    provider.schedules[0]["amperage"] = 40  # the owner edits the adapter's window
+    provider.schedules[0]["amperage"] = 40  # the owner edits schedule control's window
     await controller.async_request_amps(10)
     await controller.async_tick(at(minutes=1), CHARGING)
     assert await controller.async_abandon()
@@ -1370,7 +1374,7 @@ async def test_enabling_dry_run_releases_existing_ownership():
     controller, provider, _ = make(store=store)
     await start(controller)
     dry = RivianScheduleController(
-        provider, store, AdapterConfig(home_location=HOME, time_zone=CDT, dry_run=True)
+        provider, store, ScheduleControlConfig(home_location=HOME, time_zone=CDT, dry_run=True)
     )
     await dry.async_load()
     await dry.async_tick(at(minutes=1), CHARGING)

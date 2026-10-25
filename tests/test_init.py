@@ -83,7 +83,7 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 def entity_id(hass: HomeAssistant, platform: str, key: str) -> str:
-    """Find an adapter entity by its unique ID."""
+    """Find a schedule control entity by its unique ID."""
     found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, f"{VEHICLE_ID}_{key}")
     assert found is not None, key
     return found
@@ -116,8 +116,8 @@ async def call(
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
-async def call_adapter(hass: HomeAssistant, service: str, entry: MockConfigEntry) -> Any:
-    """Call one of the adapter's own services and let its ticks finish."""
+async def call_schedule_control(hass: HomeAssistant, service: str, entry: MockConfigEntry) -> Any:
+    """Call one of schedule control's own services and let its ticks finish."""
     response = await hass.services.async_call(
         DOMAIN,
         service,
@@ -253,12 +253,12 @@ async def test_time_zone_change_reloads_and_rewrites_window(
     mock_rivian: FakeRivian,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """A new Home Assistant time zone reloads the adapter, which moves its window."""
+    """A new Home Assistant time zone reloads schedule control, which moves its window."""
     await start_charging(hass)
     runtime = loaded_entry.runtime_data
     [lease] = mock_rivian.writes[-1]
 
-    # Other core settings leave the adapter alone.
+    # Other core settings leave schedule control alone.
     await hass.config.async_update(location_name="Test home")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert loaded_entry.runtime_data is runtime
@@ -304,7 +304,7 @@ async def test_setup_failure_while_owning_raises_persistent_issue(
     entry_state: ConfigEntryState,
     reason: str,
 ) -> None:
-    """A setup that fails while the adapter owns the schedule raises a lasting issue."""
+    """A setup that fails while schedule control owns the schedule raises a lasting issue."""
     issues = ir.async_get(hass)
     issue_id = setup_failed_issue_id(loaded_entry.entry_id)
     await start_charging(hass)
@@ -838,7 +838,7 @@ async def test_fault_notification_and_clear(
     notification = notifications(hass)[fault_id]
     assert "external_edit" in notification["title"]
     message = notification["message"]
-    assert "changed outside this adapter" in message
+    assert "changed outside Rivian schedule control" in message
     for remedy in ("Clear fault", "Restore owner schedule", "force restore", "abandon ownership"):
         assert remedy in message, remedy
     assert not any(fragment in message for fragment in COORDINATE_FRAGMENTS)
@@ -853,7 +853,7 @@ async def test_fault_notification_and_clear(
     assert "once the fault is cleared" in notifications(hass)[release_id]["message"]
     assert mock_rivian.writes[-1] == lease
 
-    # Once Rivian holds the adapter's lease again, the fault clears and the
+    # Once Rivian holds schedule control's lease again, the fault clears and the
     # recorded release goes ahead.
     mock_rivian.schedules = lease
     await call(hass, BUTTON_DOMAIN, SERVICE_PRESS, "button", "clear_fault")
@@ -872,7 +872,7 @@ async def test_restore_rejected_fault_explains_recovery(
     accept = mock_rivian.set_charging_schedules
 
     async def refuse_owner_list(vehicle_id: str, schedules: list) -> FakeResponse:
-        if len(schedules) > 1:  # the owner's list, not the adapter's single window
+        if len(schedules) > 1:  # the owner's list, not schedule control's single window
             raise RivianBadRequestError("invalid input")
         return await accept(vehicle_id, schedules)
 
@@ -970,7 +970,7 @@ async def test_start_blocked_by_attribute(
     assert state(hass, "sensor", "control_state") == "lease_active"
     attrs = attributes(hass)
     assert attrs["start_blocked_by"] == []
-    # The attributes still carry no coordinates now that the adapter owns the schedule.
+    # The attributes still carry no coordinates now that schedule control owns the schedule.
     text = str(attrs)
     for fragment in COORDINATE_FRAGMENTS:
         assert fragment not in text, fragment
@@ -987,7 +987,7 @@ async def test_read_schedules_button_notifies_without_coordinates(
     notification = notifications(hass)[f"{DOMAIN}_{loaded_entry.entry_id}_schedules"]
     message = notification["message"]
     assert "2 charging schedules" in message
-    assert "written by not this adapter" in message
+    assert "not written by Rivian schedule control" in message
     assert "Monday, Tuesday, Wednesday, Thursday, Friday from 00:00 for 6 h 0 min at 48 A" in (
         message
     )
@@ -1174,7 +1174,7 @@ async def test_read_schedules_service(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
 ) -> None:
     """The read service returns the provider's schedules without locations."""
-    response = await call_adapter(hass, "read_schedules", loaded_entry)
+    response = await call_schedule_control(hass, "read_schedules", loaded_entry)
     assert response["count"] == 2
     assert len(response["fingerprint"]) == 12
     assert response["written_by_schedule_control"] is False
@@ -1188,7 +1188,7 @@ async def test_read_schedules_service(
     assert not any(fragment in str(response) for fragment in COORDINATE_FRAGMENTS)
 
     await start_charging(hass)
-    response = await call_adapter(hass, "read_schedules", loaded_entry)
+    response = await call_schedule_control(hass, "read_schedules", loaded_entry)
     assert response["count"] == 1
     assert response["written_by_schedule_control"] is True
 
@@ -1198,17 +1198,17 @@ async def test_release_service(
 ) -> None:
     """release restores and hands back; in idle it cancels a pending command."""
     await start_charging(hass)
-    await call_adapter(hass, "release", loaded_entry)
+    await call_schedule_control(hass, "release", loaded_entry)
     assert mock_rivian.schedules == OWNER_SCHEDULES
     assert state(hass, "sensor", "control_state") == "handed_back"
 
     # Released again while idle: nothing to restore, no write.
     writes = len(mock_rivian.writes)
-    await call_adapter(hass, "release", loaded_entry)
+    await call_schedule_control(hass, "release", loaded_entry)
     assert len(mock_rivian.writes) == writes
 
     # clear_fault without a fault is a no-op that succeeds.
-    await call_adapter(hass, "clear_fault", loaded_entry)
+    await call_schedule_control(hass, "clear_fault", loaded_entry)
 
 
 async def test_abandon_ownership(
@@ -1217,7 +1217,7 @@ async def test_abandon_ownership(
     """abandon is refused unless faulted; then it archives and lists the owner's list."""
     await start_charging(hass)
     with pytest.raises(ServiceValidationError) as err:
-        await call_adapter(hass, "abandon_ownership", loaded_entry)
+        await call_schedule_control(hass, "abandon_ownership", loaded_entry)
     assert err.value.translation_key == "abandon_not_faulted"
     assert state(hass, "sensor", "control_state") == "lease_active"
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "solar_charging")
@@ -1229,7 +1229,7 @@ async def test_abandon_ownership(
     assert state(hass, "sensor", "control_state") == "fault"
     writes = len(mock_rivian.writes)
 
-    await call_adapter(hass, "abandon_ownership", loaded_entry)
+    await call_schedule_control(hass, "abandon_ownership", loaded_entry)
     assert len(mock_rivian.writes) == writes
     assert mock_rivian.schedules == [OWNER_SCHEDULES[1]]
     assert lease != mock_rivian.schedules
@@ -1253,7 +1253,7 @@ async def test_force_restore(
     """force_restore only runs in a fault, and writes the owner's list over anything."""
     await start_charging(hass)
     with pytest.raises(ServiceValidationError) as err:
-        await call_adapter(hass, "force_restore", loaded_entry)
+        await call_schedule_control(hass, "force_restore", loaded_entry)
     assert err.value.translation_key == "force_restore_not_faulted"
     assert mock_rivian.schedules != OWNER_SCHEDULES
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "solar_charging")
@@ -1262,7 +1262,7 @@ async def test_force_restore(
     await call(hass, BUTTON_DOMAIN, SERVICE_PRESS, "button", "release")
     assert state(hass, "sensor", "control_state") == "fault"
 
-    await call_adapter(hass, "force_restore", loaded_entry)
+    await call_schedule_control(hass, "force_restore", loaded_entry)
     assert mock_rivian.writes[-1] == OWNER_SCHEDULES
     assert mock_rivian.schedules == OWNER_SCHEDULES
     assert state(hass, "sensor", "control_state") == "handed_back"
@@ -1279,20 +1279,20 @@ async def test_force_restore(
     assert state(hass, "sensor", "control_state") == "fault"
     mock_rivian.write_error = RivianApiException("rejected")
     with pytest.raises(HomeAssistantError) as err:
-        await call_adapter(hass, "force_restore", loaded_entry)
+        await call_schedule_control(hass, "force_restore", loaded_entry)
     assert err.value.translation_key == "force_restore_unverified"
     assert attributes(hass)["fault_code"] == "force_restore_unverified"
 
 
-async def test_force_restore_uses_archive_only_over_adapter_window(
+async def test_force_restore_uses_archive_only_over_own_window(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
 ) -> None:
     """An archived owner list never replaces schedules the owner has set up since."""
     lease = await fault_by_owner_edit(hass, mock_rivian)
-    await call_adapter(hass, "abandon_ownership", loaded_entry)
+    await call_schedule_control(hass, "abandon_ownership", loaded_entry)
     assert read_journal(hass)["archived_original"] == OWNER_SCHEDULES
 
-    # Later, Rivian holds the adapter's old window again, so the next takeover faults.
+    # Later, Rivian holds schedule control's old window again, so the next takeover faults.
     mock_rivian.schedules = lease
     hass.states.async_set(PLUGGED_ENTITY, "off")
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -1306,15 +1306,15 @@ async def test_force_restore_uses_archive_only_over_adapter_window(
     mock_rivian.schedules = [OWNER_SCHEDULES[1]]
     writes = len(mock_rivian.writes)
     with pytest.raises(HomeAssistantError) as err:
-        await call_adapter(hass, "force_restore", loaded_entry)
+        await call_schedule_control(hass, "force_restore", loaded_entry)
     assert err.value.translation_key == "force_restore_archive_unsafe"
     assert len(mock_rivian.writes) == writes
     assert mock_rivian.schedules == [OWNER_SCHEDULES[1]]
     assert attributes(hass)["fault_code"] == "own_window_present"
 
-    # While Rivian holds the adapter's window, the archived list is written.
+    # While Rivian holds schedule control's window, the archived list is written.
     mock_rivian.schedules = lease
-    await call_adapter(hass, "force_restore", loaded_entry)
+    await call_schedule_control(hass, "force_restore", loaded_entry)
     assert mock_rivian.writes[-1] == OWNER_SCHEDULES
     assert mock_rivian.schedules == OWNER_SCHEDULES
     assert state(hass, "sensor", "control_state") == "handed_back"
@@ -1388,7 +1388,7 @@ async def test_diagnostics_redacted(
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "solar_charging")
     mock_rivian.schedules = [OWNER_SCHEDULES[1]]
     await call(hass, BUTTON_DOMAIN, SERVICE_PRESS, "button", "release")
-    await call_adapter(hass, "abandon_ownership", loaded_entry)
+    await call_schedule_control(hass, "abandon_ownership", loaded_entry)
     diagnostics = await async_get_config_entry_diagnostics(hass, loaded_entry)
     check(diagnostics)
     assert len(diagnostics["journal"]["archived_original"]) == 2
@@ -1408,7 +1408,7 @@ async def test_unload_keeps_ownership_and_stops_ticking(
     await start_charging(hass)
     writes = len(mock_rivian.writes)
 
-    def adapter_timers() -> list:
+    def tick_timers() -> list:
         return [
             handle
             for handle in get_scheduled_timer_handles(hass.loop)
@@ -1418,12 +1418,12 @@ async def test_unload_keeps_ownership_and_stops_ticking(
             and str(job.name).startswith(f"{DOMAIN} tick")
         ]
 
-    assert adapter_timers()
+    assert tick_timers()
     assert await hass.config_entries.async_unload(loaded_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert loaded_entry.state is ConfigEntryState.NOT_LOADED
     assert read_journal(hass)["phase"] == "owned"
-    assert not adapter_timers()
+    assert not tick_timers()
 
     reads = mock_rivian.reads
     await advance(hass, freezer, timedelta(minutes=30))
@@ -1461,7 +1461,7 @@ async def test_disable_restores_owner_schedule(
     assert journal["handed_back"] is False
     assert restore_failed_notification_id(VEHICLE_ID) not in notifications(hass)
 
-    # Enabled again, the adapter starts idle and takes over on the next request.
+    # Enabled again, schedule control starts idle and takes over on the next request.
     assert await hass.config_entries.async_set_disabled_by(loaded_entry.entry_id, None)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert loaded_entry.state is ConfigEntryState.LOADED
@@ -1492,7 +1492,7 @@ async def test_disable_while_faulted_notifies(
     assert issue.translation_key == "restore_failed_disabled"
     assert "external_edit" in issue.translation_placeholders["reason"]
 
-    # Enabled again, the adapter takes the journal back over and the issue goes.
+    # Enabled again, schedule control takes the journal back over and the issue goes.
     assert await hass.config_entries.async_set_disabled_by(loaded_entry.entry_id, None)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert ir.async_get(hass).async_get_issue(DOMAIN, restore_failed_issue_id(VEHICLE_ID)) is None
@@ -1554,7 +1554,7 @@ async def test_restore_failed_reason_is_from_this_attempt(
     assert mock_rivian.schedules == lease
     message = notifications(hass)[restore_failed_notification_id(VEHICLE_ID)]["message"]
     assert "RivianApiException" not in message
-    assert "the restore was not confirmed; the adapter was still in phase writing" in message
+    assert "the restore was not confirmed; schedule control was still in phase writing" in message
 
 
 async def test_remove_restores_owner_schedule(

@@ -53,13 +53,13 @@ async def test_snapshot_contents(client: HassClient, fake: FakeHass) -> None:
     assert plugged == [["2026-10-20T00:00:00-07:00", "off"], ["2026-10-21T10:05:00-07:00", "on"]]
     # pulled a day at a time: the second day's starting state is not repeated
     assert all(a[1] != b[1] for a, b in zip(pv, pv[1:], strict=False))
-    # forecast totals keep their estimates; the adapter keeps its attributes
+    # forecast totals keep their estimates; the schedule control's state keeps its attributes
     fc = snap["history"][E["fc_today"]]
     assert fc[-1][2]["estimate10"] < fc[-1][2]["estimate"] < fc[-1][2]["estimate90"]
     assert "detailedForecast" not in fc[-1][2]  # not recorded by HA
-    adapter = snap["history"][E["r_state"]]
+    control = snap["history"][E["r_state"]]
     # a change of attributes alone (16 -> 24 A while idle) is kept
-    assert [r[2]["requested_amps"] for r in adapter if r[1] == "idle"] == [16, 24]
+    assert [r[2]["requested_amps"] for r in control if r[1] == "idle"] == [16, 24]
     # statistics: 5-min rows and hourly rows from 14 days before the range
     five = snap["statistics"]["5minute"][E["pv"]]
     hour = snap["statistics"]["hour"][E["pv"]]

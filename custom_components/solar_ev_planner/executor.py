@@ -6,12 +6,13 @@ to N and then turns the switch on. Only what differs from the car's standing req
 
 - Tesla (Tesla Fleet): the charge switch (on while charging) and the charge-current number.
   Every command is billed, so the executor never repeats a request on its own.
-- Rivian (the charge adapter): the adapter's request, read from its control state's
-  ``desired_charge`` and ``requested_amps`` attributes when that sensor is mapped, else from
-  its switch and number. The adapter drops a request on unplug, after a restart or a planner
-  outage, and the switch then turns off; the executor repeats the planner's last command
-  until the adapter holds it again, except while the adapter ignores requests (handed back,
-  fault, waiting for the vehicle). A Rivian is paused only with the switch, never with 0 A.
+- Rivian (Rivian schedule control): the schedule control's request, read from its control
+  state's ``desired_charge`` and ``requested_amps`` attributes when that sensor is mapped,
+  else from its switch and number. The schedule control drops a request on unplug, after a
+  restart or a planner outage, and the switch then turns off; the executor repeats the
+  planner's last command until the schedule control holds it again, except while it ignores
+  requests (handed back, fault, waiting for the vehicle). A Rivian is paused only with the
+  switch, never with 0 A.
 
 Rate limits on top of the core's (minimum time between changes, largest change): one command
 per car per minute, at most ``MAX_SENDS_PER_HOUR`` an hour (a pause ignores the cap), and an
@@ -33,7 +34,6 @@ from homeassistant.core import Context, HomeAssistant, split_entity_id
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
-    ADAPTER_IGNORES,
     CONF_CONTROL_STATE,
     CONF_CURRENT,
     CONF_KIND,
@@ -41,6 +41,7 @@ from .const import (
     FAILURE_BACKOFF_MAX,
     KIND_RIVIAN,
     MAX_SENDS_PER_HOUR,
+    SCHEDULE_CONTROL_IGNORES,
     SEND_SPACING,
     SERVICE_TIMEOUT,
 )
@@ -116,7 +117,7 @@ class CarRuntime:
 
 @dataclass(frozen=True)
 class Standing:
-    """The request the car (or the Rivian adapter) holds now."""
+    """The request the car (or Rivian schedule control) holds now."""
 
     charging: bool | None  # True on, False paused, None unknown or no request
     amps: float | None
@@ -143,8 +144,8 @@ def standing_request(hass: HomeAssistant, car: Mapping[str, Any]) -> Standing:
         if switch.state == "on":
             charging = True
         elif car.get(CONF_KIND) != KIND_RIVIAN:
-            # A Tesla's switch is off while it does not charge. The adapter's switch is off
-            # both for a pause and for no request at all, so it says nothing then.
+            # A Tesla's switch is off while it does not charge. Rivian schedule control's switch
+            # is off both for a pause and for no request at all, so it says nothing then.
             charging = False
     return Standing(charging, state_float(hass.states.get(car[CONF_CURRENT])))
 
@@ -226,18 +227,18 @@ class CarExecutor:
 
     async def async_reconcile(self, car: Mapping[str, Any], rt: CarRuntime, now: datetime) -> bool:
         """While the planner holds: send a command that is still waiting, or repeat the last
-        one to a Rivian adapter that dropped it. True when something was sent."""
+        one to a Rivian whose schedule control dropped it. True when something was sent."""
         if rt.retry_a is not None:
             return await self.async_apply(car, rt, rt.retry_a, now)
         if rt.commanded_a is None or car.get(CONF_KIND) != KIND_RIVIAN:
             return False
         standing = standing_request(self.hass, car)
-        if standing.schedule_control_state in ADAPTER_IGNORES:
+        if standing.schedule_control_state in SCHEDULE_CONTROL_IGNORES:
             return False
         if standing.schedule_control_state is None and rt.commanded_a == 0:
             return False  # without the control state a pause cannot be told from no request
         if calls_for(rt.commanded_a, standing):
-            _LOGGER.debug("The Rivian adapter dropped the request; sending it again")
+            _LOGGER.debug("Rivian schedule control dropped the request; sending it again")
             return await self.async_apply(car, rt, rt.commanded_a, now)
         return False
 

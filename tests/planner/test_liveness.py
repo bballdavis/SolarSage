@@ -1,5 +1,5 @@
-"""The entities the Rivian adapter's controller options point at: the heartbeat (liveness)
-and each car's charging-wanted binary sensor."""
+"""The entities Rivian schedule control's controller options point at: the heartbeat
+(liveness) and each car's charging-wanted binary sensor."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ async def test_heartbeat_follows_the_planner(
 ) -> None:
     hass = site
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA), fake_cars)
-    # running in shadow mode: alive, so the adapter's own trial is not blocked
+    # running in shadow mode: alive, so the schedule control's own trial is not blocked
     assert hass.states.get(HEARTBEAT).state == "shadow"
     await turn(hass, SHADOW, False)
     assert hass.states.get(HEARTBEAT).state == "active"
@@ -70,13 +70,13 @@ async def test_charging_wanted_follows_the_commands(
 ) -> None:
     hass = site
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA), fake_cars)
-    # shadow mode: unknown, so the adapter neither confirms nor drops requests
+    # shadow mode: unknown, so the schedule control neither confirms nor drops requests
     assert hass.states.get(WANTED).state == "unknown"
     assert hass.states.get("binary_sensor.roxxo_planner_charging_wanted").state == "unknown"
     await turn(hass, SHADOW, False)
     assert hass.states.get(WANTED).state == "on"
     assert hass.states.get("switch.r1s_schedule_control_solar_charging").state == "on"
-    # daytime solar charging off: the car pauses, in step with the adapter's switch
+    # daytime solar charging off: the car pauses, in step with the schedule control's switch
     await turn(hass, "switch.solar_ev_planner_daytime_solar_charging", False)
     await cycle(hass, coordinator, freezer, minutes=16)
     assert hass.states.get("switch.r1s_schedule_control_solar_charging").state == "off"
@@ -85,7 +85,7 @@ async def test_charging_wanted_follows_the_commands(
     await turn(hass, SHADOW, True)
     assert hass.states.get(WANTED).state == "unknown"
     await turn(hass, SHADOW, False)
-    # unplugged: the session (and the adapter's request) ends
+    # unplugged: the session (and the schedule control's request) ends
     set_rivian(hass, plugged="off")
     await cycle(hass, coordinator, freezer)
     assert hass.states.get(WANTED).state == "unknown"
@@ -101,8 +101,8 @@ async def test_charging_wanted_follows_the_commands(
 async def test_charging_wanted_survives_a_restart(
     site: HomeAssistant, fake_cars: FakeCars, freezer: FrozenDateTimeFactory
 ) -> None:
-    """After a reload the sensor shows the stored command at once, so the adapter can confirm
-    its request from before the restart."""
+    """After a reload the sensor shows the stored command at once, so Rivian schedule control
+    can confirm its request from before the restart."""
     hass = site
     entry = make_entry(RIVIAN)
     await setup_entry(hass, entry, fake_cars)

@@ -1,7 +1,7 @@
 """Thin charging-schedule wrapper around rivian-python-client.
 
 Only two provider operations are used: read the complete schedule list and
-replace it. All errors are mapped to adapter exceptions so the controller never
+replace it. All errors are mapped to this module's exceptions so the controller never
 depends on the client library's exception hierarchy. Error messages carry
 error codes and exception class names only: Rivian responses contain schedule
 coordinates and must not reach logs, attributes, or diagnostics.

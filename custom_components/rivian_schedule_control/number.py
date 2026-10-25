@@ -8,27 +8,27 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import REQUEST_MAX_AMPS, REQUEST_MIN_AMPS
-from .entity import RivianSolarAdapterEntity
-from .runtime import AdapterRuntime, RivianSolarAdapterConfigEntry
+from .entity import RivianScheduleControlEntity
+from .runtime import RivianScheduleControlConfigEntry, ScheduleControlRuntime
 
 PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: RivianSolarAdapterConfigEntry,
+    entry: RivianScheduleControlConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the current number."""
     async_add_entities([SolarCurrentNumber(entry.runtime_data)])
 
 
-class SolarCurrentNumber(RivianSolarAdapterEntity, NumberEntity):
+class SolarCurrentNumber(RivianScheduleControlEntity, NumberEntity):
     """Requested current, set by the controller (the solar planner).
 
     Any current from 0 to 80 A is accepted and shown as requested. Rivian
-    schedules take even amperages from 8 to 48 A, so the adapter applies the
-    request rounded down to an even value within that range: below 8 A it
+    schedules take even amperages from 8 to 48 A, so schedule control applies
+    the request rounded down to an even value within that range: below 8 A it
     charges at 8 A. Pausing is the charging switch's job.
     """
 
@@ -39,7 +39,7 @@ class SolarCurrentNumber(RivianSolarAdapterEntity, NumberEntity):
     _attr_native_step = 1
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
 
-    def __init__(self, runtime: AdapterRuntime) -> None:
+    def __init__(self, runtime: ScheduleControlRuntime) -> None:
         super().__init__(runtime, "solar_current")
 
     @property

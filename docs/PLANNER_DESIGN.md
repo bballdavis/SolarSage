@@ -142,7 +142,7 @@ These are the owner's settings, all on the dashboard. They map to `planner_core.
 
 | Setting | Default | Meaning | Field |
 | --- | --- | --- | --- |
-| Planner | on | Off: nothing is sent to either car. The heartbeat then goes down, so the Rivian adapter parks its window ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)). | `enabled` |
+| Planner | on | Off: nothing is sent to either car. The heartbeat then goes down, so Rivian schedule control parks the Rivian's charging window ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)). | `enabled` |
 | Shadow mode | on | Plan and explain, send nothing (phase 3) | `shadow` |
 | Free hours | 8 PM–6 AM daily | Schedule helper | `Tariff` window at $0 |
 | Price outside free hours | $0.32/kWh | Normal import price | `Tariff.price` |
@@ -208,11 +208,11 @@ These are checked on every call, and they override the plan:
 | Battery at the floor and discharging into the car in paid hours | Cut the car by the discharge; no increase for 30 min |
 | Battery at 97% or more, or charging at full rate, and exporting more than 0.4 kW for 10 min | An increase may skip the 15-min interval |
 | Car unplugged, at its limit, or its data stale | Send nothing |
-| Planner off | Send nothing to either car (the Rivian adapter then parks its window) |
+| Planner off | Send nothing to either car (Rivian schedule control then parks the Rivian's charging window) |
 
 Safety rules do not act within 10 minutes of a change, while a command is in flight, or while a plan is being pushed.
 
-When the planner stops (Planning off, or it cannot plan), its heartbeat goes unavailable and the Rivian adapter parks its window after 3 minutes. When Home Assistant itself is down, the adapter's window lapses on its own within about 25 minutes. The Tesla keeps its last current up to its own limit in both cases.
+When the planner stops (Planning off, or it cannot plan), its heartbeat goes unavailable and Rivian schedule control parks the Rivian's charging window after 3 minutes. When Home Assistant itself is down, the schedule control's window lapses on its own within about 25 minutes. The Tesla keeps its last current up to its own limit in both cases.
 
 ## 9. Seasonal behaviour
 

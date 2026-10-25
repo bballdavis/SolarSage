@@ -1,5 +1,5 @@
 """A synthetic site in a FakeHass: weeks of Sol-Ark statistics, a few days of history, the
-Solcast attributes, both cars, the Rivian adapter and the free-hours Schedule helper.
+Solcast attributes, both cars, Rivian schedule control and the free-hours Schedule helper.
 
 Made-up values under the owner's entity ids (tools/config.example.json); no real data.
 """
@@ -122,7 +122,7 @@ def build_site(
     battery_sign: int = 1,
     rivian_plug_hour: float | None = 10.0,
     rivian_amps: int = 16,
-    adapter_dry_run: bool = True,
+    schedule_control_dry_run: bool = True,
 ) -> Site:
     """Fill ``fake`` with a site that ran from ``stat_days`` before ``now`` (aware local).
     The Rivian plugs in on the last day at ``rivian_plug_hour`` and charges at
@@ -213,7 +213,7 @@ def build_site(
         fake.statistics["hour"][sid] = hourly
     fake.stat_units = {E["pv"]: "W", E["grid"]: "W", E["battery"]: "W", E["wall"]: "kW"}
     fake.stat_units[E["soc"]] = "%"
-    _static(fake, now, hist_from, adapter_dry_run)
+    _static(fake, now, hist_from, schedule_control_dry_run)
     return site
 
 
@@ -270,14 +270,16 @@ def _static(fake: FakeHass, now: datetime, hist_from: datetime, dry_run: bool) -
     for eid in (E["t_soc"], E["t_limit"], E["t_plugged"], E["t_switch"], E["t_current"]):
         fake.register(eid, "tesla_fleet")
     fake.register(E["t_location"], "tesla_fleet")
-    # the Rivian adapter
+    # Rivian schedule control
     fake.set_state(E["r_switch"], "off", {}, when=hist_from)
     fake.set_state(E["r_current"], 16, {"unit_of_measurement": "A", "min": 0, "max": 80})
     fake.set_state(E["r_renewal"], "on", {})
     fake.set_state(E["r_restore"], "unknown", {})
     fake.set_state(E["r_read"], "unknown", {})
     fake.set_state(E["r_status"], "b", {"options": ["a", "b", "c"]})
-    fake.set_state(E["r_state"], "dry_run" if dry_run else "idle", adapter_attrs(dry_run=dry_run))
+    fake.set_state(
+        E["r_state"], "dry_run" if dry_run else "idle", schedule_control_attrs(dry_run=dry_run)
+    )
     for key in ("r_switch", "r_current", "r_state", "r_status", "r_renewal", "r_restore", "r_read"):
         fake.register(E[key], "rivian_schedule_control", f"test-vehicle-0001_{key}")
     # the free-hours Schedule helper
@@ -291,7 +293,7 @@ def _static(fake: FakeHass, now: datetime, hist_from: datetime, dry_run: bool) -
     fake.set_state(E["free"], "on" if free else "off", {"friendly_name": "Free hours"})
 
 
-def adapter_attrs(**over: Any) -> dict[str, Any]:
+def schedule_control_attrs(**over: Any) -> dict[str, Any]:
     attrs: dict[str, Any] = {
         "phase": "idle",
         "dry_run": True,

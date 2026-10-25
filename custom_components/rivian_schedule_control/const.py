@@ -53,7 +53,7 @@ CONF_ACCESS_TOKEN: Final = "access_token"
 CONF_REFRESH_TOKEN: Final = "refresh_token"
 CONF_USER_SESSION_TOKEN: Final = "user_session_token"
 
-# Config entry options: Home Assistant entities the adapter observes
+# Config entry options: Home Assistant entities that schedule control observes
 CONF_PLUGGED_ENTITY: Final = "plugged_entity"
 CONF_LOCATION_ENTITY: Final = "location_entity"
 CONF_CHARGER_STATE_ENTITY: Final = "charger_state_entity"
@@ -82,7 +82,7 @@ MONITORED_ENTITY_OPTIONS: Final = (
     CONF_LIVENESS_ENTITY,
     CONF_CHARGING_ENTITY,
 )
-# Override entity states that leave the charger status to the adapter.
+# Override entity states that leave the charger status to schedule control.
 OVERRIDE_PASS_STATES: Final = frozenset({"auto", "rivian"})
 
 # Config entry options: tuning
@@ -124,7 +124,7 @@ OPTION_RANGES: Final[dict[str, tuple[int, int, str]]] = {
     CONF_RELEASE_DELAY: (0, 1800, "s"),
 }
 
-# Range of the current the controller may request; the adapter applies even 8-48 A.
+# Range of the current the controller may request; schedule control applies even 8-48 A.
 REQUEST_MIN_AMPS: Final = 0
 REQUEST_MAX_AMPS: Final = 80
 

@@ -1,7 +1,7 @@
 """Glue between Home Assistant and the schedule controller.
 
 The runtime reads the vehicle facts the controller needs from Home Assistant
-entities, ticks the controller, and tells the adapter's entities to update.
+entities, ticks the controller, and tells the entities to update.
 
 Requests from the charging controller (the solar planner, through the switch
 and number entities) only record the request in the journal and schedule a
@@ -80,13 +80,13 @@ from .const import (
     journal_key,
 )
 from .controller import (
-    AdapterConfig,
     Fault,
     JournalSaveError,
     Observation,
     Phase,
     ReleaseResult,
     RivianScheduleController,
+    ScheduleControlConfig,
     summarize_schedules,
 )
 
@@ -110,13 +110,13 @@ REDACT_KEYS = frozenset(
     }
 )
 
-type RivianSolarAdapterConfigEntry = ConfigEntry[AdapterRuntime]
+type RivianScheduleControlConfigEntry = ConfigEntry[ScheduleControlRuntime]
 
 
-def adapter_config_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> AdapterConfig:
+def control_config_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> ScheduleControlConfig:
     """Build the controller tuning from the entry options and Home Assistant's home."""
     options = DEFAULT_OPTIONS | dict(entry.options)
-    return AdapterConfig(
+    return ScheduleControlConfig(
         home_location={
             "latitude": float(hass.config.latitude),
             "longitude": float(hass.config.longitude),
@@ -167,7 +167,7 @@ def setup_failed_issue_id(entry_id: str) -> str:
     return f"setup_failed_while_owning_{entry_id}"
 
 
-class AdapterRuntime:
+class ScheduleControlRuntime:
     """Owns the controller of one config entry and drives it from Home Assistant."""
 
     def __init__(
@@ -340,8 +340,8 @@ class AdapterRuntime:
         if self._stopped or self.hass.config.time_zone == self.time_zone:
             return
         _LOGGER.info(
-            "Home Assistant's time zone changed from %s to %s; reloading the solar adapter "
-            "so its charging windows follow the new local time",
+            "Home Assistant's time zone changed from %s to %s; reloading Rivian schedule "
+            "control so its charging windows follow the new local time",
             self.time_zone,
             self.hass.config.time_zone,
         )
@@ -485,12 +485,12 @@ class AdapterRuntime:
                 continue
             self._missing_issues.add(option)
             _LOGGER.warning(
-                "%s, mapped as the adapter's %s entity, does not exist; %s",
+                "%s, mapped as the %s entity of Rivian schedule control, does not exist; %s",
                 entity_id,
                 option.removesuffix("_entity"),
                 "the controller is treated as down, so no charging is started or renewed"
                 if option == CONF_LIVENESS_ENTITY
-                else "the adapter treats its state as unknown",
+                else "its state is treated as unknown",
             )
             ir.async_create_issue(
                 self.hass,
@@ -528,7 +528,7 @@ class AdapterRuntime:
         persistent_notification.async_create(
             self.hass,
             _fault_message(self.entry.title, fault),
-            title=f"{self.entry.title} solar adapter stopped: {fault.code}",
+            title=f"{self.entry.title} schedule control stopped: {fault.code}",
             notification_id=self._fault_notification_id,
         )
 
@@ -583,12 +583,12 @@ class AdapterRuntime:
             persistent_notification.async_create(
                 self.hass,
                 (
-                    f"The release of {self.entry.title} was recorded. The adapter is in a fault "
-                    "and writes nothing until it is cleared, so the owner's charging schedules "
-                    "are restored once the fault is cleared. To restore them now, whatever "
-                    "Rivian holds, use the force restore action."
+                    f"The release of {self.entry.title} was recorded. Rivian schedule control is "
+                    "in a fault and writes nothing until it is cleared, so the owner's charging "
+                    "schedules are restored once the fault is cleared. To restore them now, "
+                    "whatever Rivian holds, use the force restore action."
                 ),
-                title=f"{self.entry.title} solar adapter: release waits for the fault",
+                title=f"{self.entry.title} schedule control: release waits for the fault",
                 notification_id=self._release_notification_id,
             )
         self.request_tick()
@@ -613,20 +613,20 @@ class AdapterRuntime:
             )
         archived = self.controller.journal.archived_original
         if archived is None:
-            summary = "The adapter held no copy of the owner's charging schedules."
+            summary = "Schedule control held no copy of the owner's charging schedules."
         else:
             summary = "\n".join(
                 [
-                    "The adapter's copy of the owner's charging schedules was archived. "
+                    "Schedule control's copy of the owner's charging schedules was archived. "
                     "Check that the Rivian app shows them:",
                     *format_schedules(summarize_schedules(archived)),
                 ]
             )
         persistent_notification.async_create(
             self.hass,
-            f"The solar adapter for {self.entry.title} no longer controls the vehicle and "
-            f"wrote nothing to Rivian.\n\n{summary}",
-            title=f"{self.entry.title} solar adapter: ownership abandoned",
+            f"Rivian schedule control for {self.entry.title} gave up ownership of the "
+            f"vehicle's charging schedule and wrote nothing to Rivian.\n\n{summary}",
+            title=f"{self.entry.title} schedule control: ownership abandoned",
             notification_id=f"{DOMAIN}_{self.entry.entry_id}_abandoned",
         )
         self.request_tick()
@@ -635,7 +635,7 @@ class AdapterRuntime:
         """While faulted, write the owner's saved schedules whatever Rivian holds.
 
         A copy archived by abandon ownership is only written while Rivian holds a
-        window this adapter wrote; otherwise nothing is written.
+        window that schedule control wrote; otherwise nothing is written.
         """
         journal = self.controller.journal
         if journal.phase is not Phase.FAULT:
@@ -666,7 +666,7 @@ class AdapterRuntime:
         self.request_tick()
 
     async def async_clear_fault(self) -> bool:
-        """Clear a fault if Rivian holds a schedule this adapter knows."""
+        """Clear a fault if Rivian holds a known schedule: its own window or the owner's."""
         try:
             cleared = await self._async_provider_call(
                 self.controller.async_clear_fault(dt_util.utcnow())
@@ -735,19 +735,19 @@ _FAULT_REMEDIES: dict[str, str] = {
         "Rivian refused the owner's schedules when they were written back as one list. "
         "Some accounts return schedules that Rivian then will not accept back together "
         "(upstream PR #308), so writing the same list again is refused again: do not use "
-        "force restore, and do not clear the fault while Rivian still shows the adapter's "
-        "window, because the release then sends the same list again. Recreate the owner's "
-        "schedules in the Rivian app, then press **Clear fault**; once Rivian shows the "
-        "same schedules as the adapter's saved copy, the adapter lets go of the vehicle. "
-        "If clearing is refused because the recreated schedules differ, use **abandon "
-        "ownership**: it writes nothing and keeps the saved copy archived."
+        "force restore, and do not clear the fault while Rivian still shows schedule "
+        "control's window, because the release then sends the same list again. Recreate "
+        "the owner's schedules in the Rivian app, then press **Clear fault**; once Rivian "
+        "shows the same schedules as the saved copy, schedule control lets go of the "
+        "vehicle. If clearing is refused because the recreated schedules differ, use "
+        "**abandon ownership**: it writes nothing and keeps the saved copy archived."
     ),
     "write_rejected": (
-        "Rivian repeatedly refused the adapter's schedule writes, so none of them was "
+        "Rivian repeatedly refused schedule control's writes, so none of them was "
         "applied. Check that the vehicle is online and that its charging schedules can be "
         "edited in the Rivian app, then press **Clear fault**. If the fault comes back, "
-        "Rivian may have changed its schedule interface; report it with the adapter's "
-        "diagnostics."
+        "Rivian may have changed its schedule interface; report it with schedule "
+        "control's diagnostics."
     ),
 }
 
@@ -756,8 +756,8 @@ def _fault_message(title: str, fault: Fault) -> str:
     remedy = _FAULT_REMEDIES.get(fault.code)
     return "\n".join(
         [
-            f"The solar adapter for {title} stopped writing the vehicle's charging schedule "
-            f"because of a fault.",
+            f"Rivian schedule control for {title} stopped writing the vehicle's charging "
+            "schedule because of a fault.",
             "",
             f"Fault: {fault.code}",
             fault.message,
@@ -765,15 +765,15 @@ def _fault_message(title: str, fault: Fault) -> str:
             "",
             "What you can do:",
             "- Check the charging schedules in the Rivian app.",
-            "- **Clear fault** (button or action) resumes once Rivian holds a schedule the "
-            "adapter knows: its own window or the owner's schedules.",
+            "- **Clear fault** (button or action) resumes once Rivian holds a known schedule: "
+            "schedule control's own window or the owner's schedules.",
             "- **Restore owner schedule** (release) after the fault is cleared restores the "
             "owner's schedules and hands control back. A release requested during the fault "
             "runs once it is cleared.",
             "- The **force restore** action writes the saved owner schedules now, overwriting "
             "whatever Rivian holds, and checks them by reading them back. A copy archived by "
-            "abandon ownership is only written while Rivian holds a window this adapter "
-            "wrote, so it never replaces schedules the owner has set up since.",
+            "abandon ownership is only written while Rivian holds a window that schedule "
+            "control wrote, so it never replaces schedules the owner has set up since.",
             "- The **abandon ownership** action stops controlling the vehicle without writing "
             "anything; the saved owner schedules are archived and listed in a notification.",
         ]
@@ -799,11 +799,11 @@ def format_schedules(schedules: list[dict[str, Any]]) -> list[str]:
 def describe_schedules(result: dict[str, Any]) -> str:
     """Format a provider read for a notification; it never has coordinates."""
     count = result["count"]
-    writer = "this adapter" if result["written_by_schedule_control"] else "not this adapter"
+    written = "written" if result["written_by_schedule_control"] else "not written"
     return "\n".join(
         [
             f"Rivian reports {count} charging schedule{'' if count == 1 else 's'} "
-            f"(fingerprint {result['fingerprint']}, written by {writer}).",
+            f"(fingerprint {result['fingerprint']}, {written} by Rivian schedule control).",
             *format_schedules(result["schedules"]),
         ]
     )

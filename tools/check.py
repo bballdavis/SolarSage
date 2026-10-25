@@ -5,11 +5,11 @@
 For every mapped input it checks that the entity exists, is available, has the expected unit
 and a plausible value, and that its integration is alive. It also checks the Sol-Ark sign
 conventions against the last 24 h of 5-min statistics, the Solcast detailedForecast and its
-last poll, the free-hours Schedule helper, the Tesla Fleet entities, the Rivian adapter's
-entities and control state, which car the Wall Connector sees, and, once the planner is
-installed, its heartbeat and shadow mode and whether the adapter's controller options point
-at the planner. It prints a table and exits 1 when anything FAILs (also on WARN with
---strict), 2 when it cannot connect.
+last poll, the free-hours Schedule helper, the Tesla Fleet entities, Rivian schedule
+control's entities and control state, which car the Wall Connector sees, and, once the
+planner is installed, its heartbeat and shadow mode and whether the schedule control's
+controller options point at the planner. It prints a table and exits 1 when anything FAILs
+(also on WARN with --strict), 2 when it cannot connect.
 
 Freshness: an unchanged value keeps an old ``last_updated`` / ``last_reported`` timestamp,
 so no single value is called stale for its age. A value is stale only when it is unavailable
@@ -100,13 +100,13 @@ CAR_EXPECT = {
     "current": Expect("number", "A", 0, 80),
     "control_state": Expect("sensor"),
     "charger_status": Expect("sensor"),
-    "charger_state": Expect("sensor", required=False),  # Rivian: for the adapter's option
+    "charger_state": Expect("sensor", required=False),  # Rivian: for schedule control's option
     "lease_renewal": Expect("switch", required=False),
     "restore_button": Expect("button", required=False),
     "read_schedules_button": Expect("button", required=False),
 }
 PLATFORMS = {"tesla": "tesla_fleet", "rivian_schedule_control": "rivian_schedule_control"}
-ADAPTER_KEYS = ("switch", "current", "control_state", "charger_status")
+SCHEDULE_CONTROL_KEYS = ("switch", "current", "control_state", "charger_status")
 
 
 def parse_time(v: Any) -> datetime | None:
@@ -511,7 +511,7 @@ async def car_rows(
         for key, exp in CAR_EXPECT.items():
             eid = car.get(key)
             if not eid:
-                if kind == "rivian" and key in ADAPTER_KEYS:
+                if kind == "rivian" and key in SCHEDULE_CONTROL_KEYS:
                     rows.append(Row(FAIL, f"{car_id}.{key}", "", "", "not mapped"))
                 continue
             if kind == "tesla" and key in ("control_state", "charger_status"):
@@ -520,7 +520,7 @@ async def car_rows(
         if kind == "tesla":
             rows += await tesla_rows(client, car_id, car, states)
         elif kind == "rivian":
-            rows += await adapter_rows(client, car_id, car, states)
+            rows += await schedule_control_rows(client, car_id, car, states)
             rows += controller_rows(cfg, car_id, car, states)
     return rows
 
@@ -594,7 +594,7 @@ async def tesla_rows(
     return rows
 
 
-async def adapter_rows(
+async def schedule_control_rows(
     client: HassClient, car_id: str, car: Mapping[str, str], states: Mapping[str, Any]
 ) -> list[Row]:
     rows = []
@@ -605,11 +605,22 @@ async def adapter_rows(
     state = cs.get("state")
     platform = await _platform(client, cs["entity_id"])
     if platform and platform != PLATFORMS["rivian_schedule_control"]:
-        rows.append(Row(WARN, f"{car_id} adapter", cs["entity_id"], platform, "not the adapter"))
-    status, detail = OK, "the adapter is running"
+        rows.append(
+            Row(
+                WARN,
+                f"{car_id} schedule control",
+                cs["entity_id"],
+                platform,
+                "this comes from another integration, not rivian_schedule_control",
+            )
+        )
+    status, detail = OK, "the schedule control is running"
     if state == "fault":
         status = FAIL
-        detail = f"fault {a.get('fault_code')}: {a.get('fault_message')}; see the adapter guide"
+        detail = (
+            f"fault {a.get('fault_code')}: {a.get('fault_message')}; "
+            "see docs/RIVIAN_SCHEDULE_CONTROL.md"
+        )
     elif state == "handed_back":
         status, detail = WARN, "handed back to the owner until unplug; requests are ignored"
     elif a.get("dry_run"):
@@ -647,9 +658,9 @@ def _known(state: Mapping[str, Any] | None) -> str | None:
 def controller_rows(
     cfg: Config, car_id: str, car: Mapping[str, str], states: Mapping[str, Any]
 ) -> list[Row]:
-    """Whether the adapter's controller options point at the planner, as the adapter itself
-    reads them (its control state's ``observation``): the liveness option at the heartbeat,
-    the charging option at this car's charging-wanted sensor."""
+    """Whether Rivian schedule control's controller options point at the planner, as the
+    schedule control itself reads them (its control state's ``observation``): the liveness
+    option at the heartbeat, the charging option at this car's charging-wanted sensor."""
     cs = states.get(car.get("control_state") or "")
     if not cs or cs.get("state") in UNAVAILABLE:
         return []
@@ -663,7 +674,7 @@ def controller_rows(
                 f"{car_id} controller liveness",
                 "",
                 "planner not installed",
-                "map the adapter's controller options once the planner is installed",
+                "map the schedule control's controller options once the planner is installed",
             )
         ]
     rows = []
@@ -676,7 +687,7 @@ def controller_rows(
                 f"{car_id} controller liveness",
                 hb_id,
                 "not mapped",
-                f"set the adapter's controller_liveness_entity to {hb_id}",
+                f"set the schedule control's controller_liveness_entity to {hb_id}",
             )
         )
     elif alive and beat is None:
@@ -686,7 +697,7 @@ def controller_rows(
                 f"{car_id} controller liveness",
                 hb_id,
                 "mapped elsewhere",
-                f"the adapter sees its controller up while {hb_id} is down",
+                f"the schedule control sees its controller up while {hb_id} is down",
             )
         )
     elif alive:
@@ -698,7 +709,7 @@ def controller_rows(
                 f"{car_id} controller liveness",
                 hb_id,
                 "mapped elsewhere",
-                f"the adapter sees its controller down while {hb_id} is {beat}",
+                f"the schedule control sees its controller down while {hb_id} is {beat}",
             )
         )
     else:
@@ -708,8 +719,8 @@ def controller_rows(
                 f"{car_id} controller liveness",
                 hb_id,
                 "down",
-                "the planner is off or cannot plan (see its reason sensor): the adapter "
-                "starts and renews nothing, and parks the window after 3 minutes",
+                "the planner is off or cannot plan (see its reason sensor): the schedule "
+                "control starts and renews nothing, and parks the window after 3 minutes",
             )
         )
     wanted_id = car.get("charging_wanted") or ""
@@ -732,7 +743,7 @@ def controller_rows(
                 f"{car_id} controller charging",
                 wanted_id,
                 "not mapped",
-                f"set the adapter's controller_charging_entity to {wanted_id}",
+                f"set the schedule control's controller_charging_entity to {wanted_id}",
             )
         )
     elif seen != (wanted == "on"):
@@ -742,7 +753,8 @@ def controller_rows(
                 f"{car_id} controller charging",
                 wanted_id,
                 "mapped elsewhere",
-                f"the adapter reads {'on' if seen else 'off'} while {wanted_id} is {wanted}",
+                f"the schedule control reads {'on' if seen else 'off'} "
+                f"while {wanted_id} is {wanted}",
             )
         )
     else:
@@ -867,7 +879,7 @@ def wall_rows(cfg: Config, states: Mapping[str, Any]) -> list[Row]:
                     f"{car_id} charger status",
                     cs["entity_id"],
                     "a",
-                    "the adapter does not see the car as plugged in at home",
+                    "the schedule control does not see the car as plugged in at home",
                 )
             )
     return rows

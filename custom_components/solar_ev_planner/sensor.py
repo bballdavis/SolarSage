@@ -1,7 +1,7 @@
 """Sensors: what the planner decided and why, the battery outlook, the forecast correction,
 each car's planned current and energy outlook, and the heartbeat.
 
-The heartbeat is the Rivian schedule control's ``controller_liveness_entity``: its state is
+The heartbeat is Rivian schedule control's ``controller_liveness_entity``: its state is
 ``active`` (commanding) or ``shadow`` while the planner is on and its last decision is recent,
 and it is unavailable while the planner is off, cannot decide (missing site readings, an
 unreadable tariff, an error) or has not decided for ``HEARTBEAT_TIMEOUT``. It re-checks itself
@@ -269,7 +269,7 @@ class CarOnChargerSensor(DataSensor):
 
 
 class HeartbeatSensor(DataSensor):
-    """The planner's liveness for the Rivian adapter (see the module docstring)."""
+    """The planner's liveness for Rivian schedule control (see the module docstring)."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = ["active", "shadow"]

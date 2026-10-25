@@ -102,7 +102,7 @@ ENTITY_SELECTORS: dict[str, EntitySelector] = {
     # such as the planner's heartbeat.
     CONF_LIVENESS_ENTITY: EntitySelector(EntitySelectorConfig()),
     # On while the controller wants this vehicle charging. A binary sensor only:
-    # the adapter's own charging switch must never confirm its own request.
+    # schedule control's own charging switch must never confirm its own request.
     CONF_CHARGING_ENTITY: EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
     CONF_OVERRIDE_ENTITY: EntitySelector(EntitySelectorConfig(domain=["input_select", "select"])),
 }
@@ -165,7 +165,7 @@ def _vehicle_label(vehicle: Mapping[str, Any]) -> str:
     return f"{name} ({model})" if model and model != name else name
 
 
-class RivianSolarAdapterConfigFlow(ConfigFlow, domain=DOMAIN):
+class RivianScheduleControlConfigFlow(ConfigFlow, domain=DOMAIN):
     """Sign in to Rivian, pick a vehicle and map the Home Assistant entities."""
 
     VERSION = ENTRY_VERSION
@@ -180,9 +180,9 @@ class RivianSolarAdapterConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> RivianSolarAdapterOptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> RivianScheduleControlOptionsFlow:
         """Return the options flow."""
-        return RivianSolarAdapterOptionsFlow()
+        return RivianScheduleControlOptionsFlow()
 
     # Sign in -------------------------------------------------------------
 
@@ -327,7 +327,7 @@ class RivianSolarAdapterConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_vehicle(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Pick the vehicle this adapter controls."""
+        """Pick the vehicle to control."""
         if user_input is not None:
             self._vehicle_id = user_input[CONF_VEHICLE_ID]
             await self.async_set_unique_id(self._vehicle_id)
@@ -365,7 +365,7 @@ class RivianSolarAdapterConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="entities", data_schema=ENTITIES_SCHEMA)
 
 
-class RivianSolarAdapterOptionsFlow(OptionsFlowWithReload):
+class RivianScheduleControlOptionsFlow(OptionsFlowWithReload):
     """Change the mapped entities and the tuning; saving reloads the entry."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

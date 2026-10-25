@@ -2,7 +2,7 @@
 
 Everything is made up: the owner's entity IDs (``core.entities``) with synthetic values, a
 recorder with imported statistics, a Schedule helper for the free hours, and fake services
-standing in for Tesla Fleet and the Rivian schedule control. Nothing talks to a real system.
+standing in for Tesla Fleet and Rivian schedule control. Nothing talks to a real system.
 
 The Home Assistant tests request ``planner_hass`` (recorder plus custom integrations); the
 core's unit tests in ``core/`` need neither.
@@ -223,7 +223,7 @@ def set_rivian(
     desired: bool | None = None,
     requested: float = 0,
 ) -> None:
-    """The Rivian's telemetry (upstream integration) and the charge adapter's entities."""
+    """The Rivian's telemetry (upstream integration) and Rivian schedule control's entities."""
     hass.states.async_set(RIV["soc"], str(soc), {"unit_of_measurement": "%"})
     hass.states.async_set(RIV["limit"], str(limit), {"unit_of_measurement": "%"})
     hass.states.async_set(RIV["plugged"], plugged)
@@ -258,14 +258,15 @@ def set_tesla(
 
 
 class FakeCars:
-    """Stand-ins for Tesla Fleet's and the Rivian adapter's services.
+    """Stand-ins for Tesla Fleet's and Rivian schedule control's services.
 
     ``install`` (after the planner has loaded the switch and number platforms) takes over
     ``switch.turn_on``, ``switch.turn_off`` and ``number.set_value``. A call for a real entity
     (the planner's own settings) goes to that entity. A call for a car's entity (a plain
     state here) is recorded, and the state updated as the real integration would: the switch
-    turns on or off, the number shows the value; the adapter's control state also shows the
-    request (a current set while no request stands starts charging, as the adapter does).
+    turns on or off, the number shows the value; the schedule control's control state also
+    shows the request (a current set while no request stands starts charging, as the schedule
+    control does).
     """
 
     def __init__(self, hass: HomeAssistant) -> None:
@@ -302,12 +303,14 @@ class FakeCars:
         if call.domain == "switch":
             on = call.service == "turn_on"
             self.hass.states.async_set(entity_id, "on" if on else "off", attrs)
-            self._adapter(entity_id, desired=on)
+            self._update_schedule_control(entity_id, desired=on)
         else:
             self.hass.states.async_set(entity_id, str(value), attrs)
-            self._adapter(entity_id, amps=value)
+            self._update_schedule_control(entity_id, amps=value)
 
-    def _adapter(self, entity_id: str, desired: bool | None = None, amps: Any = None) -> None:
+    def _update_schedule_control(
+        self, entity_id: str, desired: bool | None = None, amps: Any = None
+    ) -> None:
         if entity_id not in (RIV["switch"], RIV["current"]):
             return
         state = self.hass.states.get(RIV["control_state"])
