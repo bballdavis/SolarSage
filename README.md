@@ -15,21 +15,32 @@ In short:
 
 | Path | What it is |
 | --- | --- |
-| [`docs/PLAN.md`](docs/PLAN.md) | The working plan |
+| [`docs/PLAN.md`](docs/PLAN.md) | The working plan: decisions, phases, open items, information needed |
+| [`docs/PLANNER.md`](docs/PLANNER.md) | Guide to the planner: install, configure, entities, settings, shadow mode, pointing the Rivian adapter at it |
+| [`docs/PLANNER_DESIGN.md`](docs/PLANNER_DESIGN.md) | How the planner decides, and how it compared in simulation |
+| [`docs/TESTING.md`](docs/TESTING.md) | The step-by-step path to test with real data and real connections (plan phases 1–6) |
 | [`docs/RIVIAN_CHARGE_ADAPTER.md`](docs/RIVIAN_CHARGE_ADAPTER.md) | Guide to the Rivian charge adapter: how it works, install, entities, the attended trial, faults |
+| [`custom_components/solar_ev_planner/`](custom_components/solar_ev_planner/) | The Solar EV planner (HA integration; copy it into Home Assistant) |
 | [`custom_components/rivian_solar_adapter/`](custom_components/rivian_solar_adapter/) | The Rivian charge adapter (HA integration, installable through HACS) |
-| [`tests/`](tests/) | The adapter's tests |
+| [`tools/`](tools/README.md) | Real-data tools, run from a computer: a read-only check, snapshots, a replay of the planner, and the attended car tests |
+| [`tests/`](tests/) | Tests of the adapter (`tests/`), the planner (`tests/planner/`) and the tools (`tests/tools/`), against fakes only |
 
-The planner integration and the dashboard are next ([plan phases](docs/PLAN.md#phases)). Earlier designs, research notes and prototype snapshots are in git history.
+Earlier designs, research notes and prototype snapshots are in git history.
 
-Nothing here has been run against the real cars, charger or Home Assistant instance yet. The adapter installs in dry run and writes nothing until dry run is turned off.
+**Nothing here has been run against the real cars, charger or Home Assistant instance yet.** The planner installs in shadow mode and sends nothing until shadow mode is turned off; the adapter installs in dry run and writes nothing until dry run is turned off. [TESTING.md](docs/TESTING.md) is the way in.
+
+## Installing
+
+HACS installs one integration per repository: from this one, the Rivian adapter ([`hacs.json`](hacs.json)). The planner is copied into `/config/custom_components/` by hand; [PLANNER.md](docs/PLANNER.md#install) gives the commands, and the same copy works for the adapter.
 
 ## Checks
 
 There is no CI yet. Before committing, run these locally in a Python 3.14 environment with `pytest-homeassistant-custom-component` and `rivian-python-client` installed:
 
 ```sh
-ruff check custom_components tests
-ruff format --check custom_components tests
+ruff check custom_components tests tools
+ruff format --check custom_components tests tools
 python -m pytest tests -q
 ```
+
+The tests never reach a real system: Home Assistant's test plugin allows only local connections, and the cars, Rivian's API and Home Assistant itself (for the tools) are fakes.
