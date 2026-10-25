@@ -12,12 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 import pytest
 
-from custom_components.solar_ev_planner.const import (
-    CONF_BATTERY_FREE_HOURS,
-    DEFAULT_SITE_OPTIONS,
-    LEGACY_BATTERY_HOLDS,
-    MODE_NO_DATA,
-)
+from custom_components.solar_ev_planner.const import MODE_NO_DATA
 from custom_components.solar_ev_planner.history import statistics_during_period
 
 from .conftest import (
@@ -90,26 +85,23 @@ async def test_run_reads_history_forecast_and_tariff(site: HomeAssistant) -> Non
     assert hass.states.get("sensor.r1s_planner_energy_paid") is not None
 
 
-async def test_free_hours_and_the_night_window(
+async def test_free_hours_charge_at_the_cars_maximum(
     site: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:
     hass = site
     set_rivian(hass, plugged="off")
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA))
     assert coordinator.data.mode == "empty"
-    # 20:30: free hours, before the 22:00 night window: a car plugged in now waits
+    # 20:30, half an hour into the free hours: a car plugged in now charges at its maximum
     await cycle(hass, coordinator, freezer, minutes=8 * 60 + 29)
     set_site(hass, pv_w=0, grid_w=900, battery_w=0)
     set_rivian(hass, soc=60)
     await cycle(hass, coordinator, freezer)
-    assert coordinator.data.mode == "wait"
-    assert hass.states.get("sensor.r1s_planner_planned_current").state == "0"
-    nxt = hass.states.get("sensor.solar_ev_planner_next_change")
-    assert dt_util.as_local(dt_util.parse_datetime(nxt.state)).hour == 22
-    # 22:30: night charging at the car's maximum
-    await cycle(hass, coordinator, freezer, minutes=120)
     assert coordinator.data.mode == "night"
+    assert hass.states.get("sensor.solar_ev_planner_mode").state == "night"
     assert hass.states.get("sensor.r1s_planner_planned_current").state == "48"
+    nxt = hass.states.get("sensor.solar_ev_planner_next_change")
+    assert nxt.attributes["amps"] == 0  # at the limit, before the free hours end
 
 
 async def test_missing_site_readings_mean_no_plan(
@@ -189,24 +181,3 @@ async def test_new_day_records_yesterdays_solar(
     await cycle(hass, coordinator, freezer)
     assert [d.day for d in coordinator.pv_days] == [yesterday]
     assert coordinator.pv_days[0].forecast_kwh > 30
-
-
-@pytest.mark.parametrize(("holds", "mode"), [(True, "hold"), (False, "normal")])
-async def test_an_entry_from_1_1_keeps_its_battery_behaviour(
-    site: HomeAssistant, holds: bool, mode: str
-) -> None:
-    old = {k: v for k, v in OPTIONS.items() if k != CONF_BATTERY_FREE_HOURS}
-    entry = make_entry(RIVIAN, options=old | {LEGACY_BATTERY_HOLDS: holds}, minor_version=1)
-    coordinator = await setup_entry(site, entry)
-    assert (entry.version, entry.minor_version) == (1, 2)
-    assert LEGACY_BATTERY_HOLDS not in entry.options
-    assert entry.options[CONF_BATTERY_FREE_HOURS] == mode
-    assert coordinator.options[CONF_BATTERY_FREE_HOURS] == mode
-
-
-async def test_new_entries_refill_the_battery_in_free_hours(site: HomeAssistant) -> None:
-    assert DEFAULT_SITE_OPTIONS[CONF_BATTERY_FREE_HOURS] == "refill"
-    entry = make_entry(RIVIAN, options=dict(OPTIONS), minor_version=1)
-    await setup_entry(site, entry)
-    assert entry.minor_version == 2
-    assert entry.options[CONF_BATTERY_FREE_HOURS] == "refill"

@@ -5,10 +5,9 @@
     net < 0: the battery discharges min(-net, max discharge, energy above the reserve), the
              rest is imported. Outside free hours, ANY car draw is served by the battery
              before the grid.
-    free hours (BatterySpec.free_hours): with "refill" the battery charges at its full rate
-             from the sun and then the grid until it reaches ``refill_to_pct`` (Sol-Ark
-             time-of-use slot with grid charge), so tomorrow starts full whatever today
-             took; with "hold" it does not discharge at all; with "normal" it runs as by day.
+    free hours: the Sol-Ark's own settings charge the battery from the grid; the model fills
+             it at its full rate (the sun first) until it is full and never discharges it, so
+             the next paid hours start full whatever the day took.
 
 The car in the model draws a steady ``p_kw`` while it is in its window and still needs energy:
 during the commitment period whatever the sun gives, after it only the solar surplus (the
@@ -32,12 +31,11 @@ class Step:
     dt_h: float
     pv: float  # kW
     house: float  # kW
-    hold: bool  # the battery does not discharge (free hours, inverter set to hold or refill)
     paid: bool  # import costs money
     car_on: bool  # inside the car's daytime window
     commit: bool  # inside the commitment period: the car holds its power even from the battery
     price: float = 0.0  # import price in the step ($/kWh)
-    refill: bool = False  # the battery charges from the grid (free hours, inverter set to refill)
+    refill: bool = False  # free hours: the Sol-Ark charges the battery from the grid
 
 
 @dataclass
@@ -53,14 +51,11 @@ def battery_kw(s: Step, net: float, e: float, bat: BatterySpec) -> float:
     """The battery's power in the step (+ charging) at level ``e`` kWh, with ``net`` = pv -
     house - car; the grid supplies ``battery_kw - net`` (+ import)."""
     dt, eff = s.dt_h, bat.efficiency
-    if s.refill:
-        room = max(0.0, bat.kwh(bat.refill_to_pct) - e) / (eff * dt)
-        if room >= max(net, 0.0):  # below the refill level: the full rate, sun then grid
-            return min(bat.max_charge_kw, room)
+    room = max(0.0, bat.capacity_kwh - e) / (eff * dt)
+    if s.refill:  # the full rate until full, the sun first and the grid for the rest
+        return min(bat.max_charge_kw, room)
     if net >= 0:
-        return min(net, bat.max_charge_kw, max(0.0, bat.capacity_kwh - e) / (eff * dt))
-    if s.hold:
-        return 0.0
+        return min(net, bat.max_charge_kw, room)
     return -min(-net, bat.max_discharge_kw, max(0.0, e - bat.kwh(bat.reserve_pct)) * eff / dt)
 
 
@@ -88,7 +83,7 @@ def simulate(
             car = min(p_kw, (need_kwh - got) / dt)
             if not s.commit:
                 room = max(0.0, s.pv - s.house)
-                if held and not s.hold:
+                if held and not s.refill:
                     spare = (e - bat.kwh(bat.reserve_pct)) * bat.efficiency / dt
                     room += max(0.0, min(bat.max_discharge_kw, spare))
                 car = min(car, room)

@@ -80,7 +80,7 @@ class DataSensor(PlannerEntity, SensorEntity):
 
 
 class ModeSensor(DataSensor):
-    """off, empty, stale, full, day, wait, night, or no_data when it could not decide."""
+    """off, empty, stale, full, day, night, or no_data when it could not decide."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = MODES

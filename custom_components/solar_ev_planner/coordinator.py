@@ -41,10 +41,8 @@ from .const import (
     CAUTION_OPTIONS,
     CONF_BATTERY_CAPACITY,
     CONF_BATTERY_CAPACITY_KWH,
-    CONF_BATTERY_FREE_HOURS,
     CONF_BATTERY_MAX_CHARGE_KW,
     CONF_BATTERY_MAX_DISCHARGE_KW,
-    CONF_BATTERY_REFILL_TO_PCT,
     CONF_BATTERY_RESERVE_PCT,
     CONF_BATTERY_SOC,
     CONF_CAPACITY_KWH,
@@ -81,7 +79,6 @@ from .const import (
     HISTORY_REFRESH,
     KIND_TESLA,
     MODE_NO_DATA,
-    NIGHT_CURRENT_MAX,
     OVERRIDE_AUTO,
     PENDING_AFTER_SEND,
     PLAN_DAYS,
@@ -97,9 +94,6 @@ from .const import (
     S_FLOOR,
     S_MAX_STEP,
     S_MIN_CHANGE,
-    S_NIGHT_CURRENT,
-    S_NIGHT_END,
-    S_NIGHT_START,
     S_OVERRIDE,
     S_PAID_TOLERANCE,
     S_PRICE,
@@ -422,14 +416,10 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
     def core_settings(self) -> Settings:
         """The owner settings as the core takes them."""
         s = self.settings
-        night = int(s[S_NIGHT_CURRENT])
         caution = CAUTION_OPTIONS.get(str(s[S_CAUTION]), "conservative")
         return Settings(
             enabled=bool(s[S_ENABLED]),
             shadow=bool(s[S_SHADOW]),
-            night_start=str(s[S_NIGHT_START]),
-            night_end=str(s[S_NIGHT_END]),
-            night_current_a=None if night >= NIGHT_CURRENT_MAX else night,
             daytime_solar=bool(s[S_DAYTIME_SOLAR]),
             caution=caution,
             floor_pct=float(s[S_FLOOR]),
@@ -575,8 +565,6 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
                     max_charge_kw=float(o[CONF_BATTERY_MAX_CHARGE_KW]),
                     max_discharge_kw=float(o[CONF_BATTERY_MAX_DISCHARGE_KW]),
                     reserve_pct=float(o[CONF_BATTERY_RESERVE_PCT]),
-                    free_hours=str(o[CONF_BATTERY_FREE_HOURS]),
-                    refill_to_pct=float(o[CONF_BATTERY_REFILL_TO_PCT]),
                 ),
                 tariff=tariff,
                 forecast=slots,
@@ -868,7 +856,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         car, rt = self.cars[car_id], self.runtime[car_id]
         if command is not None and command.amps is not None:
             await self.executor.async_apply(car, rt, command.amps, now)
-        elif decision.mode in ("day", "wait", "night"):
+        elif decision.mode in ("day", "night"):
             await self.executor.async_reconcile(car, rt, now)
 
     async def _async_restore_at_unplug(self) -> None:

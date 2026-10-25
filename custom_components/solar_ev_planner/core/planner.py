@@ -14,18 +14,21 @@ for one steady car power:
                still wants energy: the solar the battery cannot store.
     P_fill     with a plan: the lowest steady power that reaches its target by the end of the
                solar window on the pessimistic day.
+    P_spread   with free hours ahead: the Sol-Ark refills the battery from the grid in them, so
+               what it would still hold when they start is the car's. The highest steady power
+               held all window (not just ``commit_h``) that keeps the floor and the wanted
+               level on the pessimistic day.
 
-    P = min(P_cap, max(P_noexport, P_fill, the car's minimum current))
+    P = min(P_cap, max(P_noexport, P_fill, P_spread, the car's minimum current))
 
 So the floor is a limit on the predicted trajectory, not a trigger: when the predicted lowest
 point stays above it, the battery drains now and the current stays put. The current moves
 toward P slowly (a deadband, twice as wide for decreases the battery rules do not require; at
 most one change per interval and ``max_step_a`` per change).
 
-NIGHT / WAIT (free hours). Inside the night window the car charges at the night current to its
-plan target or limit. Before the window it waits, unless the window alone cannot deliver what
-is needed (then it starts as late as possible) or it was already charging when free hours
-began (night charging finishes it).
+NIGHT (free hours). The car charges at its full current to its limit, from the moment the free
+hours begin; the Sol-Ark's own settings refill the home battery meanwhile, so the model starts
+the next paid hours with it full.
 
 PLANS. Sun and battery (P_fill), then free hours, then full current in paid hours: now, when
 the deadline falls inside the open solar window (the sun can refill the battery), otherwise in
@@ -40,7 +43,7 @@ an unplugged, full or stale car is never commanded.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 import math
 from statistics import NormalDist
 from typing import Any
@@ -48,10 +51,8 @@ from typing import Any
 from .battery import Path, Step, lowest, simulate, simulate_profile
 from .house import HouseModel, HouseParams
 from .pv import PvModel, PvParams
-from .tariff import minutes, next_flip
+from .tariff import next_flip
 from .types import (
-    FREE_NORMAL,
-    FREE_REFILL,
     SLOT,
     CarCommand,
     CarOutlook,
@@ -85,17 +86,6 @@ class Params:
     min_current_spill: float = 0.0  # run at the minimum current only with this share of it spare
     pv: PvParams = field(default_factory=PvParams)
     house: HouseParams = field(default_factory=HouseParams)
-
-
-def hm(s: str) -> time:
-    m = minutes(s) % 1440
-    return time(m // 60, m % 60)
-
-
-def in_window(t: datetime, start: str, end: str) -> bool:
-    """[start, end) local time; wraps past midnight when end <= start."""
-    a, b, x = hm(start), hm(end), t.time()
-    return a <= x < b if a < b else (x >= a or x < b)
 
 
 def fmt_t(t: datetime | None, now: datetime) -> str:
@@ -157,7 +147,6 @@ class Planner:
     def _reset_session(self, key: tuple[str, datetime | None] | None) -> None:
         self.session = key
         self.mode = ""
-        self.night_on = False
         self.budget: Budget | None = None
         self.solved_key: tuple | None = None
         self.import_since: datetime | None = None
@@ -167,7 +156,7 @@ class Planner:
         self.shadow_a: int | None = None  # the virtual car's current in shadow mode
 
     def state_dict(self) -> dict[str, Any]:
-        """JSON-serialisable memory (session, rate limiter, night and plan latches)."""
+        """JSON-serialisable memory (session, rate limiter, plan latch)."""
 
         def iso(t: datetime | None) -> str | None:
             return t.isoformat() if t else None
@@ -175,7 +164,6 @@ class Planner:
         return {
             "session": [self.session[0], iso(self.session[1])] if self.session else None,
             "mode": self.mode,
-            "night_on": self.night_on,
             "last_change": iso(self.last_change),
             "plan_on": iso(self.plan_on),
             "cap": [self.cap[0], iso(self.cap[1])] if self.cap else None,
@@ -189,7 +177,6 @@ class Planner:
         s = d.get("session")
         self._reset_session((s[0], dt(s[1])) if s else None)
         self.mode = d.get("mode", "")
-        self.night_on = bool(d.get("night_on", False))
         self.last_change = dt(d.get("last_change"))
         self.plan_on = dt(d.get("plan_on"))
         c = d.get("cap")
@@ -234,10 +221,9 @@ class Planner:
         safety = None
         if snap.tariff.is_free(now):
             amps, reason, dbg = self._night(snap, car)
-            dbg["exempt"] = True  # night charging is on/off at a fixed current
+            dbg["exempt"] = True  # free hours: full current at once
             mode = "night"
         else:
-            self.night_on = False
             amps, reason, dbg = self._day(snap, car)
             mode = "day"
             safety = dbg.pop("safety", None)
@@ -248,69 +234,24 @@ class Planner:
             self.last_change = now
         if s.shadow and amps_out is not None:
             self.shadow_a = amps_out
-        shown = "wait" if mode == "night" and amps == 0 else mode
-        return self._finish(snap, car, shown, amps_out, reason, dbg, safety, want)
+        return self._finish(snap, car, mode, amps_out, reason, dbg, safety, want)
 
     # ------------------------------------------------------------------ night (free hours)
 
-    def _night_a(self, car: CarState, snap: Snapshot) -> int:
-        a = self.settings.night_current_a or car.spec.max_a
-        return min(a, car.spec.max_a, snap.charger_max_a)
+    def _max_a(self, car: CarState, snap: Snapshot) -> int:
+        """The car's full current on this charger: what it gets in free hours."""
+        return min(car.spec.max_a, snap.charger_max_a)
 
     def _free_end(self, snap: Snapshot) -> datetime:
         lim = timedelta(hours=self.params.horizon_h)
         end = next_flip(snap.now, snap.tariff.is_free, lim)
         return end or snap.now + lim
 
-    def _window_hours(self, t0: datetime, t1: datetime) -> float:
-        s, hrs, t = self.settings, 0.0, t0
-        while t < t1:
-            if in_window(t, s.night_start, s.night_end):
-                hrs += min(5.0, (t1 - t).total_seconds() / 60.0) / 60.0
-            t += FIVE
-        return hrs
-
     def _night(self, snap: Snapshot, car: CarState) -> tuple[int, str, dict]:
-        s, now = self.settings, snap.now
-        a = self._night_a(car, snap)
-        lim = f"the {car.limit_pct:.0f}% limit"
-        win = f"{s.night_start}-{s.night_end}"
-        if self.night_on:
-            return a, f"Free hours: night charging at {a} A to {lim}.", {}
-        if in_window(now, s.night_start, s.night_end):
-            self.night_on = True
-            return a, f"Free hours, night window {win}: charging at {a} A to {lim}.", {}
-        if car.commanded_a > 0 and self.mode == "day":
-            self.night_on = True
-            return (
-                a,
-                f"Free hours began with the {car.spec.name} {car.need_kwh:.0f} kWh short; "
-                f"night charging finishes it at {a} A.",
-                {},
-            )
-        # latest start: can the night window (inside this free period, and before any plan
-        # deadline in it) still deliver what is needed?
-        end = self._free_end(snap)
-        need_by = [(car.need_kwh, end)]
-        for pl in car.plans:
-            if now < pl.deadline < end:
-                need_by.append((car.need_for(pl.target_pct), pl.deadline))
-        kw = a * snap.volts / 1000.0
-        for n, until in need_by:
-            if self._window_hours(now, until) * kw < n * 1.05 + 0.5:
-                self.night_on = True
-                return (
-                    a,
-                    f"Free hours: starting before the {s.night_start} night window, which alone "
-                    f"cannot add the {n:.0f} kWh needed by {fmt_t(until, now)}.",
-                    {},
-                )
-        return (
-            0,
-            f"Free hours: waiting for the {s.night_start} night window, which can add the "
-            f"{car.need_kwh:.0f} kWh to {lim}.",
-            {},
-        )
+        """Free hours: the car charges at its full current to its limit; the Sol-Ark's own
+        settings refill the home battery from the grid meanwhile."""
+        a = self._max_a(car, snap)
+        return a, f"Free hours: charging at {a} A to the {car.limit_pct:.0f}% limit.", {}
 
     # ------------------------------------------------------------------ day (paid hours)
 
@@ -341,7 +282,7 @@ class Planner:
             dbg["capped_from"] = a
             a = self.cap[0]
         if not s.daytime_solar:
-            return 0, "Daytime solar charging is off; waiting for the night window.", dbg
+            return 0, "Daytime solar charging is off; waiting for the free hours.", dbg
         conf = f"{s.caution_p():.0%}-confidence"
         if b.t_car_end is None or b.t_car_end <= now or not b.steps or not b.steps[0].car_on:
             return (
@@ -414,7 +355,6 @@ class Planner:
         s_now = pv.slot_at(now)
         if s_now is not None and s_now.p50 > 0.3:
             r_now = max(0.0, min(1.6, snap.pv_recent_kw / s_now.p50))
-        mode = snap.battery.free_hours  # what the battery does while import is free
         steps: list[Step] = []
         t, t_commit = now, now + timedelta(hours=self.params.commit_h)
         while t < now + lim:
@@ -436,12 +376,11 @@ class Planner:
                     STEP.total_seconds() / 3600.0,
                     pv_kw,
                     house.kw(mid, off_until) * qload,
-                    price <= 0.0 and mode != FREE_NORMAL,
                     price > 0,
                     t_car_end is not None and win_start <= t < t_car_end,
                     t < t_commit,
                     price,
-                    price <= 0.0 and mode == FREE_REFILL,
+                    price <= 0.0,
                 )
             )
             t += STEP
@@ -657,7 +596,7 @@ class Planner:
                 else:
                     paid.append((round(tar.import_price(t), 4), t, d))
                 t += STEP
-            short = need - e_sun - free_h * car.spec.kw(self._night_a(car, snap), snap.volts)
+            short = need - e_sun - free_h * car.spec.kw(self._max_a(car, snap), snap.volts)
             if short <= (-1.0 if self.plan_on == pl.deadline else 0.2):
                 continue
             p_room = max(0.5, car.spec.kw(car.spec.max_a, snap.volts) - b.p_kw)
@@ -876,16 +815,11 @@ class Planner:
             steps, steps0 = md.steps, md.steps0
             e0 = bat.kwh(snap.soc_pct)
             car_p = [0.0] * len(steps)
-            if car is not None and mode in ("night", "wait"):
-                kw = car.spec.kw(self._night_a(car, snap), snap.volts)
+            if car is not None and mode == "night":  # full current in the free hours
+                kw = car.spec.kw(self._max_a(car, snap), snap.volts)
                 left = car.need_kwh
-                charging = mode == "night" and (amps or car.commanded_a) > 0
                 for k, st in enumerate(steps):
-                    on = st.price <= 0.0 and (
-                        charging
-                        or in_window(st.t, self.settings.night_start, self.settings.night_end)
-                    )
-                    if on and left > 0:
+                    if st.refill and left > 0:
                         car_p[k] = min(kw, left / st.dt_h)
                         left -= car_p[k] * st.dt_h
             e_q = simulate_profile(steps, e0, car_p, bat)
@@ -909,8 +843,8 @@ class Planner:
         return tuple(out)
 
     def _free_capacity(self, snap: Snapshot, car: CarState, until: datetime | None) -> float:
-        """kWh the next free period can put into the car before ``until`` (the night window,
-        plus the rest of the free hours when the window is not enough, as _night does)."""
+        """kWh the next free period can put into the car before ``until`` (full current all
+        through it, as _night does)."""
         t0, t1 = self._cached("free", snap, lambda: self._next_free(snap))
         if t0 is None:
             return 0.0
@@ -918,9 +852,7 @@ class Planner:
             t1 = min(t1, until)
         if t1 <= t0:
             return 0.0
-        return (
-            (t1 - t0).total_seconds() / 3600.0 * car.spec.kw(self._night_a(car, snap), snap.volts)
-        )
+        return (t1 - t0).total_seconds() / 3600.0 * car.spec.kw(self._max_a(car, snap), snap.volts)
 
     def _next_free(self, snap: Snapshot) -> tuple[datetime | None, datetime | None]:
         """The next free period (now if free now): (start, end)."""
@@ -1015,7 +947,6 @@ class Planner:
             return PlannedChange(
                 at, want, "the planned current, after the minimum time between changes"
             )
-        night_a = self._night_a(car, snap)
         if mode == "day" and b is not None:
             for st, kw in zip(b.steps, b.path.car_kw, strict=False):
                 a = self._to_amps(kw, replace(car, commanded_a=cur), snap) if st.car_on else 0
@@ -1028,25 +959,14 @@ class Planner:
                         why = "the solar window ends"
                     return PlannedChange(max(now, st.t), a, why)
             if b.t_free is not None and car.need_kwh > 0.5:
-                t = b.t_free
-                while not in_window(t, s.night_start, s.night_end) and t < b.t_free + timedelta(
-                    hours=12
-                ):
-                    t += FIVE
-                return PlannedChange(t, night_a, "night charging in the free hours")
+                return PlannedChange(b.t_free, self._max_a(car, snap), "the free hours start")
             return None
-        if mode in ("night", "wait"):
-            if cur > 0:
-                hrs = car.need_kwh / car.spec.kw(cur, snap.volts)
-                t_done = now + timedelta(hours=hrs)
-                end = self._free_end(snap)
-                if t_done < end:
-                    return PlannedChange(t_done, 0, f"the {car.spec.name} reaches its limit")
-                return PlannedChange(end, 0, "the free hours end")
-            t = now
-            while not in_window(t, s.night_start, s.night_end) and t < now + timedelta(hours=24):
-                t += FIVE
-            return PlannedChange(t, night_a, "the night window starts")
+        if mode == "night" and cur > 0:
+            t_done = now + timedelta(hours=car.need_kwh / car.spec.kw(cur, snap.volts))
+            end = self._free_end(snap)
+            if t_done < end:
+                return PlannedChange(t_done, 0, f"the {car.spec.name} reaches its limit")
+            return PlannedChange(end, 0, "the free hours end")
         return None
 
 

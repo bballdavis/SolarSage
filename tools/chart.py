@@ -498,8 +498,7 @@ def render_html(result: Result) -> str:
     head = (
         f"{first:%a %d %b %Y %H:%M} to {last:%a %d %b %H:%M}, every {step_min} min. "
         f"Mode: {mode}. Caution {s.get('caution')}, floor {s.get('floor_pct')}%, "
-        f"wanted at free start {s.get('wanted_at_free_start_pct')}%, night window "
-        f"{s.get('night_start')}-{s.get('night_end')}, at most one change per "
+        f"wanted at free start {s.get('wanted_at_free_start_pct')}%, at most one change per "
         f"{s.get('min_change_min')} min of up to {s.get('max_step_a')} A."
     )
     parts = [

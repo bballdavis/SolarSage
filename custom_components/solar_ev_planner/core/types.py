@@ -38,10 +38,7 @@ class Settings:
 
     enabled: bool = True  # off: the planner leaves both cars alone
     shadow: bool = True  # plan and explain, but the integration sends nothing
-    night_start: str = "22:00"  # night charging window (inside the free hours)
-    night_end: str = "06:00"
-    night_current_a: int | None = None  # None = the car's maximum
-    daytime_solar: bool = True  # off: a car plugged in by day waits for the night window
+    daytime_solar: bool = True  # off: a car plugged in by day waits for the free hours
     caution: str | float = "conservative"  # a CAUTION_LEVELS label or a probability 0.5-0.999
     floor_pct: float = 30.0  # the PREDICTED battery must stay above this
     wanted_at_free_start_pct: float = 30.0  # battery wanted when free hours start (or sunset)
@@ -62,24 +59,16 @@ class Settings:
 # --------------------------------------------------------------------------- the site
 
 
-# What the inverter does with the home battery while grid import is free
-FREE_REFILL = "refill"  # charges it from the grid (Sol-Ark time-of-use slot with grid charge)
-FREE_HOLD = "hold"  # keeps its level: the house and the car run from the grid
-FREE_NORMAL = "normal"  # self-consumption as by day: it serves the house and the car
-FREE_HOURS_BATTERY = (FREE_REFILL, FREE_HOLD, FREE_NORMAL)
-
-
 @dataclass(frozen=True)
 class BatterySpec:
-    """The home battery and the inverter's dispatch rules (Sol-Ark self-consumption)."""
+    """The home battery and the inverter's dispatch rules (Sol-Ark self-consumption by day;
+    in free hours its own settings charge it from the grid to full)."""
 
     capacity_kwh: float = 31.0  # usable; sensor.sol_ark_battery_capacity_estimate
     max_charge_kw: float = 9.0  # AC side
     max_discharge_kw: float = 9.0
     efficiency: float = 0.92  # one way
     reserve_pct: float = 10.0  # the inverter stops discharging here
-    free_hours: str = FREE_REFILL  # FREE_REFILL, FREE_HOLD or FREE_NORMAL
-    refill_to_pct: float = 100.0  # where grid charging in free hours stops
 
     def kwh(self, pct: float) -> float:
         return self.capacity_kwh * pct / 100.0
@@ -271,7 +260,7 @@ class CarOutlook:
     target_pct: float
     by: datetime | None  # the plan deadline (None = no plan)
     solar_kwh: float  # expected from the sun / battery (within the floor rule) by day
-    free_kwh: float  # in the next free hours (night window first)
+    free_kwh: float  # in the next free hours, at full current
     paid_kwh: float  # through paid hours (a plan only)
     short_kwh: float  # not covered before the deadline
     summary: str  # "covered by sun", "about 7 kWh in free hours", "about 3 kWh paid", ...

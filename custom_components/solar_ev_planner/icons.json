@@ -9,9 +9,6 @@
       }
     },
     "number": {
-      "night_charging_current": {
-        "default": "mdi:current-ac"
-      },
       "battery_floor": {
         "default": "mdi:battery-arrow-down-outline"
       },
@@ -63,7 +60,6 @@
         "state": {
           "day": "mdi:solar-power-variant",
           "night": "mdi:weather-night",
-          "wait": "mdi:timer-sand",
           "off": "mdi:power-off",
           "no_data": "mdi:alert-circle-outline"
         }
@@ -129,12 +125,6 @@
       }
     },
     "time": {
-      "night_window_start": {
-        "default": "mdi:weather-sunset-down"
-      },
-      "night_window_end": {
-        "default": "mdi:weather-sunset-up"
-      },
       "plan_time": {
         "default": "mdi:clock-check-outline"
       }

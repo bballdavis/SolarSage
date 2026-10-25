@@ -128,12 +128,11 @@ async def test_changes_wait_for_the_minimum_interval(
     assert want is not None and want < first
     nxt = hass.states.get("sensor.solar_ev_planner_next_change")
     assert nxt.attributes["amps"] == want
-    # after the interval: a pause at once, a lower current by at most the largest change
+    # after the interval: a pause at once (the switch, never 0 A)
+    assert want == 0
     await cycle(hass, coordinator, freezer, minutes=11)
-    if want == 0:
-        assert fake_cars.calls == [("switch", "turn_off", RIV["switch"])]
-    else:
-        assert fake_cars.calls == [("number", "set_value", max(want, first - 2))]
+    assert fake_cars.calls == [("switch", "turn_off", RIV["switch"])]
+    assert hass.states.get("binary_sensor.r1s_planner_charging_wanted").state == "off"
 
 
 async def test_a_dropped_request_is_sent_again(
@@ -172,7 +171,7 @@ async def test_night_charging_at_the_cars_maximum(
     assert fake_cars.calls == [("number", "set_value", 48), ("switch", "turn_on", RIV["switch"])]
 
 
-async def test_waiting_for_the_night_window_pauses_the_rivian(
+async def test_free_hours_start_the_rivian_at_its_full_current(
     site: HomeAssistant, fake_cars: FakeCars, freezer: FrozenDateTimeFactory
 ) -> None:
     hass = site
@@ -183,10 +182,12 @@ async def test_waiting_for_the_night_window_pauses_the_rivian(
     await cycle(hass, coordinator, freezer, minutes=8 * 60 + 30)  # 20:30, free hours
     set_rivian(hass, soc=70)
     await cycle(hass, coordinator, freezer)
-    assert coordinator.data.mode == "wait"
-    # a pause is the switch, never 0 A
-    assert fake_cars.calls == [("switch", "turn_off", RIV["switch"])]
-    assert hass.states.get("binary_sensor.r1s_planner_charging_wanted").state == "off"
+    assert coordinator.data.mode == "night"
+    assert fake_cars.calls == [
+        ("number", "set_value", 48),
+        ("switch", "turn_on", RIV["switch"]),
+    ]
+    assert hass.states.get("binary_sensor.r1s_planner_charging_wanted").state == "on"
 
 
 # --------------------------------------------------------------------------- the Tesla

@@ -78,7 +78,7 @@ def test_battery_model() -> None:
 
     class Bat:  # the planner core's BatterySpec interface
         capacity_kwh, max_charge_kw, max_discharge_kw = 30.0, 9.0, 9.0
-        efficiency, reserve_pct, refill_to_pct = 1.0, 10.0, 100.0
+        efficiency, reserve_pct = 1.0, 10.0
 
         def kwh(self, pct):
             return self.capacity_kwh * pct / 100
@@ -87,22 +87,21 @@ def test_battery_model() -> None:
             return 100 * kwh / self.capacity_kwh
 
     bat = Bat()
-    soc, b, grid = battery_step(bat, 50, pv=6, house=1, car=2, hold=False, dt_h=1)
+    soc, b, grid = battery_step(bat, 50, pv=6, house=1, car=2, free=False, dt_h=1)
     assert (round(soc, 1), b, grid) == (60.0, 3, 0)  # surplus 3 kW charges the battery
-    soc, b, grid = battery_step(bat, 50, pv=0, house=1, car=11, hold=False, dt_h=1)
+    soc, b, grid = battery_step(bat, 50, pv=0, house=1, car=11, free=False, dt_h=1)
     assert (b, grid) == (-9, 3)  # 9 kW from the battery, the rest imported
-    soc, b, grid = battery_step(bat, 50, pv=0, house=1, car=11, hold=True, dt_h=1)
-    assert (soc, b, grid) == (50, 0, 12)  # free hours: the battery holds
-    soc, b, grid = battery_step(bat, 11, pv=0, house=2, car=0, hold=False, dt_h=1)
+    soc, b, grid = battery_step(bat, 11, pv=0, house=2, car=0, free=False, dt_h=1)
     assert round(soc, 6) == 10 and round(grid, 6) == 1.7  # only down to the reserve
-    soc, b, grid = battery_step(bat, 99, pv=10, house=0, car=0, hold=False, dt_h=1)
+    soc, b, grid = battery_step(bat, 99, pv=10, house=0, car=0, free=False, dt_h=1)
     assert soc == 100 and round(grid, 6) == -9.7  # full: the rest is exported
-    soc, b, grid = battery_step(bat, 50, pv=0, house=1, car=11, hold=True, dt_h=1, refill=True)
-    assert (soc, b, grid) == (80, 9, 21)  # free hours, refill: 9 kW into the battery from the grid
-    soc, b, grid = battery_step(bat, 95, pv=0, house=1, car=0, hold=True, dt_h=1, refill=True)
-    assert (soc, b, grid) == (100, 1.5, 2.5)  # only up to full
-    soc, b, grid = battery_step(bat, 100, pv=0, house=1, car=0, hold=True, dt_h=1, refill=True)
-    assert (soc, b, grid) == (100, 0, 1)  # full: it holds
+    # free hours: the Sol-Ark charges the battery from the grid at 9 kW, up to full
+    soc, b, grid = battery_step(bat, 50, pv=0, house=1, car=11, free=True, dt_h=1)
+    assert (soc, b, grid) == (80, 9, 21)
+    soc, b, grid = battery_step(bat, 95, pv=0, house=1, car=0, free=True, dt_h=1)
+    assert (soc, b, grid) == (100, 1.5, 2.5)
+    soc, b, grid = battery_step(bat, 100, pv=0, house=1, car=0, free=True, dt_h=1)
+    assert (soc, b, grid) == (100, 0, 1)  # full: it neither charges nor discharges
 
 
 async def test_recorded_issue_preferred(

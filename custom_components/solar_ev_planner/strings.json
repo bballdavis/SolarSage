@@ -19,9 +19,7 @@
           "battery_capacity_kwh": "Battery capacity",
           "battery_max_charge_kw": "Battery maximum charge power",
           "battery_max_discharge_kw": "Battery maximum discharge power",
-          "battery_reserve_pct": "Battery reserve",
-          "battery_in_free_hours": "Home battery during free hours",
-          "battery_refill_to_pct": "Refill level"
+          "battery_reserve_pct": "Battery reserve"
         },
         "data_description": {
           "pv_power": "Solar production, for example sensor.sol_ark_inverter_pv_power.",
@@ -38,9 +36,7 @@
           "battery_capacity_kwh": "Usable capacity when no capacity sensor is mapped or it is unavailable.",
           "battery_max_charge_kw": "AC-side limit of the inverter's battery charging.",
           "battery_max_discharge_kw": "AC-side limit of the inverter's battery discharging.",
-          "battery_reserve_pct": "The level at which the inverter stops discharging.",
-          "battery_in_free_hours": "What the inverter does with the battery while import is free. Refill: a Sol-Ark time-of-use slot with grid charge fills it, so each paid day starts full and the planner can use the battery down to the floor by day. Hold: it keeps its level and the house and car run from the grid. Normal: it serves the house and the car as by day.",
-          "battery_refill_to_pct": "With refill: the level the inverter charges to from the grid (the time-of-use slot's battery level)."
+          "battery_reserve_pct": "The level at which the inverter stops discharging."
         }
       },
       "charger": {
@@ -67,7 +63,7 @@
       },
       "tariff": {
         "title": "Forecast and free hours",
-        "description": "Prices, the night window and the other settings are entities of the planner. Add the cars and any extra price levels afterwards, from the planner's entry.",
+        "description": "Prices and the other settings are entities of the planner. Add the cars and any extra price levels afterwards, from the planner's entry.",
         "data": {
           "forecast_today": "Solcast forecast today",
           "forecast_tomorrow": "Solcast forecast tomorrow",
@@ -109,9 +105,7 @@
           "battery_capacity_kwh": "Battery capacity",
           "battery_max_charge_kw": "Battery maximum charge power",
           "battery_max_discharge_kw": "Battery maximum discharge power",
-          "battery_reserve_pct": "Battery reserve",
-          "battery_in_free_hours": "Home battery during free hours",
-          "battery_refill_to_pct": "Refill level"
+          "battery_reserve_pct": "Battery reserve"
         },
         "data_description": {
           "pv_power": "Solar production, for example sensor.sol_ark_inverter_pv_power.",
@@ -128,9 +122,7 @@
           "battery_capacity_kwh": "Usable capacity when no capacity sensor is mapped or it is unavailable.",
           "battery_max_charge_kw": "AC-side limit of the inverter's battery charging.",
           "battery_max_discharge_kw": "AC-side limit of the inverter's battery discharging.",
-          "battery_reserve_pct": "The level at which the inverter stops discharging.",
-          "battery_in_free_hours": "What the inverter does with the battery while import is free. Refill: a Sol-Ark time-of-use slot with grid charge fills it, so each paid day starts full and the planner can use the battery down to the floor by day. Hold: it keeps its level and the house and car run from the grid. Normal: it serves the house and the car as by day.",
-          "battery_refill_to_pct": "With refill: the level the inverter charges to from the grid (the time-of-use slot's battery level)."
+          "battery_reserve_pct": "The level at which the inverter stops discharging."
         }
       },
       "charger": {
@@ -307,13 +299,6 @@
     }
   },
   "selector": {
-    "battery_in_free_hours": {
-      "options": {
-        "refill": "Refill: charges from the grid",
-        "hold": "Hold: keeps its level",
-        "normal": "Normal: serves the house and car"
-      }
-    },
     "power_unit": {
       "options": {
         "W": "W",
@@ -334,9 +319,6 @@
       }
     },
     "number": {
-      "night_charging_current": {
-        "name": "Night charging current"
-      },
       "battery_floor": {
         "name": "Battery floor"
       },
@@ -409,8 +391,7 @@
           "stale": "Car data stale",
           "full": "Car at its limit",
           "day": "Solar charging",
-          "wait": "Waiting",
-          "night": "Night charging",
+          "night": "Free hours",
           "no_data": "No data"
         }
       },
@@ -472,12 +453,6 @@
       }
     },
     "time": {
-      "night_window_start": {
-        "name": "Night window start"
-      },
-      "night_window_end": {
-        "name": "Night window end"
-      },
       "plan_time": {
         "name": "Plan time"
       }

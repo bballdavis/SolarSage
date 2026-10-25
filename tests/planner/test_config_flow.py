@@ -40,8 +40,6 @@ SITE_INPUT = {
     "battery_max_charge_kw": 9,
     "battery_max_discharge_kw": 9,
     "battery_reserve_pct": 10,
-    "battery_in_free_hours": "refill",
-    "battery_refill_to_pct": 100,
 }
 CHARGER_INPUT = {
     "wall_power": E["wall_power"],

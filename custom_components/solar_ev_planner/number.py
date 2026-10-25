@@ -28,12 +28,10 @@ from .const import (
     DOMAIN,
     ENTRY_TITLE,
     KIND_TESLA,
-    NIGHT_CURRENT_MAX,
     S_BUYBACK,
     S_FLOOR,
     S_MAX_STEP,
     S_MIN_CHANGE,
-    S_NIGHT_CURRENT,
     S_PAID_TOLERANCE,
     S_PRICE,
     S_WANTED,
@@ -59,7 +57,6 @@ class Range:
 
 SETTINGS = (
     # 48 A (the top) means each car's maximum, as night charging defaults to
-    Range("night_charging_current", S_NIGHT_CURRENT, 6, NIGHT_CURRENT_MAX, 1, "A", False),
     Range("battery_floor", S_FLOOR, 5, 95, 1, PERCENTAGE, False),
     Range("battery_wanted_at_free_hours", S_WANTED, 0, 100, 1, PERCENTAGE, False),
     Range("minimum_time_between_changes", S_MIN_CHANGE, 1, 120, 1, UnitOfTime.MINUTES),
@@ -69,7 +66,7 @@ SETTINGS = (
     Range("solar_buyback", S_BUYBACK, 0, 5, 0.01, PRICE, False),
 )
 
-INTEGER_SETTINGS = frozenset({S_NIGHT_CURRENT, S_MAX_STEP})
+INTEGER_SETTINGS = frozenset({S_MAX_STEP})
 
 
 async def async_setup_entry(

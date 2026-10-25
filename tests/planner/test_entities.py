@@ -27,9 +27,6 @@ PLANNER_ENTITIES = {
     "switch.solar_ev_planner_planning",
     "switch.solar_ev_planner_shadow_mode",
     "switch.solar_ev_planner_daytime_solar_charging",
-    "time.solar_ev_planner_night_window_start",
-    "time.solar_ev_planner_night_window_end",
-    "number.solar_ev_planner_night_charging_current",
     "select.solar_ev_planner_caution",
     "number.solar_ev_planner_battery_floor",
     "number.solar_ev_planner_battery_wanted_at_free_hours",
@@ -94,7 +91,6 @@ async def test_settings_reach_the_core_and_persist(
         "conservative",
         30.0,
     )
-    assert (core.night_start, core.night_end, core.night_current_a) == ("22:00", "06:00", None)
     assert (core.min_change_min, core.max_step_a, core.paid_tolerance_min) == (15.0, 6, 5.0)
     assert core.wanted_at_free_start_pct == 30.0
 
@@ -104,27 +100,24 @@ async def test_settings_reach_the_core_and_persist(
         )
 
     await call("select", "select_option", "select.solar_ev_planner_caution", option="near_certain")
-    await call("number", "set_value", "number.solar_ev_planner_night_charging_current", value=32)
-    await call("time", "set_value", "time.solar_ev_planner_night_window_start", time="21:30:00")
     await call("number", "set_value", "number.solar_ev_planner_battery_floor", value=25)
+    await call(
+        "number", "set_value", "number.solar_ev_planner_battery_wanted_at_free_hours", value=50
+    )
     await call("number", "set_value", "number.solar_ev_planner_import_price", value=0.4)
     core = coordinator.core_settings()
     assert core.caution == "near-certain" and core.caution_p() == 0.97
-    assert core.night_current_a == 32 and core.night_start == "21:30"
-    assert core.floor_pct == 25
+    assert core.floor_pct == 25 and core.wanted_at_free_start_pct == 50
     assert hass.states.get("select.solar_ev_planner_caution").state == "near_certain"
-    assert hass.states.get("time.solar_ev_planner_night_window_start").state == "21:30:00"
     price = hass.states.get("number.solar_ev_planner_import_price")
     assert price.state == "0.4"
     assert price.attributes["unit_of_measurement"] == f"{hass.config.currency}/kWh"
-    # 48 A, the top of the range, is "the car's maximum" again
-    await call("number", "set_value", "number.solar_ev_planner_night_charging_current", value=48)
-    assert coordinator.core_settings().night_current_a is None
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     core = entry.runtime_data.core_settings()
     assert core.caution == "near-certain" and core.floor_pct == 25
+    assert core.wanted_at_free_start_pct == 50
     assert entry.runtime_data.settings["price"] == 0.4
 
 

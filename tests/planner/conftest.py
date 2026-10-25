@@ -60,7 +60,6 @@ from custom_components.solar_ev_planner.const import (
     CONF_WALL_POWER,
     DEFAULT_SITE_OPTIONS,
     DOMAIN,
-    ENTRY_MINOR_VERSION,
     ENTRY_TITLE,
     SUBENTRY_CAR,
 )
@@ -128,17 +127,12 @@ TESLA: dict[str, Any] = {
 }
 
 
-def make_entry(
-    *cars: dict[str, Any],
-    options: dict[str, Any] | None = None,
-    minor_version: int = ENTRY_MINOR_VERSION,
-) -> MockConfigEntry:
+def make_entry(*cars: dict[str, Any], options: dict[str, Any] | None = None) -> MockConfigEntry:
     """The planner's entry with the given cars as subentries."""
     return MockConfigEntry(
         domain=DOMAIN,
         title=ENTRY_TITLE,
         unique_id=DOMAIN,
-        minor_version=minor_version,
         options=options or OPTIONS,
         subentries_data=[
             {

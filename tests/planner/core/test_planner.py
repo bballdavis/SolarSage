@@ -11,8 +11,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.solar_ev_planner.core import (
-    FREE_HOLD,
-    BatterySpec,
     Measured,
     Planner,
     PriceWindow,
@@ -58,43 +56,37 @@ def test_low_battery_on_a_poor_day_gives_the_car_nothing(settings):
     assert "floor" in d.reason or "No room" in d.reason
 
 
-def test_night_window_charges_at_night_current(settings):
-    now = datetime(2026, 6, 15, 23, 0)
-    s = replace(settings, night_current_a=32)
-    d = _plan(s).decide(snapshot(now, soc=50.0))
-    assert d.mode == "night" and d.amps == 32
-    assert "night window" in d.reason
+def test_free_hours_charge_at_full_current_from_their_start(settings):
+    for now in (datetime(2026, 6, 15, 20, 5), datetime(2026, 6, 15, 23, 0)):
+        car = rivian(soc=70.0, since=now - timedelta(minutes=5))
+        d = _plan(settings).decide(snapshot(now, soc=50.0, cars=[car]))
+        assert d.mode == "night" and d.amps == 48
+        assert d.reason == "Free hours: charging at 48 A to the 85% limit."
+        assert d.next_change is not None and d.next_change.amps == 0  # at the limit
+        assert d.next_change.why == "the R1S reaches its limit"
+    # the Wall Connector's own maximum caps it
+    d = _plan(settings).decide(snapshot(now, soc=50.0, charger_max_a=32))
+    assert d.amps == 32
 
 
-def test_free_hours_before_window_wait_unless_needed(settings):
-    now = datetime(2026, 6, 15, 20, 30)
-    car = rivian(soc=70.0, since=now - timedelta(minutes=5))
-    d = _plan(settings).decide(snapshot(now, cars=[car]))
-    assert d.mode == "wait" and d.amps == 0
-    assert d.next_change is not None and d.next_change.at == datetime(2026, 6, 15, 22, 0)
-    # a nearly empty Rivian needs more than 22:00-06:00 at 16 A can give: start now
-    low = rivian(soc=5.0, since=now - timedelta(minutes=5))
-    d2 = _plan(replace(settings, night_current_a=16)).decide(snapshot(now, cars=[low]))
-    assert d2.mode == "night" and d2.amps == 16
-
-
-def test_the_overnight_refill_lets_the_day_use_the_battery(settings):
+def test_the_day_uses_the_battery_the_free_hours_refill(settings):
     snap = snapshot(NOON, soc=55.0, fc_ratio=0.8, actual_ratio=0.8)
-    refill = _plan(settings).decide(snap)  # the default: free hours refill the battery
-    hold = _plan(settings).decide(replace(snap, battery=BatterySpec(free_hours=FREE_HOLD)))
-    assert refill.amps is not None and hold.amps is not None and refill.amps > hold.amps
-    assert "before the free hours refill it" in refill.reason
-    at = {p.t: p.soc_pct for p in refill.trajectory}
-    held = {p.t: p.soc_pct for p in hold.trajectory}
+    free = _plan(settings).decide(snap)
+    flat = _plan(settings).decide(replace(snap, tariff=Tariff(0.32, 0.0)))  # no free hours
+    assert free.amps is not None and flat.amps is not None and free.amps > flat.amps
+    assert "before the free hours refill it" in free.reason
+    at = {p.t: p.soc_pct for p in free.trajectory}
     # on the cautious day the battery gives the car what it holds above the wanted level
-    # (the floor) when the free hours start, and starts tomorrow full again
+    # (the floor) when the free hours start, and the Sol-Ark has it full by their end
     assert at[datetime(2026, 6, 15, 20, 0)] == pytest.approx(
         settings.wanted_at_free_start_pct, abs=1
     )
     assert at[datetime(2026, 6, 16, 6, 0)] == pytest.approx(100.0)
-    # holding instead, the evening level is all tomorrow morning has
-    assert held[datetime(2026, 6, 16, 6, 0)] == pytest.approx(held[datetime(2026, 6, 15, 20, 0)])
-    assert held[datetime(2026, 6, 16, 6, 0)] < 90
+    # a higher wanted level keeps more in the battery and gives the car less
+    keep = _plan(replace(settings, wanted_at_free_start_pct=60.0)).decide(snap)
+    assert keep.amps is not None and keep.amps < free.amps
+    kept = {p.t: p.soc_pct for p in keep.trajectory}
+    assert kept[datetime(2026, 6, 15, 20, 0)] >= 59.0
 
 
 def test_daytime_solar_off_waits(settings):
@@ -322,4 +314,4 @@ def test_charging_when_free_hours_begin_carries_on(settings):
     p.decide(snapshot(t, soc=80.0, cars=[car]))
     d = p.decide(snapshot(t + timedelta(minutes=5), soc=80.0, cars=[car]))
     assert d.mode == "night" and d.amps == 48
-    assert "night charging finishes it" in d.reason
+    assert d.reason.startswith("Free hours: charging at 48 A")
