@@ -186,9 +186,9 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     result = await _add_car(hass, entry, "rivian")
     assert result["step_id"] == "car"
     data = _car_input(result)
-    assert data["switch"] == "switch.r1s_solar_adapter_solar_charging"
-    assert data["current"] == "number.r1s_solar_adapter_solar_current"
-    assert data["control_state"] == "sensor.r1s_solar_adapter_control_state"
+    assert data["switch"] == "switch.r1s_schedule_control_solar_charging"
+    assert data["current"] == "number.r1s_schedule_control_solar_current"
+    assert data["control_state"] == "sensor.r1s_schedule_control_control_state"
     assert data["plugged"] == "binary_sensor.r1s_charger_connection"
     assert data["location"] == "device_tracker.r1s_location"
     assert (data["min_a"], data["max_a"], data["step_a"]) == (8, 48, 2)

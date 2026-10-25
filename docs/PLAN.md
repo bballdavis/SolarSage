@@ -18,7 +18,7 @@ Only the hardware already in place:
 | Sol-Ark inverter and home battery (about 31 kWh usable) | Solar, house and battery measurements | Existing Sol-Ark integration |
 | Tesla Wall Connector Gen 3 | **Measurement only**: power, current, whether a car is connected. Tesla publishes no way to set its current. | HA core Tesla Wall Connector integration (local) |
 | Tesla | Charging on/off and current | Tesla's own API, through HA core **Tesla Fleet** |
-| Rivian R1S (2025, Gen 2) | Charging current and pause, through its charging schedule | Rivian's API: upstream [`home-assistant-rivian`](https://github.com/bretterer/home-assistant-rivian) for data, this repo's [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) for control |
+| Rivian R1S (2025, Gen 2) | Charging current and pause, through its charging schedule | Rivian's API: upstream [`home-assistant-rivian`](https://github.com/bretterer/home-assistant-rivian) for data, this repo's [Rivian schedule control](RIVIAN_SCHEDULE_CONTROL.md) for control |
 
 Only one car can be on the Wall Connector at a time, so only one car charges at a time.
 
@@ -53,7 +53,7 @@ flowchart LR
   Tariff["Tariff schedules (HA helpers)"] --> Planner
   Settings["Planner settings and car plans (dashboard)"] --> Planner
   Planner["Solar EV planner (HA integration, this repo)"] -->|"charge switch + current"| TeslaFleet["Tesla Fleet (HA core)"]
-  Planner -->|"charge switch + current; heartbeat + charging wanted"| Adapter["Rivian charge adapter (this repo)"]
+  Planner -->|"charge switch + current; heartbeat + charging wanted"| Adapter["Rivian schedule control (this repo)"]
   TeslaFleet --> Tesla["Tesla API"]
   Adapter --> Rivian["Rivian API: charging schedule"]
   Planner --> Dashboard["Dashboard: status, outlook, reasons"]
@@ -145,7 +145,7 @@ Each phase ends with a check that must pass before the next. [TESTING.md](TESTIN
 | 2. Planner design | Finish the simulation, pick the design, write `PLANNER_DESIGN.md`. | Owner agrees with the behaviour on the simulated days. | Design **done** ([PLANNER_DESIGN.md](PLANNER_DESIGN.md)); the owner's agreement is open, and `tools/replay.py` shows the behaviour on real days |
 | 3. Build the planner | HA integration with tests: night charging first, then daytime solar charging; tariff schedules; dashboard. Runs in **shadow mode**: it plans and explains, but sends nothing. | A week of shadow plans that the owner finds sensible. | **Built** and tested against fakes; starting dashboard only. Owner's shadow week to do. |
 | 4. Tesla under the planner | Let the planner command the Tesla. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. | Ready: `tools/attended_test.py tesla` first |
-| 5. Rivian trial | Attended trial with the adapter ([steps](RIVIAN_CHARGE_ADAPTER.md#attended-trial)): current changes, pause, lapse, exact restore of the owner's schedule. | The car follows schedule changes reliably. If it does not, decide between Rivian on a fixed schedule only or a controllable charger. | Ready: `tools/attended_test.py rivian` |
+| 5. Rivian trial | Attended trial with the adapter ([steps](RIVIAN_SCHEDULE_CONTROL.md#attended-trial)): current changes, pause, lapse, exact restore of the owner's schedule. | The car follows schedule changes reliably. If it does not, decide between Rivian on a fixed schedule only or a controllable charger. | Ready: `tools/attended_test.py rivian` |
 | 6. Rivian under the planner | Let the planner command the Rivian through the adapter. | Same checks as phase 4, plus the owner's own Rivian schedule restored on unplug. | Ready after phase 5 |
 | 7. Unattended | Notifications for faults and safety-rule trips; review a month of results. | A month without manual intervention. | Not started |
 
@@ -153,7 +153,7 @@ Each phase ends with a check that must pass before the next. [TESTING.md](TESTIN
 
 Done:
 
-- [x] **Kept** the Rivian charge adapter. It takes a charge switch and a current number from any controller and writes the Rivian schedule safely.
+- [x] **Kept** the Rivian schedule control. It takes a charge switch and a current number from any controller and writes the Rivian schedule safely.
 - [x] **Adapted the adapter to the planner:**
   - its liveness and charging options are now `controller_liveness_entity` and `controller_charging_entity`, pointed at the planner's heartbeat and the car's charging-wanted sensor; the `evcc_*` options and the evcc status sensor were renamed, with a migration that keeps the sensor's history;
   - the two evcc-era current rules (the 3 A increase margin and the hold just below 48 A) are options, off by default.

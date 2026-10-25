@@ -1,4 +1,4 @@
-"""The planner driving the real Rivian charge adapter (with the in-memory Rivian fake).
+"""The planner driving the real Rivian schedule control (with the in-memory Rivian fake).
 
 The other planner tests stand in for the adapter with plain states. Here both integrations
 run, wired as docs/PLANNER.md says: the adapter's controller liveness option points at the
@@ -19,7 +19,7 @@ from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
-from custom_components.rivian_solar_adapter.const import (
+from custom_components.rivian_schedule_control.const import (
     CONF_ACCESS_TOKEN,
     CONF_CHARGING_ENTITY,
     CONF_DRY_RUN,
@@ -165,7 +165,7 @@ async def test_shadow_mode_leaves_the_rivian_alone(
     assert "controller_unavailable" not in c["start_blocked_by"]
     # nothing written to Rivian, the owner's schedule untouched
     assert rivian.writes == []
-    assert hass.states.get("sensor.r1s_solar_adapter_charger_status").state == "b"
+    assert hass.states.get("sensor.r1s_schedule_control_charger_status").state == "b"
 
 
 async def test_planner_commands_the_adapter(
@@ -284,7 +284,7 @@ async def test_override_naming_the_tesla(
     await coordinator.async_refresh()
     await hass.async_block_till_done(wait_background_tasks=True)
     await tick(hass, freezer, 15)
-    assert hass.states.get("sensor.r1s_solar_adapter_charger_status").state == "a"
+    assert hass.states.get("sensor.r1s_schedule_control_charger_status").state == "a"
     assert coordinator.data.identification.car_id is None  # the Tesla is not plugged in
     await turn(hass, SHADOW, False)
     await tick(hass, freezer, 30)

@@ -105,7 +105,7 @@ CAR_EXPECT = {
     "restore_button": Expect("button", required=False),
     "read_schedules_button": Expect("button", required=False),
 }
-PLATFORMS = {"tesla": "tesla_fleet", "rivian_adapter": "rivian_solar_adapter"}
+PLATFORMS = {"tesla": "tesla_fleet", "rivian_adapter": "rivian_schedule_control"}
 ADAPTER_KEYS = ("switch", "current", "control_state", "charger_status")
 
 

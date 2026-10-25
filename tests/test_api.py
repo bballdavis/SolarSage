@@ -14,7 +14,7 @@ from rivian.exceptions import (
     RivianUnauthenticated,
 )
 
-from custom_components.rivian_solar_adapter.api import (
+from custom_components.rivian_schedule_control.api import (
     AuthError,
     RateLimitedError,
     RivianScheduleApi,

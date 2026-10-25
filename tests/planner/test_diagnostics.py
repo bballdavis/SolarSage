@@ -22,7 +22,7 @@ async def test_diagnostics_are_complete_and_redacted(
     # the trackers' coordinates are never read, so they cannot appear
     assert "32.87" not in text and "-117.22" not in text
     assert diag["entry"]["options"]["pv_power"] == "sensor.sol_ark_inverter_pv_power"
-    assert diag["cars"]["rivian"]["switch"] == "switch.r1s_solar_adapter_solar_charging"
+    assert diag["cars"]["rivian"]["switch"] == "switch.r1s_schedule_control_solar_charging"
     assert diag["settings"]["shadow"] is True
     assert diag["decision"]["mode"] == "day" and diag["decision"]["car_id"] == "rivian"
     assert diag["last_cycle"]["identification"]["car_id"] == "rivian"

@@ -14,7 +14,7 @@ the Wall Connector's measured current follow each step, then restores the curren
 charge switch as they were.
 
 **Rivian** (through this repo's charge adapter; it never writes the Rivian itself): it guides
-the adapter's attended trial (docs/RIVIAN_CHARGE_ADAPTER.md): inventory, T1 write and
+the adapter's attended trial (docs/RIVIAN_SCHEDULE_CONTROL.md): inventory, T1 write and
 readback, T2 current steps, T2b continuity, T3 stop, T4 lease expiry, T5 resume, T6 plug-in
 while parked, T7 exact restore. It uses the adapter's switch, current number, lease-renewal
 switch and buttons, and refuses while the adapter is in dry run.

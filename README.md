@@ -19,9 +19,9 @@ In short:
 | [`docs/PLANNER.md`](docs/PLANNER.md) | Guide to the planner: install, configure, entities, settings, shadow mode, pointing the Rivian adapter at it |
 | [`docs/PLANNER_DESIGN.md`](docs/PLANNER_DESIGN.md) | How the planner decides, and how an earlier version compared in simulation |
 | [`docs/TESTING.md`](docs/TESTING.md) | The step-by-step path to test with real data and real connections (plan phases 1–6) |
-| [`docs/RIVIAN_CHARGE_ADAPTER.md`](docs/RIVIAN_CHARGE_ADAPTER.md) | Guide to the Rivian charge adapter: how it works, install, entities, the attended trial, faults |
+| [`docs/RIVIAN_SCHEDULE_CONTROL.md`](docs/RIVIAN_SCHEDULE_CONTROL.md) | Guide to the Rivian schedule control: how it works, install, entities, the attended trial, faults |
 | [`custom_components/solar_ev_planner/`](custom_components/solar_ev_planner/) | The Solar EV planner (HA integration; copy it into Home Assistant) |
-| [`custom_components/rivian_solar_adapter/`](custom_components/rivian_solar_adapter/) | The Rivian charge adapter (HA integration, installable through HACS) |
+| [`custom_components/rivian_schedule_control/`](custom_components/rivian_schedule_control/) | The Rivian schedule control (HA integration, installable through HACS) |
 | [`tools/`](tools/README.md) | Real-data tools, run from a computer: a read-only check, snapshots, a replay of the planner, and the attended car tests |
 | [`tests/`](tests/) | Tests of the adapter (`tests/`), the planner (`tests/planner/`) and the tools (`tests/tools/`), against fakes only |
 

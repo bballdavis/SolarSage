@@ -52,9 +52,9 @@ CAR_ENTITIES: dict[str, dict[str, str]] = {
         "limit": "sensor.r1s_battery_state_of_charge_limit",
         "plugged": "binary_sensor.r1s_charger_connection",
         "location": "device_tracker.r1s_location",
-        "switch": "switch.r1s_solar_adapter_solar_charging",
-        "current": "number.r1s_solar_adapter_solar_current",
-        "control_state": "sensor.r1s_solar_adapter_control_state",
+        "switch": "switch.r1s_schedule_control_solar_charging",
+        "current": "number.r1s_schedule_control_solar_current",
+        "control_state": "sensor.r1s_schedule_control_control_state",
     },
     "tesla": {  # HA core Tesla Fleet names for the car "Roxxo"
         "soc": "sensor.roxxo_battery_level",

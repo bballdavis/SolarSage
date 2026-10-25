@@ -36,7 +36,7 @@ from rivian.exceptions import (
     RivianUnauthenticated,
 )
 
-from custom_components.rivian_solar_adapter.const import (
+from custom_components.rivian_schedule_control.const import (
     CONF_CEILING_HOLD,
     CONF_CHARGER_STATE_ENTITY,
     CONF_CHARGING_ENTITY,
@@ -59,7 +59,7 @@ from custom_components.rivian_solar_adapter.const import (
     ENTRY_VERSION,
 )
 
-INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "rivian_solar_adapter"
+INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "rivian_schedule_control"
 
 SECOND_VEHICLE = {
     "id": "test-vehicle-0002",
@@ -78,9 +78,9 @@ async def mock_setup_entry(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
     """Do not set up the entry a flow creates or reloads."""
     with (
         patch(
-            "custom_components.rivian_solar_adapter.async_setup_entry", return_value=True
+            "custom_components.rivian_schedule_control.async_setup_entry", return_value=True
         ) as mock,
-        patch("custom_components.rivian_solar_adapter.async_unload_entry", return_value=True),
+        patch("custom_components.rivian_schedule_control.async_unload_entry", return_value=True),
     ):
         yield mock
         # Unload while the patches still apply: the entries have no runtime.
@@ -380,7 +380,7 @@ async def test_location_accepts_only_device_trackers(
             options
             | {
                 CONF_LOCATION_ENTITY: LOCATION_ENTITY,
-                CONF_CHARGING_ENTITY: "switch.test_r1s_solar_adapter_solar_charging",
+                CONF_CHARGING_ENTITY: "switch.test_r1s_schedule_control_solar_charging",
             },
         )
     result = await hass.config_entries.options.async_configure(

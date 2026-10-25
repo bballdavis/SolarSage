@@ -20,11 +20,11 @@ from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.rivian_solar_adapter.const import MONITORED_ENTITY_OPTIONS
-from custom_components.rivian_solar_adapter.controller import Fault, Observation
-from custom_components.rivian_solar_adapter.runtime import _fault_message, describe_schedules
+from custom_components.rivian_schedule_control.const import MONITORED_ENTITY_OPTIONS
+from custom_components.rivian_schedule_control.controller import Fault, Observation
+from custom_components.rivian_schedule_control.runtime import _fault_message, describe_schedules
 
-COMPONENT = Path(__file__).parent.parent / "custom_components" / "rivian_solar_adapter"
+COMPONENT = Path(__file__).parent.parent / "custom_components" / "rivian_schedule_control"
 
 
 @pytest.fixture(autouse=True)

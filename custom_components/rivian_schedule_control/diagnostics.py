@@ -1,4 +1,4 @@
-"""Diagnostics for the Rivian Solar Charge Adapter."""
+"""Diagnostics for the Rivian Schedule Control."""
 
 from __future__ import annotations
 

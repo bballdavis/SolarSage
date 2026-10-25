@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from custom_components.rivian_solar_adapter.schedule import (
+from custom_components.rivian_schedule_control.schedule import (
     applied_amps,
     fingerprint,
     lease_window,

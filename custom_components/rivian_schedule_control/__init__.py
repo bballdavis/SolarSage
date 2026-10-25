@@ -1,4 +1,4 @@
-"""Rivian Solar Charge Adapter.
+"""Rivian Schedule Control.
 
 Turns a charging controller's start/stop and current requests (a switch and a
 number entity; the controller is the solar planner) into Rivian charging-schedule
@@ -16,14 +16,12 @@ from typing import Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import Platform
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
     ServiceResponse,
     SupportsResponse,
     callback,
-    split_entity_id,
 )
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -34,7 +32,6 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import (
     config_validation as cv,
-    entity_registry as er,
     issue_registry as ir,
 )
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -47,16 +44,11 @@ from rivian import Rivian
 from .api import AuthError, RivianScheduleApi, ScheduleApiError
 from .const import (
     ATTR_CONFIG_ENTRY_ID,
-    CHARGER_STATUS_KEY,
     CONF_ACCESS_TOKEN,
     CONF_REFRESH_TOKEN,
     CONF_USER_SESSION_TOKEN,
     CONF_VEHICLE_ID,
     DOMAIN,
-    ENTRY_MINOR_VERSION,
-    ENTRY_VERSION,
-    LEGACY_CHARGER_STATUS_KEY,
-    LEGACY_OPTION_KEYS,
     PLATFORMS,
     REMOVE_RESTORE_TIMEOUT,
     REQUEST_TIMEOUT,
@@ -106,73 +98,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the integration's services."""
     _async_register_services(hass)
     return True
-
-
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate an entry made by an earlier version of the adapter.
-
-    Minor version 2 (the solar planner replaces evcc) renames the two
-    controller options and the evcc status sensor. The sensor keeps its
-    registry entry, so its history is kept. The tuning options that version
-    adds take their defaults: the evcc-era increase margin and ceiling hold
-    are off.
-    """
-    if entry.version > ENTRY_VERSION:
-        return False  # made by a newer version of the adapter
-    if entry.version == ENTRY_VERSION and entry.minor_version < 2:
-        await _async_migrate_charger_status_entity(hass, entry)
-        options = dict(entry.options)
-        for old, new in LEGACY_OPTION_KEYS.items():
-            if old in options:
-                value = options.pop(old)
-                options.setdefault(new, value)
-        hass.config_entries.async_update_entry(
-            entry, options=options, minor_version=ENTRY_MINOR_VERSION
-        )
-        _LOGGER.info(
-            "Migrated the solar adapter for %s to version %s.%s",
-            entry.title,
-            ENTRY_VERSION,
-            ENTRY_MINOR_VERSION,
-        )
-    return True
-
-
-async def _async_migrate_charger_status_entity(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Move the evcc status sensor's registry entry to the charger status unique ID.
-
-    Its entity ID follows the new name unless it was changed by hand or the new
-    one is taken; the recorder moves the history along with a changed entity ID.
-    """
-    vehicle_id: str = entry.data[CONF_VEHICLE_ID]
-    old_unique_id = f"{vehicle_id}_{LEGACY_CHARGER_STATUS_KEY}"
-    new_unique_id = f"{vehicle_id}_{CHARGER_STATUS_KEY}"
-    registry = er.async_get(hass)
-
-    @callback
-    def migrate(entity_entry: er.RegistryEntry) -> dict[str, Any] | None:
-        if entity_entry.domain != Platform.SENSOR or entity_entry.unique_id != old_unique_id:
-            return None
-        if registry.async_get_entity_id(Platform.SENSOR, DOMAIN, new_unique_id):
-            _LOGGER.warning(
-                "Not migrating %s: a charger status sensor is already registered",
-                entity_entry.entity_id,
-            )
-            return None
-        updates: dict[str, Any] = {"new_unique_id": new_unique_id}
-        object_id = split_entity_id(entity_entry.entity_id)[1]
-        legacy_suffix = f"_{LEGACY_CHARGER_STATUS_KEY}"
-        if object_id.endswith(legacy_suffix):
-            new_entity_id = (
-                f"{Platform.SENSOR}.{object_id.removesuffix(legacy_suffix)}_{CHARGER_STATUS_KEY}"
-            )
-            if registry.async_get(new_entity_id) is None and hass.states.async_available(
-                new_entity_id
-            ):
-                updates["new_entity_id"] = new_entity_id
-        return updates
-
-    await er.async_migrate_entries(hass, entry.entry_id, migrate)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: RivianSolarAdapterConfigEntry) -> bool:
@@ -417,12 +342,12 @@ async def _async_finish_removal(
     persistent_notification.async_create(
         hass,
         (
-            f"The Rivian Solar Charge Adapter for {entry.title} was removed. Its journal at "
+            f"The Rivian Schedule Control for {entry.title} was removed. Its journal at "
             f"`{store.relative_path}` was kept because it holds the owner's charging "
             "schedules archived by abandon ownership. Delete the file once the schedules in "
             "the Rivian app are correct; adding the adapter again for this vehicle reuses it."
         ),
-        title="Rivian solar adapter journal kept",
+        title="Rivian schedule control journal kept",
         notification_id=restore_failed_notification_id(entry.data[CONF_VEHICLE_ID]),
     )
 
@@ -440,7 +365,7 @@ def _async_notify_restore_failed(
     persistent_notification.async_create(
         hass,
         (
-            f"The Rivian Solar Charge Adapter for {entry.title} was {action} while it "
+            f"The Rivian Schedule Control for {entry.title} was {action} while it "
             "controlled the vehicle's charging schedule, and the owner's schedules could "
             f"not be restored automatically ({reason}).\n\n"
             "Until they are restored, the vehicle keeps the adapter's short charging "

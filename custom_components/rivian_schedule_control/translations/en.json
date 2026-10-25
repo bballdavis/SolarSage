@@ -179,10 +179,10 @@
       "message": "The adapter could not save its ownership journal at {path}, so the request was not accepted and nothing was sent to Rivian. Check the disk space and permissions of the configuration directory."
     },
     "entry_not_found": {
-      "message": "No Rivian solar adapter has the config entry ID {entry_id}."
+      "message": "No Rivian schedule control has the config entry ID {entry_id}."
     },
     "entry_not_loaded": {
-      "message": "The Rivian solar adapter {title} is not loaded."
+      "message": "The Rivian schedule control {title} is not loaded."
     },
     "clear_fault_refused": {
       "message": "The fault was not cleared: Rivian holds a charging schedule this adapter did not write. Check the Rivian app; then restore the owner's schedule there and clear the fault, use force restore to write the saved schedules, or use abandon ownership."

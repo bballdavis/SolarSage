@@ -1,6 +1,6 @@
 # Solar EV planner
 
-**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [charge adapter](RIVIAN_CHARGE_ADAPTER.md). How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
+**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [charge adapter](RIVIAN_SCHEDULE_CONTROL.md). How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
 
 **Status: software-tested only.** Its tests run against Home Assistant 2026.10.3, with made-up states, a real recorder and Schedule helper, and the real Rivian adapter over a simulated Rivian account. It has not been run against the owner's Home Assistant. **It starts in shadow mode: it plans and explains, but sends nothing until you turn shadow mode off.**
 
@@ -21,7 +21,7 @@ HACS installs one integration per repository: the first folder under `custom_com
 
 | Integration | Install with |
 | --- | --- |
-| Rivian charge adapter (`rivian_solar_adapter`) | HACS (custom repository `https://github.com/bballdavis/HASS-Solar-Rivian`, category Integration), or the copy below |
+| Rivian schedule control (`rivian_schedule_control`) | HACS (custom repository `https://github.com/bballdavis/HASS-Solar-Rivian`, category Integration), or the copy below |
 | Solar EV planner (`solar_ev_planner`) | **The copy below.** HACS does not install it. |
 
 **Copying an integration into Home Assistant OS.** Use a terminal add-on (Terminal & SSH, or Advanced SSH & Web Terminal):
@@ -33,8 +33,8 @@ mkdir -p /config/custom_components
 rm -rf /config/custom_components/solar_ev_planner
 cp -r HASS-Solar-Rivian/custom_components/solar_ev_planner /config/custom_components/
 # Only if the adapter is not installed through HACS:
-# rm -rf /config/custom_components/rivian_solar_adapter
-# cp -r HASS-Solar-Rivian/custom_components/rivian_solar_adapter /config/custom_components/
+# rm -rf /config/custom_components/rivian_schedule_control
+# cp -r HASS-Solar-Rivian/custom_components/rivian_schedule_control /config/custom_components/
 rm -rf HASS-Solar-Rivian
 ```
 
@@ -51,7 +51,7 @@ Without a terminal, download the repository as a ZIP from GitHub and copy the `c
 1. **Solcast** ([BJReplay/ha-solcast-solar](https://github.com/BJReplay/ha-solcast-solar)) with its forecast-today and forecast-tomorrow sensors. Their `detailedForecast` attribute gives the half hours with `pv_estimate10`, `pv_estimate` and `pv_estimate90`.
 2. **A Schedule helper for the free hours.** Settings → Devices & services → Helpers → Create helper → Schedule. Name it "Free hours" (it becomes `schedule.free_hours`) and paint 00:00–06:00 and 20:00–24:00 on every day. Repaint it when the electricity plan changes. Leave it out for a flat or time-of-use plan.
 3. **Tesla Fleet** set up for the Tesla, with the virtual key approved in the car. Until then the planner can map today's tesla_custom entities instead.
-4. **The Rivian adapter** installed and configured ([guide](RIVIAN_CHARGE_ADAPTER.md#install-and-configure)). It can stay in dry run until the attended trial.
+4. **The Rivian adapter** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
 
 ## Configure
 
@@ -88,13 +88,13 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 | Field | Rivian (R1S) | Tesla (Roxxo, Tesla Fleet) |
 | --- | --- | --- |
 | Name | `R1S` | `Roxxo` |
-| Charge switch | `switch.r1s_solar_adapter_solar_charging` (the adapter) | `switch.roxxo_charge` (tesla_custom: `switch.roxxo_charger`) |
-| Charge current | `number.r1s_solar_adapter_solar_current` (the adapter) | `number.roxxo_charge_current` (tesla_custom: `number.roxxo_charging_amps`) |
+| Charge switch | `switch.r1s_schedule_control_solar_charging` (the adapter) | `switch.roxxo_charge` (tesla_custom: `switch.roxxo_charger`) |
+| Charge current | `number.r1s_schedule_control_solar_current` (the adapter) | `number.roxxo_charge_current` (tesla_custom: `number.roxxo_charging_amps`) |
 | Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.roxxo_battery_level` |
 | Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `number.roxxo_charge_limit` |
 | Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.roxxo_charge_cable` |
 | Location | `device_tracker.r1s_location` | `device_tracker.roxxo_location` |
-| Adapter control state | `sensor.r1s_solar_adapter_control_state` (recommended: it tells a pause from no request) | — |
+| Adapter control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
 | Minimum, maximum, step | 8 A, 48 A, 2 A | 6 A, 48 A, 1 A |
 | Usable pack energy | 135 kWh | 75 kWh |
 
@@ -129,7 +129,7 @@ The adapter parks the Rivian if the planner stops, and settles its requests afte
 - **The heartbeat stays up in shadow mode,** so mapping it does not block the adapter's attended trial.
 - **To check the mapping,** run `python -m tools.check` ([TESTING.md](TESTING.md)): the rows "rivian controller liveness" and "rivian controller charging" read what the adapter itself sees.
 
-What the planner sends the adapter, and the adapter's rules for requests, are in [Driving the adapter from the planner](RIVIAN_CHARGE_ADAPTER.md#driving-the-adapter-from-the-planner).
+What the planner sends the adapter, and the adapter's rules for requests, are in [Driving the adapter from the planner](RIVIAN_SCHEDULE_CONTROL.md#driving-the-adapter-from-the-planner).
 
 ## Entities
 
@@ -255,7 +255,7 @@ views:
           - number.r1s_planner_plan_target
           - time.r1s_planner_plan_time
           - select.r1s_planner_plan_days
-          - sensor.r1s_solar_adapter_control_state
+          - sensor.r1s_schedule_control_control_state
       - type: entities
         title: Roxxo
         entities:

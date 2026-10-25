@@ -1,6 +1,6 @@
-# Rivian charge adapter
+# Rivian schedule control
 
-**What it is.** The Rivian charge adapter (`custom_components/rivian_solar_adapter`) gives a controller a start/stop switch and a current setting for a Gen 2 Rivian, which has no usable remote charging command. It does this by writing the vehicle's **charging schedule** through Rivian's API. In the [working plan](PLAN.md) the controller is the solar planner: it sets the switch and the current, and provides two entities that tell the adapter it is running and whether it wants the car charging ([what the planner must provide](#driving-the-adapter-from-the-planner)). The planner itself is described in [PLANNER.md](PLANNER.md).
+**What it is.** The Rivian schedule control (`custom_components/rivian_schedule_control`) gives a controller a start/stop switch and a current setting for a Gen 2 Rivian, which has no usable remote charging command. It does this by writing the vehicle's **charging schedule** through Rivian's API. In the [working plan](PLAN.md) the controller is the solar planner: it sets the switch and the current, and provides two entities that tell the adapter it is running and whether it wants the car charging ([what the planner must provide](#driving-the-adapter-from-the-planner)). The planner itself is described in [PLANNER.md](PLANNER.md).
 
 **Status: software-tested only.** Four rounds of independent adversarial review shaped the design, including closed-loop simulations against evcc's charging loop. Its tests run against Home Assistant 2026.10.3 with a simulated Rivian provider. It has not been run against a real account, vehicle, or Wall Connector. **It installs in dry-run mode, and nothing is written until you turn dry run off.**
 
@@ -36,7 +36,7 @@
    - **Hand-back:** a manual restore hands control back to the owner until the next unplug, so the controller can't immediately take the schedule over again.
    - **Away while still plugged in** is usually a location glitch. The owner's list is restored, but the controller's request is kept, so the adapter takes over again once the car shows home. A controller does not always repeat a request.
 5. **Restarts resume.**
-   - **The journal** is stored per vehicle at `.storage/rivian_solar_adapter.<hash of the vehicle id>`, so it survives a remove and re-add. It is written atomically and resumed after a restart.
+   - **The journal** is stored per vehicle at `.storage/rivian_schedule_control.<hash of the vehicle id>`, so it survives a remove and re-add. It is written atomically and resumed after a restart.
    - **The controller's request after a restart** is unconfirmed, because the controller may have restarted too (a power cut). It keeps a lease that is still live running, but it never starts charging or takes over the owner's schedule. Any request from the controller confirms it, and so does the **controller charging** entity being on; off drops it. Without that entity, a request whose lease lapsed meanwhile is dropped 30 seconds after the controller is seen up, and the controller asks again if it wants charging.
    - **A failed journal save of a request** is reported to the caller, but the request is kept: saves queued behind it already hold it. Until a save succeeds, a repeated request is saved again rather than acknowledged.
    - **An interrupted write** is resolved by reading Rivian. A write is recorded as sent as soon as Rivian answers, so a restart before it settles still recognizes it if it lands late. A write that may or may not have been sent before a crash is treated the same way.
@@ -49,8 +49,8 @@
 ## Install and configure
 
 1. Install upstream [`home-assistant-rivian`](https://github.com/bretterer/home-assistant-rivian) 2.x for telemetry, if you have not already. The adapter logs in to Rivian separately, because upstream offers no schedule services; only session tokens are stored.
-2. Install this repository through HACS (custom repository, category integration), or copy `custom_components/rivian_solar_adapter` into `/config/custom_components/`. Restart Home Assistant. HACS installs only the adapter from this repository; the planner is copied by hand ([PLANNER.md, install](PLANNER.md#install)).
-3. **Settings → Devices & services → Add integration → Rivian Solar Charge Adapter.**
+2. Install this repository through HACS (custom repository, category integration), or copy `custom_components/rivian_schedule_control` into `/config/custom_components/`. Restart Home Assistant. HACS installs only the adapter from this repository; the planner is copied by hand ([PLANNER.md, install](PLANNER.md#install)).
+3. **Settings → Devices & services → Add integration → Rivian Schedule Control.**
    - **Login:** Rivian email and password, plus the one-time code if your account uses one.
    - **Vehicle:** pick the R1S.
    - **Entities:**
@@ -81,7 +81,7 @@
 
 5. **Upgrading from the evcc version** (config entry version 1.1). Home Assistant migrates the entry once, at the first start of this version:
    - `evcc_liveness_entity` becomes `controller_liveness_entity`, and `evcc_enabled_entity` becomes `controller_charging_entity`. The mapped entities stay; point them at the planner's entities once it is installed.
-   - The evcc status sensor becomes the charger status sensor. Its registry entry is kept, so its history is too: `sensor.r1s_solar_adapter_evcc_status` becomes `sensor.r1s_solar_adapter_charger_status`, unless its entity ID was changed by hand, which is kept.
+   - The evcc status sensor becomes the charger status sensor. Its registry entry is kept, so its history is too: `sensor.r1s_schedule_control_evcc_status` becomes `sensor.r1s_schedule_control_charger_status`, unless its entity ID was changed by hand, which is kept.
    - The increase margin and the ceiling hold are new and start off. To drive the adapter from evcc again, set them to 3 A and 30 minutes and map the two controller options to evcc's entities.
    - An earlier version of the adapter installed over this one no longer sees the two controller options.
 
@@ -91,14 +91,14 @@ The examples assume the config entry is titled `R1S`; your entity IDs follow you
 
 | Entity | Purpose |
 | --- | --- |
-| `switch.r1s_solar_adapter_solar_charging` | Charging requested by the controller |
-| `number.r1s_solar_adapter_solar_current` | Requested current. Accepts 0–80 and applies even 8–48 A. |
-| `sensor.r1s_solar_adapter_charger_status` | Charger status: `a` (not known to be plugged in at home, known absent from the Wall Connector, or the override names another car), `b` (connected) or `c` (charging, from the charger state entity) |
-| `sensor.r1s_solar_adapter_control_state` | One of the control states below. Its attributes show the lease (`lease_amps` is the current Rivian holds), last write, fingerprints (prefixes only), errors, observation, `start_blocked_by`, `request_held`, `request_unconfirmed` and the dry-run target. |
-| `switch.r1s_solar_adapter_lease_renewal` | Turn off to let an active lease lapse (trial T4). The setting persists. |
-| `button.r1s_solar_adapter_restore_owner_schedule` | Restore the owner's schedule and hand control back until unplug |
-| `button.r1s_solar_adapter_clear_fault` | Resume after a fault, if Rivian holds a state the adapter knows |
-| `button.r1s_solar_adapter_read_schedules` | Read Rivian's schedule list: days, times, amps, enabled. It also shows whether the list is one the adapter wrote; never coordinates. |
+| `switch.r1s_schedule_control_solar_charging` | Charging requested by the controller |
+| `number.r1s_schedule_control_solar_current` | Requested current. Accepts 0–80 and applies even 8–48 A. |
+| `sensor.r1s_schedule_control_charger_status` | Charger status: `a` (not known to be plugged in at home, known absent from the Wall Connector, or the override names another car), `b` (connected) or `c` (charging, from the charger state entity) |
+| `sensor.r1s_schedule_control_control_state` | One of the control states below. Its attributes show the lease (`lease_amps` is the current Rivian holds), last write, fingerprints (prefixes only), errors, observation, `start_blocked_by`, `request_held`, `request_unconfirmed` and the dry-run target. |
+| `switch.r1s_schedule_control_lease_renewal` | Turn off to let an active lease lapse (trial T4). The setting persists. |
+| `button.r1s_schedule_control_restore_owner_schedule` | Restore the owner's schedule and hand control back until unplug |
+| `button.r1s_schedule_control_clear_fault` | Resume after a fault, if Rivian holds a state the adapter knows |
+| `button.r1s_schedule_control_read_schedules` | Read Rivian's schedule list: days, times, amps, enabled. It also shows whether the list is one the adapter wrote; never coordinates. |
 
 Control states: `idle`, `waiting_for_vehicle`, `handed_back`, `lease_active`, `lease_lapsed`, `paused`, `writing`, `fault`, `dry_run`.
 
@@ -106,7 +106,7 @@ Services:
 
 | Service | What it does |
 | --- | --- |
-| `rivian_solar_adapter.release` | Same as the restore button |
+| `rivian_schedule_control.release` | Same as the restore button |
 | `.clear_fault` | Same as the clear-fault button |
 | `.read_schedules` | Returns the list summary |
 | `.force_restore` | **Faulted only.** Writes the snapshotted owner list whatever Rivian holds now, then verifies it. An archived list from an earlier abandon is used only while Rivian holds an adapter window, so it never replaces schedules the owner has set up since. Otherwise the call fails with `force_restore_archive_unsafe` and writes nothing. |
@@ -114,14 +114,14 @@ Services:
 
 ## Driving the adapter from the planner
 
-The planner ([PLANNER.md](PLANNER.md)) drives the adapter through Home Assistant entities only, following the rules below. A test runs both integrations together (`tests/planner/test_with_adapter.py`). With the entry titled `R1S`:
+The planner ([PLANNER.md](PLANNER.md)) drives the adapter through Home Assistant entities only, following the rules below. A test runs both integrations together (`tests/planner/test_with_schedule_control.py`). With the entry titled `R1S`:
 
 | The planner | Through | The adapter |
 | --- | --- | --- |
-| Starts or pauses charging | `switch.r1s_solar_adapter_solar_charging`: turn on, turn off | Records the request at once; the switch shows it. The schedule write follows in the background. |
-| Sets the current | `number.r1s_solar_adapter_solar_current`: set value, 0–80 A | Records it at once; the number shows it. It applies the request rounded down to an even 8–48 A. |
-| Reads what happens | `sensor.r1s_solar_adapter_control_state` and its attributes | `lease_amps` is the current Rivian holds; `start_blocked_by` says why charging cannot start or continue |
-| Reads whether the Rivian is the car on the charger | `sensor.r1s_solar_adapter_charger_status` | `b` or `c` only while it is known plugged in at home and not known absent from the Wall Connector |
+| Starts or pauses charging | `switch.r1s_schedule_control_solar_charging`: turn on, turn off | Records the request at once; the switch shows it. The schedule write follows in the background. |
+| Sets the current | `number.r1s_schedule_control_solar_current`: set value, 0–80 A | Records it at once; the number shows it. It applies the request rounded down to an even 8–48 A. |
+| Reads what happens | `sensor.r1s_schedule_control_control_state` and its attributes | `lease_amps` is the current Rivian holds; `start_blocked_by` says why charging cannot start or continue |
+| Reads whether the Rivian is the car on the charger | `sensor.r1s_schedule_control_charger_status` | `b` or `c` only while it is known plugged in at home and not known absent from the Wall Connector |
 
 **What the planner provides**, mapped in the adapter's options:
 

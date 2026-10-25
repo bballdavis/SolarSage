@@ -2,7 +2,7 @@
 
 Everything is made up: the owner's entity IDs (``core.entities``) with synthetic values, a
 recorder with imported statistics, a Schedule helper for the free hours, and fake services
-standing in for Tesla Fleet and the Rivian charge adapter. Nothing talks to a real system.
+standing in for Tesla Fleet and the Rivian schedule control. Nothing talks to a real system.
 
 The Home Assistant tests request ``planner_hass`` (recorder plus custom integrations); the
 core's unit tests in ``core/`` need neither.

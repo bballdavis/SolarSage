@@ -37,13 +37,13 @@ E = {
     "r_limit": "sensor.r1s_battery_state_of_charge_limit",
     "r_plugged": "binary_sensor.r1s_charger_connection",
     "r_location": "device_tracker.r1s_location",
-    "r_switch": "switch.r1s_solar_adapter_solar_charging",
-    "r_current": "number.r1s_solar_adapter_solar_current",
-    "r_state": "sensor.r1s_solar_adapter_control_state",
-    "r_status": "sensor.r1s_solar_adapter_charger_status",
-    "r_renewal": "switch.r1s_solar_adapter_lease_renewal",
-    "r_restore": "button.r1s_solar_adapter_restore_owner_schedule",
-    "r_read": "button.r1s_solar_adapter_read_schedules",
+    "r_switch": "switch.r1s_schedule_control_solar_charging",
+    "r_current": "number.r1s_schedule_control_solar_current",
+    "r_state": "sensor.r1s_schedule_control_control_state",
+    "r_status": "sensor.r1s_schedule_control_charger_status",
+    "r_renewal": "switch.r1s_schedule_control_lease_renewal",
+    "r_restore": "button.r1s_schedule_control_restore_owner_schedule",
+    "r_read": "button.r1s_schedule_control_read_schedules",
     "t_soc": "sensor.roxxo_battery_level",
     "t_limit": "number.roxxo_charge_limit",
     "t_plugged": "binary_sensor.roxxo_charge_cable",
@@ -279,7 +279,7 @@ def _static(fake: FakeHass, now: datetime, hist_from: datetime, dry_run: bool) -
     fake.set_state(E["r_status"], "b", {"options": ["a", "b", "c"]})
     fake.set_state(E["r_state"], "dry_run" if dry_run else "idle", adapter_attrs(dry_run=dry_run))
     for key in ("r_switch", "r_current", "r_state", "r_status", "r_renewal", "r_restore", "r_read"):
-        fake.register(E[key], "rivian_solar_adapter", f"test-vehicle-0001_{key}")
+        fake.register(E[key], "rivian_schedule_control", f"test-vehicle-0001_{key}")
     # the free-hours Schedule helper
     week = {
         name: [{"from": "00:00:00", "to": "06:00:00"}, {"from": "20:00:00", "to": "23:59:59"}]

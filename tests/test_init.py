@@ -37,7 +37,6 @@ from homeassistant.components.number import (
     DOMAIN as NUMBER_DOMAIN,
     SERVICE_SET_VALUE,
 )
-from homeassistant.components.recorder import Recorder, history
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import (
@@ -60,26 +59,18 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
     get_scheduled_timer_handles,
 )
-from pytest_homeassistant_custom_component.components.recorder.common import (
-    async_wait_recording_done,
-)
 from rivian.exceptions import RivianApiException, RivianBadRequestError, RivianUnauthenticated
 
-from custom_components.rivian_solar_adapter.const import (
-    CONF_CEILING_HOLD,
-    CONF_CHARGING_ENTITY,
-    CONF_INCREASE_MARGIN,
-    CONF_LIVENESS_ENTITY,
-    CONF_PLUGGED_ENTITY,
+from custom_components.rivian_schedule_control.const import (
     DOMAIN,
     TICK_INTERVAL,
     journal_key,
 )
-from custom_components.rivian_solar_adapter.controller import Observation
-from custom_components.rivian_solar_adapter.diagnostics import (
+from custom_components.rivian_schedule_control.controller import Observation
+from custom_components.rivian_schedule_control.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from custom_components.rivian_solar_adapter.runtime import (
+from custom_components.rivian_schedule_control.runtime import (
     restore_failed_issue_id,
     restore_failed_notification_id,
     setup_failed_issue_id,
@@ -197,9 +188,9 @@ async def test_setup_creates_entities(
 
     [device] = dr.async_entries_for_config_entry(dr.async_get(hass), loaded_entry.entry_id)
     assert device.identifiers == {(DOMAIN, VEHICLE_ID)}
-    assert device.name == f"{VEHICLE_NAME} solar adapter"
+    assert device.name == f"{VEHICLE_NAME} schedule control"
     assert device.manufacturer == "HASS-Solar-Rivian"
-    assert device.model == "Rivian charge adapter"
+    assert device.model == "Rivian schedule control"
     assert device.sw_version == "0.1.0"
     entities = er.async_entries_for_config_entry(er.async_get(hass), loaded_entry.entry_id)
     assert len(entities) == 8
@@ -371,139 +362,6 @@ async def test_remove_after_setup_failure_restores_and_clears_issue(
     assert mock_rivian.schedules == OWNER_SCHEDULES
     assert not journal_path(hass).exists()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-
-
-# Migration --------------------------------------------------------------
-
-LEGACY_STATUS_ID = "sensor.test_r1s_solar_adapter_evcc_status"
-CHARGER_STATUS_ID = "sensor.test_r1s_solar_adapter_charger_status"
-
-
-def legacy_entry(**option_overrides: Any) -> MockConfigEntry:
-    """A config entry as version 1.1 of the adapter, made for evcc, created it."""
-    current = make_entry(**option_overrides)
-    return MockConfigEntry(
-        domain=DOMAIN,
-        title=current.title,
-        unique_id=current.unique_id,
-        data=dict(current.data),
-        options={
-            key: value
-            for key, value in current.options.items()
-            if key not in (CONF_INCREASE_MARGIN, CONF_CEILING_HOLD)
-        },
-        version=1,
-        minor_version=1,
-    )
-
-
-def register_legacy_status_sensor(
-    hass: HomeAssistant, entry: MockConfigEntry, object_id: str
-) -> er.RegistryEntry:
-    """Register the evcc status sensor as version 1.1 of the adapter left it."""
-    return er.async_get(hass).async_get_or_create(
-        "sensor",
-        DOMAIN,
-        f"{VEHICLE_ID}_evcc_status",
-        config_entry=entry,
-        suggested_object_id=object_id,
-    )
-
-
-async def test_migration_renames_the_evcc_options_and_status_sensor(
-    hass: HomeAssistant, mock_rivian: FakeRivian
-) -> None:
-    """An entry made for evcc keeps its mapping, and its status sensor its registry entry."""
-    hass.states.async_set(PLUGGED_ENTITY, "on")
-    hass.states.async_set(LOCATION_ENTITY, "home")
-    hass.states.async_set(LIVENESS_ENTITY, "2026-10-25T12:00:00+00:00")
-    hass.states.async_set(CHARGING_ENTITY, "on")
-    entry = legacy_entry(evcc_liveness_entity=LIVENESS_ENTITY, evcc_enabled_entity=CHARGING_ENTITY)
-    entry.add_to_hass(hass)
-    legacy = register_legacy_status_sensor(hass, entry, "test_r1s_solar_adapter_evcc_status")
-    assert legacy.entity_id == LEGACY_STATUS_ID
-    await set_up(hass, entry)
-
-    assert entry.state is ConfigEntryState.LOADED
-    assert (entry.version, entry.minor_version) == (1, 2)
-    assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
-    assert entry.options[CONF_CHARGING_ENTITY] == CHARGING_ENTITY
-    assert not {"evcc_liveness_entity", "evcc_enabled_entity"} & set(entry.options)
-    assert entry.options[CONF_PLUGGED_ENTITY] == PLUGGED_ENTITY
-    obs = entry.runtime_data.observation()
-    assert obs.controller_alive is True
-    assert obs.controller_charging is True
-    # The evcc-era increase rules take the new defaults: off.
-    config = entry.runtime_data.controller.config
-    assert config.increase_margin_amps == 0
-    assert config.ceiling_hold == timedelta(0)
-
-    registry = er.async_get(hass)
-    migrated = registry.async_get(legacy.id)
-    assert migrated is not None
-    assert migrated.unique_id == f"{VEHICLE_ID}_charger_status"
-    assert migrated.entity_id == CHARGER_STATUS_ID
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{VEHICLE_ID}_evcc_status") is None
-    assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 8
-    assert hass.states.get(CHARGER_STATUS_ID).state == "b"
-    assert hass.states.get(LEGACY_STATUS_ID) is None
-
-
-async def test_migration_keeps_an_entity_id_changed_by_hand(
-    hass: HomeAssistant, mock_rivian: FakeRivian
-) -> None:
-    """Only the generated entity ID follows the new name."""
-    hass.states.async_set(PLUGGED_ENTITY, "on")
-    hass.states.async_set(LOCATION_ENTITY, "home")
-    entry = legacy_entry()
-    entry.add_to_hass(hass)
-    legacy = register_legacy_status_sensor(hass, entry, "rivian_on_the_charger")
-    await set_up(hass, entry)
-
-    migrated = er.async_get(hass).async_get(legacy.id)
-    assert migrated.unique_id == f"{VEHICLE_ID}_charger_status"
-    assert migrated.entity_id == "sensor.rivian_on_the_charger"
-    assert hass.states.get("sensor.rivian_on_the_charger").state == "b"
-    assert entry.minor_version == 2
-
-
-async def test_migration_keeps_the_status_sensor_history(
-    recorder_mock: Recorder, hass: HomeAssistant, mock_rivian: FakeRivian
-) -> None:
-    """The recorder moves the evcc status sensor's history to the charger status sensor."""
-    entry = legacy_entry()
-    entry.add_to_hass(hass)
-    register_legacy_status_sensor(hass, entry, "test_r1s_solar_adapter_evcc_status")
-    start = dt_util.utcnow()
-    hass.states.async_set(LEGACY_STATUS_ID, "c")
-    await async_wait_recording_done(hass)
-    hass.states.async_remove(LEGACY_STATUS_ID)  # as after a restart
-    hass.states.async_set(PLUGGED_ENTITY, "on")
-    hass.states.async_set(LOCATION_ENTITY, "home")
-    await set_up(hass, entry)
-    await async_wait_recording_done(hass)
-
-    states = await recorder_mock.async_add_executor_job(
-        history.get_significant_states, hass, start, None, [CHARGER_STATUS_ID]
-    )
-    # The evcc-era reading, the removal at the "restart", the new sensor's reading.
-    assert [item.state for item in states[CHARGER_STATUS_ID]] == ["c", "", "b"]
-
-
-async def test_migration_without_a_status_sensor(
-    hass: HomeAssistant, mock_rivian: FakeRivian
-) -> None:
-    """An entry whose status sensor was deleted migrates its options; the sensor is new."""
-    hass.states.async_set(PLUGGED_ENTITY, "on")
-    hass.states.async_set(LOCATION_ENTITY, "home")
-    entry = legacy_entry(evcc_liveness_entity=LIVENESS_ENTITY)
-    entry.add_to_hass(hass)
-    await set_up(hass, entry)
-
-    assert entry.minor_version == 2
-    assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
-    assert CONF_CHARGING_ENTITY not in entry.options
-    assert entity_id(hass, "sensor", "charger_status") == CHARGER_STATUS_ID
 
 
 # Control ----------------------------------------------------------------
@@ -1223,7 +1081,7 @@ async def test_unexpected_tick_error_logged_once(
 
     runtime = loaded_entry.runtime_data
     mock_rivian.get_charging_schedules = broken
-    caplog.set_level(logging.DEBUG, logger="custom_components.rivian_solar_adapter")
+    caplog.set_level(logging.DEBUG, logger="custom_components.rivian_schedule_control")
     await start_charging(hass)
     for _ in range(3):
         await advance(hass, freezer, TICK_INTERVAL)

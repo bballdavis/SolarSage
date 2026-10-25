@@ -250,7 +250,7 @@ Config-flow suggestions are in [`core/entities.py`](../custom_components/solar_e
 | Forecast age | `sensor.solcast_pv_forecast_api_last_polled` | time |
 | Free hours | the Schedule helper (weekly config via `schedule.get_schedule`) | |
 | Rivian | `sensor.r1s_battery_state_of_charge`, `sensor.r1s_battery_state_of_charge_limit`, `binary_sensor.r1s_charger_connection`, `device_tracker.r1s_location` | % |
-| Rivian control | `switch.r1s_solar_adapter_solar_charging`, `number.r1s_solar_adapter_solar_current`; the standing request from `sensor.r1s_solar_adapter_control_state` | A, even 8–48 |
+| Rivian control | `switch.r1s_schedule_control_solar_charging`, `number.r1s_schedule_control_solar_current`; the standing request from `sensor.r1s_schedule_control_control_state` | A, even 8–48 |
 | Tesla (Fleet, car "Roxxo") | `sensor.roxxo_battery_level`, `number.roxxo_charge_limit`, `binary_sensor.roxxo_charge_cable`, `device_tracker.roxxo_location` | % |
 | Tesla control | `switch.roxxo_charge`, `number.roxxo_charge_current` (today in tesla_custom: `switch.roxxo_charger`, `number.roxxo_charging_amps`) | A |
 

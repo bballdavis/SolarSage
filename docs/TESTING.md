@@ -40,7 +40,7 @@ Run every tool from the repository root, for example `.venv/bin/python -m tools.
 Plan phase 1: every planner input is present and fresh, with no control yet.
 
 1. **Tesla Fleet.** Add the HA core Tesla Fleet integration with your Tesla developer app and approve its virtual key in the car ([plan phase 0](PLAN.md#phases) covers the app and the key's domain). The Tesla's entities should become `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable` and `device_tracker.roxxo_location`; if they are named differently, put the real names in `tools/config.json`.
-2. **The Rivian adapter, in dry run.** Install and configure it ([guide](RIVIAN_CHARGE_ADAPTER.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the two controller options empty until stage 3. Keep **dry run on**.
+2. **The Rivian adapter, in dry run.** Install and configure it ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the two controller options empty until stage 3. Keep **dry run on**.
 3. **The free-hours Schedule helper.** Settings → Devices & services → Helpers → Create helper → Schedule, named "Free hours" (`schedule.free_hours`), painted 00:00–06:00 and 20:00–24:00 every day.
 4. **Start recording forecasts.** Home Assistant's history does not keep Solcast's half hours, so start the recorder now on an always-on machine and leave it running:
 
@@ -149,7 +149,7 @@ Every day with the Tesla on the charger, look at:
 
 ## 5. The attended Rivian trial
 
-Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are in the [adapter guide](RIVIAN_CHARGE_ADAPTER.md#attended-trial); the tool walks you through them.
+Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are in the [adapter guide](RIVIAN_SCHEDULE_CONTROL.md#attended-trial); the tool walks you through them.
 
 1. **Turn shadow mode on** (the tool refuses while the planner commands). The Tesla keeps its last current, so unplug it.
 2. **Turn the adapter's dry run off** (its Configure).

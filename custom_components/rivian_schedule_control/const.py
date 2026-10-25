@@ -1,4 +1,4 @@
-"""Constants for the Rivian Solar Charge Adapter integration."""
+"""Constants for the Rivian Schedule Control integration."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any, Final
 
 from homeassistant.const import Platform
 
-DOMAIN: Final = "rivian_solar_adapter"
+DOMAIN: Final = "rivian_schedule_control"
 PLATFORMS: Final = [Platform.BUTTON, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 TICK_INTERVAL: Final = timedelta(seconds=15)
@@ -24,10 +24,9 @@ STOP_TIMEOUT: Final = 10
 REQUEST_TIMEOUT: Final = 30
 
 STORAGE_VERSION: Final = 1
-# Config entry version. Minor version 2 renamed the evcc options and the evcc
-# status sensor for the solar planner.
+# Config entry version.
 ENTRY_VERSION: Final = 1
-ENTRY_MINOR_VERSION: Final = 2
+ENTRY_MINOR_VERSION: Final = 1
 
 
 def journal_key(vehicle_id: str) -> str:
@@ -83,11 +82,6 @@ MONITORED_ENTITY_OPTIONS: Final = (
     CONF_LIVENESS_ENTITY,
     CONF_CHARGING_ENTITY,
 )
-# Option keys before minor version 2, when evcc was the controller.
-LEGACY_OPTION_KEYS: Final = {
-    "evcc_liveness_entity": CONF_LIVENESS_ENTITY,
-    "evcc_enabled_entity": CONF_CHARGING_ENTITY,
-}
 # Override entity states that leave the charger status to the adapter.
 OVERRIDE_PASS_STATES: Final = frozenset({"auto", "rivian"})
 
@@ -148,9 +142,8 @@ CHARGER_STATUSES: Final = [
     CHARGER_STATUS_CONNECTED,
     CHARGER_STATUS_CHARGING,
 ]
-# The charger status sensor's key in its unique ID, and the key before minor version 2.
+# The charger status sensor's key in its unique ID.
 CHARGER_STATUS_KEY: Final = "charger_status"
-LEGACY_CHARGER_STATUS_KEY: Final = "evcc_status"
 
 # Services
 ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"
@@ -161,4 +154,4 @@ SERVICE_FORCE_RESTORE: Final = "force_restore"
 SERVICE_READ_SCHEDULES: Final = "read_schedules"
 
 DEVICE_MANUFACTURER: Final = "HASS-Solar-Rivian"
-DEVICE_MODEL: Final = "Rivian charge adapter"
+DEVICE_MODEL: Final = "Rivian schedule control"

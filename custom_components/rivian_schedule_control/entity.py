@@ -1,4 +1,4 @@
-"""Base entity for the Rivian Solar Charge Adapter."""
+"""Base entity for the Rivian Schedule Control."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class RivianSolarAdapterEntity(Entity):
         self._attr_unique_id = f"{runtime.vehicle_id}_{key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, runtime.vehicle_id)},
-            name=f"{runtime.entry.title} solar adapter",
+            name=f"{runtime.entry.title} schedule control",
             manufacturer=DEVICE_MANUFACTURER,
             model=DEVICE_MODEL,
             sw_version=runtime.sw_version,

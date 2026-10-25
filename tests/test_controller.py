@@ -9,13 +9,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.rivian_solar_adapter.api import (
+from custom_components.rivian_schedule_control.api import (
     AuthError,
     RateLimitedError,
     ScheduleApiError,
     WriteRejectedError,
 )
-from custom_components.rivian_solar_adapter.controller import (
+from custom_components.rivian_schedule_control.controller import (
     AdapterConfig,
     ControlState,
     Journal,

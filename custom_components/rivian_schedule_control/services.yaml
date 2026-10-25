@@ -4,7 +4,7 @@ release:
       required: true
       selector:
         config_entry:
-          integration: rivian_solar_adapter
+          integration: rivian_schedule_control
 
 clear_fault:
   fields:
@@ -12,7 +12,7 @@ clear_fault:
       required: true
       selector:
         config_entry:
-          integration: rivian_solar_adapter
+          integration: rivian_schedule_control
 
 abandon_ownership:
   fields:
@@ -20,7 +20,7 @@ abandon_ownership:
       required: true
       selector:
         config_entry:
-          integration: rivian_solar_adapter
+          integration: rivian_schedule_control
 
 force_restore:
   fields:
@@ -28,7 +28,7 @@ force_restore:
       required: true
       selector:
         config_entry:
-          integration: rivian_solar_adapter
+          integration: rivian_schedule_control
 
 read_schedules:
   fields:
@@ -36,4 +36,4 @@ read_schedules:
       required: true
       selector:
         config_entry:
-          integration: rivian_solar_adapter
+          integration: rivian_schedule_control

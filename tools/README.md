@@ -154,7 +154,7 @@ This is the only tool that sends commands.
 4. At the end, also after `q` or an error, it offers to restore the current and the charge switch as they were (Enter = yes).
 5. It refuses at the charge limit unless you confirm.
 
-**Rivian** (through the [charge adapter](../docs/RIVIAN_CHARGE_ADAPTER.md#attended-trial); it never writes the Rivian itself):
+**Rivian** (through the [charge adapter](../docs/RIVIAN_SCHEDULE_CONTROL.md#attended-trial); it never writes the Rivian itself):
 
 - **It refuses** while the adapter is in dry run (turn dry run off in its options first), faulted, or handed back, and while the adapter reads its controller as down: with the adapter mapped to the planner, the heartbeat must show `shadow`.
 - **It guides the trial's steps,** watching `control_state`, `lease_amps` and the Wall Connector:

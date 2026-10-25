@@ -1,4 +1,4 @@
-"""Config flow for the Rivian Solar Charge Adapter.
+"""Config flow for the Rivian Schedule Control.
 
 The password is used once to sign in and is never stored; only the session
 tokens are kept in the entry.

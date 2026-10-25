@@ -75,11 +75,11 @@ async def test_charging_wanted_follows_the_commands(
     assert hass.states.get("binary_sensor.roxxo_planner_charging_wanted").state == "unknown"
     await turn(hass, SHADOW, False)
     assert hass.states.get(WANTED).state == "on"
-    assert hass.states.get("switch.r1s_solar_adapter_solar_charging").state == "on"
+    assert hass.states.get("switch.r1s_schedule_control_solar_charging").state == "on"
     # daytime solar charging off: the car pauses, in step with the adapter's switch
     await turn(hass, "switch.solar_ev_planner_daytime_solar_charging", False)
     await cycle(hass, coordinator, freezer, minutes=16)
-    assert hass.states.get("switch.r1s_solar_adapter_solar_charging").state == "off"
+    assert hass.states.get("switch.r1s_schedule_control_solar_charging").state == "off"
     assert hass.states.get(WANTED).state == "off"
     # back to shadow mode: no decision again
     await turn(hass, SHADOW, True)

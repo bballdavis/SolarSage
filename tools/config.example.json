@@ -43,15 +43,15 @@
       "limit": "sensor.r1s_battery_state_of_charge_limit",
       "plugged": "binary_sensor.r1s_charger_connection",
       "location": "device_tracker.r1s_location",
-      "switch": "switch.r1s_solar_adapter_solar_charging",
-      "current": "number.r1s_solar_adapter_solar_current",
-      "control_state": "sensor.r1s_solar_adapter_control_state",
+      "switch": "switch.r1s_schedule_control_solar_charging",
+      "current": "number.r1s_schedule_control_solar_current",
+      "control_state": "sensor.r1s_schedule_control_control_state",
       "charging_wanted": "binary_sensor.r1s_planner_charging_wanted",
-      "charger_status": "sensor.r1s_solar_adapter_charger_status",
+      "charger_status": "sensor.r1s_schedule_control_charger_status",
       "charger_state": "sensor.r1s_charger_state",
-      "lease_renewal": "switch.r1s_solar_adapter_lease_renewal",
-      "restore_button": "button.r1s_solar_adapter_restore_owner_schedule",
-      "read_schedules_button": "button.r1s_solar_adapter_read_schedules"
+      "lease_renewal": "switch.r1s_schedule_control_lease_renewal",
+      "restore_button": "button.r1s_schedule_control_restore_owner_schedule",
+      "read_schedules_button": "button.r1s_schedule_control_read_schedules"
     }
   },
   "planner": {

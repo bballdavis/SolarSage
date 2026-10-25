@@ -48,12 +48,7 @@ class ControlStateSensor(RivianSolarAdapterEntity, SensorEntity):
 
 
 class ChargerStatusSensor(RivianSolarAdapterEntity, SensorEntity):
-    """The vehicle's charger status (IEC 61851 states): a, b or c.
-
-    It was the evcc status sensor (unique ID ``<vehicle>_evcc_status``) before
-    minor version 2 of the config entry. The entry migration moves its registry
-    entry, so its history is kept.
-    """
+    """The vehicle's charger status (IEC 61851 states): a, b or c."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = CHARGER_STATUSES
