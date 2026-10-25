@@ -13,6 +13,7 @@ from conftest import (
     CHARGER_STATE_ENTITY,
     COORDINATE_FRAGMENTS,
     EMAIL,
+    EVCC_ENABLED_ENTITY,
     LIVENESS_ENTITY,
     LOCATION_ENTITY,
     OVERRIDE_ENTITY,
@@ -61,6 +62,7 @@ from pytest_homeassistant_custom_component.common import (
 from rivian.exceptions import RivianApiException, RivianBadRequestError, RivianUnauthenticated
 
 from custom_components.rivian_solar_adapter.const import DOMAIN, TICK_INTERVAL, journal_key
+from custom_components.rivian_solar_adapter.controller import Observation
 from custom_components.rivian_solar_adapter.diagnostics import (
     async_get_config_entry_diagnostics,
 )
@@ -616,8 +618,10 @@ async def test_liveness_lost_stops_renewal(
 ) -> None:
     """While evcc's liveness entity is unavailable, nothing is renewed or started.
 
-    Once evcc has looked down for the grace period, its last request is stale, so
-    it is dropped and the lease is parked. After evcc is back, it must ask again.
+    Once evcc has looked down for the grace period, its last request is held and
+    the lease is parked. When evcc is back with nothing saying it kept running
+    (no evcc enabled entity is mapped here), that request is dropped: evcc must
+    ask again.
     """
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
@@ -642,12 +646,12 @@ async def test_liveness_lost_stops_renewal(
     assert state(hass, "switch", "solar_charging") == "on"
     assert len(mock_rivian.writes) == 2
     await advance(hass, freezer, timedelta(minutes=1))
-    assert state(hass, "switch", "solar_charging") == "off"  # the request is dropped
     assert len(mock_rivian.writes) == 3
     [parked] = mock_rivian.writes[-1]
     assert parked["duration"] == 20  # a parked window: it ended 5 minutes ago
     assert state(hass, "sensor", "control_state") == "paused"
-    assert read_journal(hass)["desired_charge"] is None
+    assert attributes(hass)["request_held"] is True
+    assert state(hass, "switch", "solar_charging") == "on"  # held, not yet dropped
 
     for _ in range(4):
         await advance(hass, freezer, timedelta(minutes=6))
@@ -660,15 +664,77 @@ async def test_liveness_lost_stops_renewal(
     assert len(mock_rivian.writes) == 3
 
     # evcc is back, but has not asked again: nothing is started on its old request.
-    hass.states.async_set(LIVENESS_ENTITY, "pv")
+    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
     await hass.async_block_till_done(wait_background_tasks=True)
-    await advance(hass, freezer, TICK_INTERVAL)
+    await advance(hass, freezer, timedelta(seconds=30))
     assert len(mock_rivian.writes) == 3
     assert state(hass, "sensor", "control_state") == "paused"
+    assert state(hass, "switch", "solar_charging") == "off"
+    assert read_journal(hass)["desired_charge"] is None
 
     await start_charging(hass)
     assert len(mock_rivian.writes) == 4
     assert state(hass, "sensor", "control_state") == "lease_active"
+
+
+async def test_held_request_resumes_while_evcc_has_charging_enabled(
+    hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
+) -> None:
+    """The liveness sensor failed while evcc kept running: evcc's enabled state resumes it."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
+    hass.states.async_set(EVCC_ENABLED_ENTITY, "on")
+    entry = make_entry(
+        evcc_liveness_entity=LIVENESS_ENTITY, evcc_enabled_entity=EVCC_ENABLED_ENTITY
+    )
+    await set_up(hass, entry)
+    assert entry.runtime_data.observation().evcc_enabled is True
+    await start_charging(hass)
+    assert len(mock_rivian.writes) == 1
+
+    for entity_id in (LIVENESS_ENTITY, EVCC_ENABLED_ENTITY):
+        hass.states.async_set(entity_id, "unavailable")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await advance(hass, freezer, timedelta(minutes=2))
+    await advance(hass, freezer, timedelta(minutes=2))
+    assert len(mock_rivian.writes) == 2  # held and parked
+    assert attributes(hass)["request_held"] is True
+
+    # The REST resource answers again; evcc never restarted, so it still has
+    # charging enabled and will not ask again.
+    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
+    hass.states.async_set(EVCC_ENABLED_ENTITY, "on")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await advance(hass, freezer, TICK_INTERVAL)
+    assert len(mock_rivian.writes) == 3
+    assert state(hass, "sensor", "control_state") == "lease_active"
+    assert attributes(hass)["request_unconfirmed"] is False
+
+
+async def test_tick_sees_entities_written_together(
+    hass: HomeAssistant, mock_rivian: FakeRivian
+) -> None:
+    """Entities one REST resource updates together are read by the same tick."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = make_entry(
+        evcc_liveness_entity=LIVENESS_ENTITY, evcc_enabled_entity=EVCC_ENABLED_ENTITY
+    )
+    await set_up(hass, entry)
+    controller = entry.runtime_data.controller
+    seen: list[Observation] = []
+    tick = controller.async_tick
+
+    async def record(now, obs, **kwargs):
+        seen.append(obs)
+        await tick(now, obs, **kwargs)
+
+    controller.async_tick = record
+    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
+    hass.states.async_set(EVCC_ENABLED_ENTITY, "on")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert seen and seen[0].controller_alive is True and seen[0].evcc_enabled is True
 
 
 async def test_unplug_restores_owner_schedule(
@@ -833,16 +899,18 @@ async def test_lease_renewal_switch(
     assert state(hass, "sensor", "control_state") == "paused"
     assert state(hass, "switch", "solar_charging") == "on"  # still requested
 
-    assert await hass.config_entries.async_reload(loaded_entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
-    assert state(hass, "switch", "lease_renewal") == "off"
-    assert len(mock_rivian.writes) == 2
-
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, "switch", "lease_renewal")
     assert loaded_entry.runtime_data.controller.renewal_enabled is True
+    await advance(hass, freezer, TICK_INTERVAL)  # 5 s after the park
     assert len(mock_rivian.writes) == 3
     assert state(hass, "sensor", "control_state") == "lease_active"
     assert attributes(hass)["start_blocked_by"] == []
+
+    # Persisted across a reload.
+    await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "lease_renewal")
+    assert await hass.config_entries.async_reload(loaded_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert state(hass, "switch", "lease_renewal") == "off"
 
 
 async def test_start_blocked_by_attribute(
@@ -1327,8 +1395,13 @@ async def test_unload_keeps_ownership_and_stops_ticking(
 
     assert await hass.config_entries.async_setup(loaded_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert state(hass, "switch", "solar_charging") == "on"
     assert loaded_entry.runtime_data.controller.journal.original == OWNER_SCHEDULES
+    # The lease lapsed while unloaded and nothing says evcc still wants charging
+    # (an evcc restart would have it ask again), so its old request is dropped
+    # and the window parked.
+    await advance(hass, freezer, timedelta(seconds=30))
+    assert state(hass, "switch", "solar_charging") == "off"
+    assert mock_rivian.writes[-1][0]["amperage"] == 8
 
 
 async def test_disable_restores_owner_schedule(

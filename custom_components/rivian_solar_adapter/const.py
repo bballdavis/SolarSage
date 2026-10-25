@@ -56,6 +56,7 @@ CONF_LOCATION_ENTITY: Final = "location_entity"
 CONF_CHARGER_STATE_ENTITY: Final = "charger_state_entity"
 CONF_WALL_CONNECTOR_ENTITY: Final = "wall_connector_entity"
 CONF_LIVENESS_ENTITY: Final = "evcc_liveness_entity"
+CONF_EVCC_ENABLED_ENTITY: Final = "evcc_enabled_entity"
 CONF_OVERRIDE_ENTITY: Final = "vehicle_override_entity"
 
 ENTITY_OPTIONS: Final = (
@@ -64,12 +65,18 @@ ENTITY_OPTIONS: Final = (
     CONF_CHARGER_STATE_ENTITY,
     CONF_WALL_CONNECTOR_ENTITY,
     CONF_LIVENESS_ENTITY,
+    CONF_EVCC_ENABLED_ENTITY,
     CONF_OVERRIDE_ENTITY,
 )
 # Mapped entities whose absence is reported as a repair issue. A missing plug or
 # location entity is unknown; a missing liveness entity means evcc is down, which
-# blocks every start and renewal.
-MONITORED_ENTITY_OPTIONS: Final = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY, CONF_LIVENESS_ENTITY)
+# blocks every start and renewal; a missing evcc enabled entity is unknown.
+MONITORED_ENTITY_OPTIONS: Final = (
+    CONF_PLUGGED_ENTITY,
+    CONF_LOCATION_ENTITY,
+    CONF_LIVENESS_ENTITY,
+    CONF_EVCC_ENABLED_ENTITY,
+)
 # Override entity states that leave the evcc status to the adapter.
 OVERRIDE_PASS_STATES: Final = frozenset({"auto", "rivian"})
 

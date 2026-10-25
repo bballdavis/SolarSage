@@ -49,6 +49,7 @@ from .const import (
     CONF_CLOCK_SKEW_MINUTES,
     CONF_DRY_RUN,
     CONF_EMAIL,
+    CONF_EVCC_ENABLED_ENTITY,
     CONF_INCREASE_INTERVAL,
     CONF_LEASE_MINUTES,
     CONF_LIVENESS_ENTITY,
@@ -216,6 +217,7 @@ class AdapterRuntime:
             charging=charging,
             at_charger=_binary_state(self.hass, options.get(CONF_WALL_CONNECTOR_ENTITY)),
             controller_alive=self._controller_alive(),
+            evcc_enabled=_binary_state(self.hass, options.get(CONF_EVCC_ENABLED_ENTITY)),
         )
 
     def _controller_alive(self) -> bool | None:
@@ -375,8 +377,13 @@ class AdapterRuntime:
         if self._tick_running:
             return
         self._tick_running = True
+        # Not eager: entities updated together (one REST resource, say) are all
+        # written before the tick reads them.
         self._tick_task = self.entry.async_create_background_task(
-            self.hass, self._async_run_ticks(), f"{DOMAIN} tick {self.entry.entry_id}"
+            self.hass,
+            self._async_run_ticks(),
+            f"{DOMAIN} tick {self.entry.entry_id}",
+            eager_start=False,
         )
 
     async def _async_run_ticks(self) -> None:

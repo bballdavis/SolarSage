@@ -61,7 +61,8 @@ PLUGGED_ENTITY = "binary_sensor.test_r1s_charger_connection"
 LOCATION_ENTITY = "device_tracker.test_r1s_location"
 CHARGER_STATE_ENTITY = "sensor.test_r1s_charger_state"
 WALL_CONNECTOR_ENTITY = "binary_sensor.test_wall_connector_vehicle_connected"
-LIVENESS_ENTITY = "select.test_evcc_loadpoint_mode"
+LIVENESS_ENTITY = "sensor.test_evcc_api"
+EVCC_ENABLED_ENTITY = "binary_sensor.test_evcc_rivian_charging_enabled"
 OVERRIDE_ENTITY = "input_select.test_wall_connector_vehicle"
 
 # The pytest Home Assistant instance is at a fictional test location

@@ -49,6 +49,7 @@ from .const import (
     CONF_CHARGER_STATE_ENTITY,
     CONF_DRY_RUN,
     CONF_EMAIL,
+    CONF_EVCC_ENABLED_ENTITY,
     CONF_LEASE_MINUTES,
     CONF_LIVENESS_ENTITY,
     CONF_LOCATION_ENTITY,
@@ -98,6 +99,8 @@ ENTITY_SELECTORS: dict[str, EntitySelector] = {
     # Any entity that is unavailable while evcc is down, such as a REST sensor on
     # evcc's /api/state (ha-evcc entities stay available in its websocket mode).
     CONF_LIVENESS_ENTITY: EntitySelector(EntitySelectorConfig()),
+    # On while evcc's loadpoint has charging enabled for this vehicle.
+    CONF_EVCC_ENABLED_ENTITY: EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
     CONF_OVERRIDE_ENTITY: EntitySelector(EntitySelectorConfig(domain=["input_select", "select"])),
 }
 REQUIRED_ENTITY_OPTIONS = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY)
