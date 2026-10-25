@@ -95,7 +95,8 @@ ENTITY_SELECTORS: dict[str, EntitySelector] = {
     CONF_LOCATION_ENTITY: EntitySelector(EntitySelectorConfig(domain="device_tracker")),
     CONF_CHARGER_STATE_ENTITY: EntitySelector(EntitySelectorConfig(domain="sensor")),
     CONF_WALL_CONNECTOR_ENTITY: EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
-    # Any entity that is unavailable while evcc is down, such as an ha-evcc entity.
+    # Any entity that is unavailable while evcc is down, such as a REST sensor on
+    # evcc's /api/state (ha-evcc entities stay available in its websocket mode).
     CONF_LIVENESS_ENTITY: EntitySelector(EntitySelectorConfig()),
     CONF_OVERRIDE_ENTITY: EntitySelector(EntitySelectorConfig(domain=["input_select", "select"])),
 }

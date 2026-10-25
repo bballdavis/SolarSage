@@ -42,7 +42,7 @@ The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-test
 
 - [ ] Install the evcc add-on (0.318.0 at the time of writing) and the `ha-evcc` integration.
 - [ ] Start from [`config/evcc/evcc.example.yaml`](../config/evcc/evcc.example.yaml). Configure meters, the `twc3` charger, the solar tariff, and both vehicles **without** control services. The loadpoint stays in mode `off`; the Rivian keeps `mode: now` until phase 4A.
-- [ ] Set the adapter's **evcc liveness** option to an `ha-evcc` entity, such as the loadpoint mode select. Without it, an evcc outage cannot stop the adapter's lease renewals.
+- [ ] Set the adapter's **evcc liveness** option to `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the glue package. Do not use an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. Without a liveness entity, an evcc outage cannot stop the adapter's lease renewals. Check it by stopping the evcc add-on: `sensor.evcc_api` turns unavailable within a minute.
 - [ ] In the evcc UI, set:
   - loadpoint phases **1**;
   - min current 6 A;
@@ -96,7 +96,7 @@ Judge readbacks by the adapter's **Read schedules** or the Rivian app. Upstream 
 | T2 Amps mid-session | Amperage changes apply mid-session | TWC3 current follows each step. Record latency (target under 2 min). |
 | T2b Continuity | Renewals and current changes do not interrupt a session | The TWC3 contactor stays closed, and current never drops to 0, through two renewals and two current changes |
 | T3 Window off "now" | A parked window stops a session | Charging stops (TWC3 contactor opens or current reaches 0). Record latency. |
-| T4 Lease expiry | A lapsing lease stops a session with no write | Charging stops at the window end. The adapter then parks the lapsed window. |
+| T4 Lease expiry | A lapsing lease stops a session with no write | Charging stops at the window end (`lease_minutes` + 5 minutes after the last write) while `control_state` is `lease_lapsed` and nothing has been written. About a minute later the adapter parks the lapsed window. |
 | T5 Window back onto "now" | A new lease restarts a session | Charging resumes. Record latency. |
 | T6 Plug in while parked | The car waits at plug-in while the window is parked | Car waits; record how the app's "charge now" interacts with the schedule |
 | T7 Exact restore | The owner's list comes back exactly | **Read schedules** matches the inventory, and the Rivian app agrees |
