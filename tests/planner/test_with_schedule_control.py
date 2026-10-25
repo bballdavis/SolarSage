@@ -30,6 +30,7 @@ from custom_components.rivian_schedule_control.const import (
     CONF_OVERRIDE_ENTITY,
     CONF_PLUGGED_ENTITY,
     CONF_REFRESH_TOKEN,
+    CONF_UNTIL_ENTITY,
     CONF_USER_SESSION_TOKEN,
     CONF_VEHICLE_ID,
     CONF_WALL_CONNECTOR_ENTITY,
@@ -59,6 +60,7 @@ from .conftest import (
 
 HEARTBEAT = "sensor.solar_ev_planner_heartbeat"
 WANTED = "binary_sensor.r1s_planner_charging_wanted"
+UNTIL = "sensor.r1s_planner_charging_until"
 OVERRIDE = "select.solar_ev_planner_charger_car_override"
 SHADOW = "switch.solar_ev_planner_shadow_mode"
 PLANNING = "switch.solar_ev_planner_planning"
@@ -94,6 +96,7 @@ def schedule_control_entry(vehicle_id: str, **options: Any) -> MockConfigEntry:
             CONF_WALL_CONNECTOR_ENTITY: E["wall_connected"],
             CONF_LIVENESS_ENTITY: HEARTBEAT,
             CONF_CHARGING_ENTITY: WANTED,
+            CONF_UNTIL_ENTITY: UNTIL,
             CONF_OVERRIDE_ENTITY: OVERRIDE,
             CONF_DRY_RUN: False,
         }
@@ -209,6 +212,45 @@ async def test_planner_commands_schedule_control(
     assert c["state"] == "paused"
     coordinator.async_update_listeners()
     assert hass.states.get(WANTED).state == "off"
+
+
+async def test_one_window_per_free_night(
+    both: tuple[HomeAssistant, PlannerCoordinator, Any], freezer: FrozenDateTimeFactory
+) -> None:
+    """The free hours get one schedule write: a full-current window to their end, never
+    renewed, not touched while the planner is down, and nothing written when it ends."""
+    hass, coordinator, rivian = both
+    await turn(hass, SHADOW, False)
+    await tick(hass, freezer, 30)
+    assert hass.states.get(UNTIL).state == "unknown"  # by day: short renewed windows
+    # 20:00, the free hours begin (the sun is down)
+    set_site(hass, pv_w=0, grid_w=900, battery_w=0)
+    await cycle(hass, coordinator, freezer, minutes=8 * 60)
+    await tick(hass, freezer, 30)
+    assert coordinator.data.mode == "night"
+    end = dt_util.as_local(dt_util.parse_datetime(hass.states.get(UNTIL).state))
+    assert (end.hour, end.minute) == (6, 0)
+    night = len(rivian.writes)
+    window = rivian.writes[-1][0]
+    assert window["amperage"] == 48
+    start = window["startTime"]
+    assert (start + window["duration"]) % (24 * 60) == 6 * 60  # ends at 06:00 sharp
+    c = control(hass)
+    assert c["state"] == "lease_active" and c["lease_fixed"] is True
+
+    # through the night, including the planner down for 20 minutes: nothing more is written
+    for k in range(60):
+        if k == 40:
+            await turn(hass, PLANNING, False)
+        if k == 42:
+            await turn(hass, PLANNING, True)
+        await cycle(hass, coordinator, freezer, minutes=10)
+        await tick(hass, freezer, 15)
+    assert len(rivian.writes) == night
+    # 06:00 has passed: the window ended on the vehicle by itself, still nothing written
+    assert coordinator.data.mode == "day"
+    assert hass.states.get(UNTIL).state == "unknown"
+    assert control(hass)["state"] == "paused"
 
 
 async def test_planning_off_parks_the_rivian_and_on_resumes(

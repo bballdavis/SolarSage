@@ -58,10 +58,12 @@ CONF_PLUGGED_ENTITY: Final = "plugged_entity"
 CONF_LOCATION_ENTITY: Final = "location_entity"
 CONF_CHARGER_STATE_ENTITY: Final = "charger_state_entity"
 CONF_WALL_CONNECTOR_ENTITY: Final = "wall_connector_entity"
-# The controller (the solar planner) provides these two: one that is unavailable
-# while it is down, and one that is on while it wants this vehicle charging.
+# The controller (the solar planner) provides these: one that is unavailable while it
+# is down, one that is on while it wants this vehicle charging, and one with the time a
+# request runs until (the end of the free hours), so it is written once as one window.
 CONF_LIVENESS_ENTITY: Final = "controller_liveness_entity"
 CONF_CHARGING_ENTITY: Final = "controller_charging_entity"
+CONF_UNTIL_ENTITY: Final = "controller_until_entity"
 CONF_OVERRIDE_ENTITY: Final = "vehicle_override_entity"
 
 ENTITY_OPTIONS: Final = (
@@ -71,16 +73,19 @@ ENTITY_OPTIONS: Final = (
     CONF_WALL_CONNECTOR_ENTITY,
     CONF_LIVENESS_ENTITY,
     CONF_CHARGING_ENTITY,
+    CONF_UNTIL_ENTITY,
     CONF_OVERRIDE_ENTITY,
 )
 # Mapped entities whose absence is reported as a repair issue. A missing plug or
 # location entity is unknown; a missing liveness entity means the controller is
-# down, which blocks every start and renewal; a missing charging entity is unknown.
+# down, which blocks every start and renewal; a missing charging or until entity is
+# unknown.
 MONITORED_ENTITY_OPTIONS: Final = (
     CONF_PLUGGED_ENTITY,
     CONF_LOCATION_ENTITY,
     CONF_LIVENESS_ENTITY,
     CONF_CHARGING_ENTITY,
+    CONF_UNTIL_ENTITY,
 )
 # Override entity states that leave the charger status to schedule control.
 OVERRIDE_PASS_STATES: Final = frozenset({"auto", "rivian"})

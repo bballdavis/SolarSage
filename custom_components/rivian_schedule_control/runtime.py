@@ -66,6 +66,7 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_RELEASE_DELAY,
     CONF_RENEW_BEFORE_MINUTES,
+    CONF_UNTIL_ENTITY,
     CONF_USER_SESSION_TOKEN,
     CONF_VEHICLE_ID,
     CONF_WALL_CONNECTOR_ENTITY,
@@ -140,6 +141,14 @@ def _known_state(hass: HomeAssistant, entity_id: str | None) -> str | None:
     if not entity_id or (state := hass.states.get(entity_id)) is None:
         return None
     return None if state.state in _UNKNOWN_STATES else state.state
+
+
+def _time_state(hass: HomeAssistant, entity_id: str | None) -> datetime | None:
+    """A timestamp sensor's time (UTC); unknown, or not a time with a zone, is None."""
+    state = _known_state(hass, entity_id)
+    if state is None or (value := dt_util.parse_datetime(state)) is None:
+        return None
+    return value.astimezone(dt_util.UTC) if value.tzinfo is not None else None
 
 
 def _binary_state(hass: HomeAssistant, entity_id: str | None) -> bool | None:
@@ -223,6 +232,7 @@ class ScheduleControlRuntime:
             at_charger=_binary_state(self.hass, options.get(CONF_WALL_CONNECTOR_ENTITY)),
             controller_alive=self._controller_alive(),
             controller_charging=_binary_state(self.hass, options.get(CONF_CHARGING_ENTITY)),
+            controller_until=_time_state(self.hass, options.get(CONF_UNTIL_ENTITY)),
         )
 
     def _controller_alive(self) -> bool | None:

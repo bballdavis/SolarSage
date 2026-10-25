@@ -47,6 +47,7 @@ from .api import AuthError, RateLimitedError, ScheduleApiError, WriteRejectedErr
 from .schedule import (
     AMPS_MAX,
     AMPS_MIN,
+    MINUTES_PER_DAY,
     Fingerprint,
     applied_amps,
     fingerprint,
@@ -144,6 +145,9 @@ class Observation:
     # Whether the controller wants this vehicle charging (its charging entity);
     # None if unknown or not configured.
     controller_charging: bool | None = None
+    # Until when the controller's request runs (its until entity, the end of the free
+    # hours); None if unknown or not configured.
+    controller_until: datetime | None = None
 
     @property
     def eligible(self) -> bool:
@@ -205,13 +209,19 @@ def _from_iso(value: str | None) -> datetime | None:
 
 @dataclass
 class Lease:
-    """The window most recently verified on the provider."""
+    """The window most recently verified on the provider.
+
+    A fixed window runs to the controller's until time (the end of the free hours):
+    it is written once and never renewed, it is not parked at its end or while the
+    controller looks down, and it ends on the vehicle by itself.
+    """
 
     active: bool
     amps: int
     written_at: datetime
     expires_at: datetime | None
     utc_offset_minutes: int
+    fixed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -220,6 +230,7 @@ class Lease:
             "written_at": self.written_at.isoformat(),
             "expires_at": _iso(self.expires_at),
             "utc_offset_minutes": self.utc_offset_minutes,
+            "fixed": self.fixed,
         }
 
     @classmethod
@@ -230,6 +241,7 @@ class Lease:
             written_at=datetime.fromisoformat(data["written_at"]),
             expires_at=_from_iso(data["expires_at"]),
             utc_offset_minutes=data["utc_offset_minutes"],
+            fixed=bool(data.get("fixed", False)),
         )
 
 
@@ -714,32 +726,56 @@ class RivianScheduleController:
             AMPS_MAX if at_ceiling else applied_amps(requested - self.config.increase_margin_amps)
         )
         live = self._lease_live(now)
+        until = self._fixed_until(now, obs)
         reason: str | None = None
         active = False
         amps = AMPS_MIN
         extend = False
         # A request held while the controller looks down allows no window over
         # now, and an unconfirmed one may keep a live lease running but not
-        # start one.
-        wants = journal.desired_charge is True and not self._request_held
+        # start one. A fixed window that ended does not start again while the
+        # controller still gives its end: the request it was written for is over.
+        ended_fixed = lease is not None and lease.active and lease.fixed and not live
+        over = (
+            ended_fixed
+            and obs.controller_until is not None
+            and _floor_minute(obs.controller_until.astimezone(UTC)) == lease.expires_at
+        )
+        wants = journal.desired_charge is True and not self._request_held and not over
         if wants and (live or (may_extend and not self._request_unconfirmed)):
             active = True
+            # A fixed window keeps its end through any rewrite and is never renewed.
+            keeps_end = live and lease.fixed
             if not live:
                 reason, amps, extend = "start", amps_down, True
             elif amps_down < lease.amps:
-                reason, amps, extend = "decrease", amps_down, may_extend
+                reason, amps, extend = "decrease", amps_down, may_extend and not keeps_end
             elif (
                 may_extend
                 and amps_up > lease.amps
                 and self._since(self._last_amps_change_at, now) >= self.config.increase_interval
             ):
-                reason, amps, extend = "increase", amps_up, True
-            elif may_extend and lease.expires_at - now <= timedelta(
-                minutes=self.config.renew_before_minutes
+                reason, amps, extend = "increase", amps_up, not keeps_end
+            elif (
+                not keeps_end
+                and may_extend
+                and lease.expires_at - now <= timedelta(minutes=self.config.renew_before_minutes)
             ):
                 reason, amps, extend = "renew", lease.amps, True
             elif lease.utc_offset_minutes != offset:
-                reason, amps, extend = "dst", lease.amps, may_extend
+                reason, amps, extend = "dst", lease.amps, may_extend and not keeps_end
+        elif (
+            lease is not None
+            and lease.active
+            and lease.fixed
+            and (not live or journal.desired_charge is True)
+        ):
+            # A fixed window ends on the vehicle by itself: it is not parked at its end,
+            # nor while the controller's request is held. Turning charging off parks it
+            # (below). An ended one would recur a week later, so it is parked before that.
+            if live or now - lease.written_at < self.config.repark_after:
+                return
+            reason = "repark"
         elif lease is None or lease.active:
             # Charging is not requested, or a lease can no longer be extended:
             # no window may cover now. A lapsed lease would recur in a week.
@@ -770,7 +806,12 @@ class RivianScheduleController:
         )
         if self._since(self._last_write_at, now) < spacing:
             return
-        if active and extend:
+        fixed = False
+        if active and extend and until is not None:
+            # The controller's request runs to a time: one window to it, not a lease.
+            lease_minutes = self.config.lease_minutes
+            expires_at, fixed = until, True
+        elif active and extend:
             lease_minutes = self.config.lease_minutes
             expires_at = _floor_minute(now) + timedelta(minutes=lease_minutes)
         elif active:
@@ -779,7 +820,7 @@ class RivianScheduleController:
             lease_minutes = math.ceil(remaining)
             if lease_minutes <= 0:
                 return
-            expires_at = lease.expires_at
+            expires_at, fixed = lease.expires_at, lease.fixed
         else:
             lease_minutes = self.config.lease_minutes
             expires_at = None
@@ -790,8 +831,9 @@ class RivianScheduleController:
             skew_minutes=self.config.clock_skew_minutes,
             amps=amps,
             location=self._lease_location(),
+            end=expires_at.astimezone(self.config.time_zone) if fixed else None,
         )
-        new_lease = Lease(active, amps, now, expires_at, offset)
+        new_lease = Lease(active, amps, now, expires_at, offset, fixed)
         if active and (lease is None or not lease.active or amps != lease.amps):
             self._last_amps_change_at = now
         if (
@@ -1249,7 +1291,8 @@ class RivianScheduleController:
             if lease is None or not lease.active:
                 return ControlState.PAUSED
             if lease.expires_at is not None and lease.expires_at <= now:
-                return ControlState.LEASE_LAPSED
+                # A fixed window ended as written; a lease lapsed for want of renewal.
+                return ControlState.PAUSED if lease.fixed else ControlState.LEASE_LAPSED
             return ControlState.LEASE_ACTIVE
         if journal.handed_back:
             return ControlState.HANDED_BACK
@@ -1274,6 +1317,7 @@ class RivianScheduleController:
             "lease_amps": lease.amps if lease else None,
             "lease_written_at": _iso(lease.written_at) if lease else None,
             "lease_expires_at": _iso(lease.expires_at) if lease else None,
+            "lease_fixed": lease.fixed if lease else None,
             "owner_schedule_count": len(journal.original) if journal.original is not None else None,
             "provider_schedule_count": self.provider_schedule_count,
             "owned_fingerprint": journal.owned_fp.key[:12] if journal.owned_fp else None,
@@ -1325,6 +1369,23 @@ class RivianScheduleController:
     @staticmethod
     def _since(moment: datetime | None, now: datetime) -> timedelta:
         return timedelta.max if moment is None else now - moment
+
+    def _fixed_until(self, now: datetime, obs: Observation) -> datetime | None:
+        """The controller's until time for a fixed window, or None for a lease.
+
+        It must lie ahead; a window may last at most a day, so a later time is cut
+        to that (the next start then writes the rest).
+        """
+        until = obs.controller_until
+        if until is None:
+            return None
+        until = _floor_minute(until.astimezone(UTC))
+        if until <= _floor_minute(now):
+            return None
+        latest = _floor_minute(now) + timedelta(
+            minutes=MINUTES_PER_DAY - self.config.clock_skew_minutes
+        )
+        return min(until, latest)
 
     def _may_extend(self, obs: Observation) -> bool:
         """Whether a lease may be started, renewed or increased now."""

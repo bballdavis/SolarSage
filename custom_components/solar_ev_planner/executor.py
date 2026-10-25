@@ -67,6 +67,7 @@ class CarRuntime:
     retry_at: datetime | None = None
     last_error: str | None = None
     blocked: str | None = None  # why the last command waits
+    until: datetime | None = None  # the free hours' end while the car charges through them
     sends: list[datetime] = field(default_factory=list)  # in the last hour (not persisted)
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +84,7 @@ class CarRuntime:
             "failures": self.failures,
             "retry_at": iso(self.retry_at),
             "last_error": self.last_error,
+            "until": iso(self.until),
         }
 
     @classmethod
@@ -105,6 +107,7 @@ class CarRuntime:
             failures=int(data.get("failures") or 0),
             retry_at=dt(data.get("retry_at")),
             last_error=data.get("last_error"),
+            until=dt(data.get("until")),
         )
 
     def end_session(self) -> None:
@@ -113,6 +116,7 @@ class CarRuntime:
         self.commanded_a = None
         self.retry_a = None
         self.blocked = None
+        self.until = None
 
 
 @dataclass(frozen=True)

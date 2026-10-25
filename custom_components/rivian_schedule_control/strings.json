@@ -40,6 +40,7 @@
           "wall_connector_entity": "Wall Connector vehicle connected",
           "controller_liveness_entity": "Controller liveness",
           "controller_charging_entity": "Controller wants charging",
+          "controller_until_entity": "Controller charging until",
           "vehicle_override_entity": "Wall Connector vehicle override"
         },
         "data_description": {
@@ -49,6 +50,7 @@
           "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the charger status a; unknown is ignored. It does not tell which vehicle is connected.",
           "controller_liveness_entity": "Optional, recommended. An entity that is unavailable or unknown while the controller (the solar planner) is down: the planner's heartbeat, sensor.solar_ev_planner_heartbeat. Do not use one of Rivian schedule control's own entities: they stay available. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once the controller has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), a request it made before is put on hold and the charging window is parked, so charging stops. Any request the controller sends meanwhile shows it is running.",
           "controller_charging_entity": "Optional, recommended with controller liveness. Binary sensor that is on while the controller wants this vehicle charging: the planner's Charging wanted sensor for this car, such as binary_sensor.r1s_planner_charging_wanted. After a restart of Home Assistant, or once the controller is back after looking down, it tells whether the controller's earlier request still stands: on keeps or resumes it, off drops it. Without it, such a request is kept only if the charging window is still live, so charging can stay off until the controller asks again.",
+          "controller_until_entity": "Optional, recommended with the solar planner. A timestamp sensor that gives the end of the free hours while the controller charges this vehicle through them: the planner's Charging until sensor for this car, such as sensor.r1s_planner_charging_until. While it shows a time ahead, a charging request is written once, as one window that ends at that time: it is not renewed, not parked when the controller looks down, and ends on the vehicle by itself. Turning charging off, unplugging or leaving home still parks it or restores the owner's schedule. Without it, charging runs on short windows that are renewed while the controller is up.",
           "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector (auto, tesla or rivian), such as the planner's select.solar_ev_planner_charger_car_override. While its state is anything other than auto or rivian, the charger status is a."
         }
       }
@@ -80,6 +82,7 @@
           "wall_connector_entity": "Wall Connector vehicle connected",
           "controller_liveness_entity": "Controller liveness",
           "controller_charging_entity": "Controller wants charging",
+          "controller_until_entity": "Controller charging until",
           "vehicle_override_entity": "Wall Connector vehicle override",
           "lease_minutes": "Lease length",
           "renew_before_minutes": "Renew before expiry",
@@ -98,6 +101,7 @@
           "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the charger status a; unknown is ignored. It does not tell which vehicle is connected.",
           "controller_liveness_entity": "Optional, recommended. An entity that is unavailable or unknown while the controller (the solar planner) is down: the planner's heartbeat, sensor.solar_ev_planner_heartbeat. Do not use one of Rivian schedule control's own entities: they stay available. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once the controller has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), a request it made before is put on hold and the charging window is parked, so charging stops. Any request the controller sends meanwhile shows it is running.",
           "controller_charging_entity": "Optional, recommended with controller liveness. Binary sensor that is on while the controller wants this vehicle charging: the planner's Charging wanted sensor for this car, such as binary_sensor.r1s_planner_charging_wanted. After a restart of Home Assistant, or once the controller is back after looking down, it tells whether the controller's earlier request still stands: on keeps or resumes it, off drops it. Without it, such a request is kept only if the charging window is still live, so charging can stay off until the controller asks again.",
+          "controller_until_entity": "Optional, recommended with the solar planner. A timestamp sensor that gives the end of the free hours while the controller charges this vehicle through them: the planner's Charging until sensor for this car, such as sensor.r1s_planner_charging_until. While it shows a time ahead, a charging request is written once, as one window that ends at that time: it is not renewed, not parked when the controller looks down, and ends on the vehicle by itself. Turning charging off, unplugging or leaving home still parks it or restores the owner's schedule. Without it, charging runs on short windows that are renewed while the controller is up.",
           "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector (auto, tesla or rivian), such as the planner's select.solar_ev_planner_charger_car_override. While its state is anything other than auto or rivian, the charger status is a.",
           "lease_minutes": "How far ahead each charging window reaches. If renewals stop, charging stops when it ends.",
           "renew_before_minutes": "Renew an active lease this long before it ends. Must be shorter than the lease.",
@@ -280,6 +284,10 @@
     "missing_controller_charging_entity": {
       "title": "Controller charging entity for Rivian schedule control is missing",
       "description": "Rivian schedule control for {title} uses {entity_id} to know whether the controller wants the vehicle charging, but that entity does not exist. Until it does, after a restart or a controller outage schedule control keeps the controller's earlier request only if the charging window is still live, so charging can stay off until the controller asks again. Map an existing entity in the schedule control options, clear the option, or restore the entity."
+    },
+    "missing_controller_until_entity": {
+      "title": "Controller until entity for Rivian schedule control is missing",
+      "description": "Rivian schedule control for {title} uses {entity_id} to know until when the controller's charging request runs, but that entity does not exist. Until it does, charging runs on short windows that are renewed while the controller is up, instead of one window to the end of the free hours. Map an existing entity in the schedule control options, clear the option, or restore the entity."
     },
     "setup_failed_while_owning": {
       "title": "Rivian schedule control cannot run while it controls the charging schedule",

@@ -449,6 +449,15 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             return None
         return rt.commanded_a > 0
 
+    def charging_until(self, car_id: str) -> datetime | None:
+        """The end of the free hours while the planner charges this car through them, so
+        Rivian schedule control writes one window to it; None otherwise, and while the
+        planner sends nothing."""
+        rt = self.runtime.get(car_id)
+        if not self.active or rt is None or rt.plugged_since is None:
+            return None
+        return rt.until
+
     # ------------------------------------------------------------------ refreshes
 
     async def _async_refresh_history(self, now: datetime) -> None:
@@ -856,6 +865,17 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             return
         command = decision.command_for(car_id)
         car, rt = self.cars[car_id], self.runtime[car_id]
+        # The end of the free hours goes out before the command it belongs to, so the
+        # Rivian's schedule gets one window to it rather than a short renewed one.
+        amps = command.amps if command is not None else None
+        charging = amps > 0 if amps is not None else bool(rt.commanded_a)
+        until = decision.free_until if decision.mode == "night" and charging else None
+        stale = [r for cid, r in self.runtime.items() if cid != car_id and r.until is not None]
+        if until != rt.until or stale:
+            rt.until = until
+            for r in stale:
+                r.until = None
+            self.async_update_listeners()
         if command is not None and command.amps is not None:
             await self.executor.async_apply(car, rt, command.amps, now)
         elif decision.mode in ("day", "night"):

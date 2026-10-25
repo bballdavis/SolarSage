@@ -73,6 +73,7 @@ async def test_entity_ids(site: HomeAssistant, fake_cars: FakeCars) -> None:
     for car in ("r1s", "roxxo"):
         expected |= {e.format(car=car) for e in CAR_ENTITIES}
     expected.add("number.roxxo_planner_restore_current_at_unplug")  # the Tesla only
+    expected.add("sensor.r1s_planner_charging_until")  # the Rivian only
     assert ids == expected
     for entity_id in expected:
         assert hass.states.get(entity_id) is not None, entity_id

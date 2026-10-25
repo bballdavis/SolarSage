@@ -59,6 +59,7 @@ from .const import (
     CONF_PLUGGED_ENTITY,
     CONF_REFRESH_TOKEN,
     CONF_RENEW_BEFORE_MINUTES,
+    CONF_UNTIL_ENTITY,
     CONF_USER_SESSION_TOKEN,
     CONF_VEHICLE_ID,
     CONF_WALL_CONNECTOR_ENTITY,
@@ -104,6 +105,8 @@ ENTITY_SELECTORS: dict[str, EntitySelector] = {
     # On while the controller wants this vehicle charging. A binary sensor only:
     # schedule control's own charging switch must never confirm its own request.
     CONF_CHARGING_ENTITY: EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
+    # A timestamp: until when the controller's request runs (the end of the free hours).
+    CONF_UNTIL_ENTITY: EntitySelector(EntitySelectorConfig(domain="sensor")),
     CONF_OVERRIDE_ENTITY: EntitySelector(EntitySelectorConfig(domain=["input_select", "select"])),
 }
 REQUIRED_ENTITY_OPTIONS = (CONF_PLUGGED_ENTITY, CONF_LOCATION_ENTITY)

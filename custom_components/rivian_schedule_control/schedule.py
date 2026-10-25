@@ -192,6 +192,7 @@ def lease_window(
     skew_minutes: int,
     amps: int,
     location: dict[str, float],
+    end: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the single window that schedule control writes while it owns the vehicle.
 
@@ -204,13 +205,22 @@ def lease_window(
     sees it cover now. It ends ``lease_minutes`` plus the skew from now. If it
     is not renewed it lapses, and its next occurrence is a week later.
 
+    A fixed window (``end`` given, in the same local time zone) starts
+    ``skew_minutes`` ago too but ends exactly at ``end``, the controller's until
+    time, with no padding: past it the vehicle would charge in paid hours.
+
     A parked window ended ``skew_minutes`` ago, so no window covers now and the
     vehicle waits. It also recurs only a week later.
     """
     if local_now.tzinfo is None:
         raise ValueError("local_now must be timezone-aware")
     local_now = local_now.replace(second=0, microsecond=0)
-    if active:
+    if active and end is not None:
+        start = local_now - timedelta(minutes=skew_minutes)
+        duration = int((end.replace(second=0, microsecond=0) - start).total_seconds() // 60)
+        if not 0 < duration <= MINUTES_PER_DAY:
+            raise ValueError("a fixed window must end within a day after it starts")
+    elif active:
         start = local_now - timedelta(minutes=skew_minutes)
         duration = lease_minutes + 2 * skew_minutes
     else:

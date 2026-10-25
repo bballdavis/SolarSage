@@ -25,7 +25,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import CONF_NAME, HEARTBEAT_CHECK, MODES
+from .const import CONF_KIND, CONF_NAME, HEARTBEAT_CHECK, KIND_RIVIAN, MODES
 from .coordinator import CarView, PlannerConfigEntry, PlannerCoordinator, PlannerData
 from .entity import PlannerEntity
 
@@ -66,6 +66,10 @@ async def async_setup_entry(
             ],
             config_subentry_id=car["subentry_id"],
         )
+        if car[CONF_KIND] == KIND_RIVIAN:
+            async_add_entities(
+                [ChargingUntilSensor(coordinator, car_id)], config_subentry_id=car["subentry_id"]
+            )
 
 
 class DataSensor(PlannerEntity, SensorEntity):
@@ -349,6 +353,27 @@ class PlannedCurrentSensor(CarSensor):
             "soc": v.soc_pct,
             "limit": v.limit_pct,
         }
+
+
+class ChargingUntilSensor(PlannerEntity, SensorEntity):
+    """Until when the planner charges the Rivian: the end of the free hours while it charges
+    the car through them, unknown otherwise. Rivian schedule control's
+    ``controller_until_entity``: it then writes one window to that time, once."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: PlannerCoordinator, car_id: str) -> None:
+        super().__init__(coordinator, "charging_until", car_id)
+
+    @property
+    def available(self) -> bool:
+        """Always available: unknown, not unavailable, is how it says "no end time"."""
+        return True
+
+    @property
+    def native_value(self) -> datetime | None:
+        assert self.car_id is not None
+        return self.coordinator.charging_until(self.car_id)
 
 
 class OutlookSensor(CarSensor):

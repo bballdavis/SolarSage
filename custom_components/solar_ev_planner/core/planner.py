@@ -807,6 +807,7 @@ class Planner:
             nxt,
             safety,
             d,
+            self._free_end(snap) if mode == "night" else None,
         )
 
     def _trajectory(

@@ -91,6 +91,9 @@
       "planned_current": {
         "default": "mdi:current-ac"
       },
+      "charging_until": {
+        "default": "mdi:clock-end"
+      },
       "outlook": {
         "default": "mdi:crystal-ball"
       },

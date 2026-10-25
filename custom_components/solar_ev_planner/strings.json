@@ -428,6 +428,9 @@
       "planned_current": {
         "name": "Planned current"
       },
+      "charging_until": {
+        "name": "Charging until"
+      },
       "outlook": {
         "name": "Outlook"
       },
