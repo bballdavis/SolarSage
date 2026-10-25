@@ -71,7 +71,7 @@ Plan phase 1: every planner input is present and fresh, with no control yet.
    python -m tools.snapshot pull --days 7
    ```
 
-**Done when** a week of checks shows no FAIL, both cars were identified correctly on the charger, and the snapshot holds a week of data. Answer the open [information needed](PLAN.md#information-needed) items now, especially whether the Sol-Ark holds the battery during free hours.
+**Done when** a week of checks shows no FAIL, both cars were identified correctly on the charger, and the snapshot holds a week of data. Answer the open [information needed](PLAN.md#information-needed) items now. Also look at the Sol-Ark battery level in the week's history: it should be back at 100% by the end of each night's free hours, because the planner counts on that refill (PLAN.md decision 14). If it is not, set the planner's "home battery during free hours" option to match what the inverter really does.
 
 ## 2. Replay real days
 
@@ -86,7 +86,7 @@ python -m tools.replay tools/out/snapshot_<first>_<last>.json --set caution=bala
 Open the `.html` page it writes in `tools/out/`. For each day, look at:
 
 - **Car current:** a smooth daytime current, a few changes a day, each with a reason that makes sense;
-- **Home battery:** in `--whatif`, it stays above the floor (30%) and holds about 40% when the free hours start;
+- **Home battery:** in `--whatif`, it stays above the floor (30%) by day, nears the wanted level (30% by default) at the free start only on days a car took the battery's spare energy, and refills to 100% overnight;
 - **Paid import** in the summary: near zero for the car on the free-nights tariff;
 - **The forecast source** in the notes: `totals` days are an approximation until `record-forecasts` has run for a while (the [tools guide](../tools/README.md#replaypy-what-would-the-planner-have-done) explains).
 

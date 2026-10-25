@@ -48,6 +48,7 @@
       "control_state": "sensor.r1s_solar_adapter_control_state",
       "charging_wanted": "binary_sensor.r1s_planner_charging_wanted",
       "charger_status": "sensor.r1s_solar_adapter_charger_status",
+      "charger_state": "sensor.r1s_charger_state",
       "lease_renewal": "switch.r1s_solar_adapter_lease_renewal",
       "restore_button": "button.r1s_solar_adapter_restore_owner_schedule",
       "read_schedules_button": "button.r1s_solar_adapter_read_schedules"

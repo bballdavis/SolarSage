@@ -100,6 +100,7 @@ CAR_EXPECT = {
     "current": Expect("number", "A", 0, 80),
     "control_state": Expect("sensor"),
     "charger_status": Expect("sensor"),
+    "charger_state": Expect("sensor", required=False),  # Rivian: for the adapter's option
     "lease_renewal": Expect("switch", required=False),
     "restore_button": Expect("button", required=False),
     "read_schedules_button": Expect("button", required=False),

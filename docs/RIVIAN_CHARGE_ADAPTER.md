@@ -59,7 +59,7 @@
      | --- | --- | --- |
      | Plugged in (`plugged_entity`) | The Rivian charger connection binary sensor: `binary_sensor.r1s_charger_connection` | Yes |
      | Location (`location_entity`) | The Rivian device tracker, not a person: `device_tracker.r1s_location` | Yes |
-     | Charger state (`charger_state_entity`) | The Rivian charger state sensor | Recommended: without it the charger status can never be "charging" (`c`) |
+     | Charger state (`charger_state_entity`) | The Rivian integration's "Charger state" sensor, likely `sensor.r1s_charger_state` (`python -m tools.check` confirms it) | Recommended: without it the charger status can never be "charging" (`c`) |
      | Wall Connector vehicle connected (`wall_connector_entity`) | `binary_sensor.tesla_wall_connector_vehicle_connected` | Recommended: it ends a session when the Wall Connector sees no vehicle, and blocks control of a Rivian plugged in elsewhere |
      | Controller liveness (`controller_liveness_entity`) | The planner's heartbeat, `sensor.solar_ev_planner_heartbeat`: unavailable while the planner is off or down. Leave it empty until the planner is installed. | **Strongly recommended** once a controller runs: without it, a controller outage cannot stop renewals |
      | Controller wants charging (`controller_charging_entity`) | The planner's charging-wanted sensor for this car, `binary_sensor.r1s_planner_charging_wanted` | **Recommended** with liveness: it lets charging resume after an outage of the liveness entity, and after a long Home Assistant restart |

@@ -7,7 +7,7 @@
 ## What it does
 
 - **Every minute** it reads the Sol-Ark, the Wall Connector, Solcast, the free-hours schedule and both cars. House use is `solar + grid − battery − Wall Connector` (there is no house sensor).
-- **Every 15 minutes** (and at once on a plug-in, a new forecast or a mode change) it plans one steady current for the car on the charger: excess solar first, the home battery within the floor rule, then free hours, and paid grid power only when a plan cannot be met otherwise.
+- **Every 15 minutes** (and at once on a plug-in, a new forecast or a mode change) it plans one steady current for the car on the charger: excess solar first, then the home battery within the floor rule (with the free-hours refill, the battery energy that would be left when the free hours begin), then free hours, and paid grid power only when a plan cannot be met otherwise.
 - **Every minute** its safety rules check for paid import and the battery at the floor.
 - **It commands only the car it sees on the charger**, and only what differs from what the car already holds. A pause is the charge switch, never 0 A.
 - **It explains itself**: a mode, a one-sentence reason, the next planned change, the predicted battery path and each car's outlook.
@@ -69,7 +69,8 @@ The form is prefilled with the owner's entity IDs wherever they exist. Change an
 | | Battery capacity sensor | `sensor.sol_ark_battery_capacity_estimate` (optional; the fixed capacity, 31 kWh, is used without it) |
 | | Maximum charge and discharge power | 9 kW each |
 | | Battery reserve | 10%: where the inverter stops discharging |
-| | Battery holds during free hours | On: the Sol-Ark is set to hold the battery while import is free. See [PLAN.md, information needed](PLAN.md#information-needed). |
+| | Home battery during free hours | **Refill** (default): the Sol-Ark charges the battery from the grid while import is free, so each paid day starts full, and by day the car may use what the battery would still hold when the free hours begin. **Hold:** it keeps its level and the house and car run from the grid. **Normal:** it serves the house and car as by day. Must match the inverter's time-of-use setting ([PLAN.md, decision 14](PLAN.md#decisions)). |
+| | Refill level | 100%: where the grid charging stops (the time-of-use slot's battery level) |
 | Wall Connector | Power | `sensor.tesla_wall_connector_total_power` (kW). **Required:** without it the planner cannot tell the house from the car, and does not plan. |
 | | Vehicle current | `sensor.garage_tesla_wall_connector_vehicle_current` |
 | | Vehicle connected | `binary_sensor.tesla_wall_connector_vehicle_connected` (recommended: off means no car is commanded) |
@@ -171,7 +172,7 @@ All settings are entities on the planner's device. They are kept in the planner'
 | `number.solar_ev_planner_night_charging_current` | 48 A | 6–48 A | 48 means each car's maximum; lower it to spread the charge |
 | `select.solar_ev_planner_caution` | conservative | near-certain, conservative, balanced, typical day | How much of the forecast to count on (97%, 90%, 75%, 50%) |
 | `number.solar_ev_planner_battery_floor` | 30% | 5–95% | The predicted battery must stay above it |
-| `number.solar_ev_planner_battery_wanted_at_free_hours` | 40% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours) |
+| `number.solar_ev_planner_battery_wanted_at_free_hours` | 30% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours). With the refill, the car may use the battery down to it by day; raise it to keep more in the battery |
 | `number.solar_ev_planner_minimum_time_between_changes` | 15 min | 1–120 min | |
 | `number.solar_ev_planner_largest_change` | 6 A | 1–48 A | |
 | `number.solar_ev_planner_paid_grid_tolerance` | 5 min | 0–60 min | How long paid import is accepted before the safety rule cuts the car |

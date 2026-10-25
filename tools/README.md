@@ -32,10 +32,10 @@ Tools for testing the planner with your real Home Assistant data and connections
    | --- | --- |
    | `site` | The Sol-Ark, Wall Connector, Solcast and free-hours entities |
    | `units` | The unit of each power sensor (`W` or `kW`). The Sol-Ark powers are W and the Wall Connector's total power is kW. |
-   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the adapter's entities: the control state, charger status, lease renewal switch and buttons. `charging_wanted` is the planner's sensor for the car. |
+   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the adapter's entities (the control state, charger status, lease renewal switch and buttons) and its own charger state sensor, `sensor.r1s_charger_state`, which the adapter's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car. |
    | `planner` | The planner integration's heartbeat, Planning and Shadow mode switches, and its mode, reason and car-on-charger sensors. Until the planner is installed the check only notes that it is missing. |
    | `tariff` | `price`, `buyback`, and `free_hours_fallback`, used when no Schedule helper is readable |
-   | `battery` | Home battery limits for replays (capacity, 9 kW each way, 92% efficiency, 10% reserve, holds in free hours) |
+   | `battery` | Home battery limits for replays (capacity, 9 kW each way, 92% efficiency, 10% reserve) and what it does in free hours: `free_hours` is `refill` (to `refill_to_pct`, 100%), `hold` or `normal` |
    | `settings` | Planner settings for replays, for example `{"caution": "balanced"}` (names as in the planner's `Settings`) |
    | `plans` | Car plans for replays, for example `{"tesla": [{"target_pct": 80, "at": "07:30", "weekdays": [0, 1, 2, 3, 4]}]}` |
    | `freshness` | Thresholds of the check: how long the Sol-Ark may stay quiet, and how old a Solcast poll may be |
@@ -118,7 +118,7 @@ Hover over a chart, or focus it and use the arrow keys, to see every value with 
 **Shadow or what-if.**
 
 - **Shadow (the default)** feeds the planner what really happened, including whatever current the car really drew, as shadow mode will in Home Assistant.
-- **What-if (`--whatif`)** closes the loop: the car draws what the planner commands. A simple Sol-Ark model turns the real solar and house load into the battery level, grid power and paid import the planner would have caused, and the planner sees that world. In the model, the sun serves the house first, and the battery takes the surplus and covers the deficit within 9 kW and its reserve. The battery holds in free hours, and the grid takes the rest.
+- **What-if (`--whatif`)** closes the loop: the car draws what the planner commands. A simple Sol-Ark model turns the real solar and house load into the battery level, grid power and paid import the planner would have caused, and the planner sees that world. In the model, the sun serves the house first, and the battery takes the surplus and covers the deficit within 9 kW and its reserve. In free hours the battery does what the `battery` section says (by default it refills from the grid up to 100%), and the grid takes the rest.
 
 **Where the forecast comes from,** per step (the CSV's `forecast_source` column):
 
