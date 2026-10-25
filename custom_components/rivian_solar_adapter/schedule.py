@@ -1,6 +1,6 @@
 """Rivian charging schedule validation, hashing, and lease windows.
 
-Ported from the earlier prototype (reference/ha-prototype-source/.../schedule.py).
+Ported from the earlier HA prototype's schedule module (in git history).
 This module has no Home Assistant imports so it can be tested on its own.
 """
 

@@ -1,6 +1,6 @@
 # Working plan: smart solar charging for the Tesla and the Rivian
 
-Last updated: October 25, 2026. This is the plan we work from. Where it conflicts with the [architecture record](SOLAR_CHARGING_ARCHITECTURE.md) or the [roadmap](ROADMAP.md), this plan wins; both describe the earlier evcc-centred design and will be revised to match.
+Last updated: October 25, 2026. This is the plan we work from. Earlier designs and research notes are in git history.
 
 ## Goal
 
@@ -131,17 +131,19 @@ Each phase ends with a check that must pass before the next.
 | 2. Planner design | Finish the simulation, pick the design, write `PLANNER_DESIGN.md`. | Owner agrees with the behaviour on the simulated days. |
 | 3. Build the planner | HA integration with tests: night charging first, then daytime solar charging; tariff schedules; dashboard. Runs in **shadow mode**: it plans and explains, but sends nothing. | A week of shadow plans that the owner finds sensible. |
 | 4. Tesla under the planner | Let the planner command the Tesla. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. |
-| 5. Rivian trial | Attended trial with the adapter ([steps](RIVIAN_CHARGE_ADAPTER.md#attended-trial-roadmap-phase-3)): current changes, pause, lapse, exact restore of the owner's schedule. | The car follows schedule changes reliably. If it does not, decide between Rivian on a fixed schedule only or a controllable charger. |
+| 5. Rivian trial | Attended trial with the adapter ([steps](RIVIAN_CHARGE_ADAPTER.md#attended-trial)): current changes, pause, lapse, exact restore of the owner's schedule. | The car follows schedule changes reliably. If it does not, decide between Rivian on a fixed schedule only or a controllable charger. |
 | 6. Rivian under the planner | Let the planner command the Rivian through the adapter. | Same checks as phase 4, plus the owner's own Rivian schedule restored on unplug. |
 | 7. Unattended | Notifications for faults and safety-rule trips; review a month of results. | A month without manual intervention. |
 
 ## Repository changes
 
 - **Keep:** the Rivian charge adapter. It already takes a charge switch and a current number from any controller and writes the Rivian schedule safely.
-- **Adapt:** the adapter's evcc-specific options (`evcc_liveness_entity`, `evcc_enabled_entity`) become a planner heartbeat, so the adapter still parks the Rivian if the planner stops.
+- **Adapt the adapter to the planner:**
+  - point its liveness and charging-enabled options at entities the planner provides (a heartbeat, and "wants this car charging"), so the adapter still parks the Rivian if the planner stops; rename the `evcc_*` option and entity names;
+  - switch off the two evcc-era current rules: the 3 A increase margin and the hold just below 48 A. The planner asks for exact currents and rate-limits itself.
 - **Add:** the planner integration, the tariff helpers, the dashboard, `PLANNER_DESIGN.md`.
 - **Retired:** the evcc config and the HA glue package (removed; last versions in [`266b3bf`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/266b3bf0f022fcccbcf3874c6511963aac61d711/config)). The glue's useful logic moves into the planner, reusing that code: which car is on the Wall Connector, the vehicle override, the Tesla amp restore at unplug, and the stale-input check.
-- **Revise:** the architecture record, roadmap and README to match this plan.
+- **Removed from the tree:** the earlier architecture record, roadmap, ecosystem survey, research brief, source index, discussion history and the `reference/` snapshots of the earlier prototype. They remain in git history, last present in commit [`4f9120a`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/4f9120adf605f1fe21ce295b0fd4972bb838dd4d).
 
 ## Information needed
 

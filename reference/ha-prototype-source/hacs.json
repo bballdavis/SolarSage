@@ -1,6 +1,0 @@
-{
-  "name": "HASS Solar Rivian",
-  "homeassistant": "2025.1.0",
-  "zip_release": true,
-  "filename": "rivian.zip"
-}

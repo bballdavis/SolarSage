@@ -1,29 +1,35 @@
 # HASS Solar Rivian
 
-Seamless "charge on solar" in Home Assistant for **both** household EVs, a Tesla and a 2025 Gen 2 Rivian R1S. Both share one Tesla Wall Connector Gen 3 and run on a Sol-Ark solar and battery system. Despite the name, this is an orchestration project between Home Assistant, the Tesla, and the Rivian.
+Smart solar charging in Home Assistant for **both** household EVs, a Tesla and a 2025 Gen 2 Rivian R1S. They share one Tesla Wall Connector Gen 3 and run on a Sol-Ark solar and battery system. Despite the name, this project covers both cars.
 
-**Direction (October 25, 2026):** the [working plan](docs/PLAN.md) is the source of truth.
+**Start with the [working plan](docs/PLAN.md).** It records the decisions, how the system works, the planner, electricity plans, the dashboard, the phases and what is still needed.
+
+In short:
 
 - **Existing hardware only:** Home Assistant OS, the Sol-Ark, the Tesla Wall Connector (measurement only) and the two cars.
 - **The cars through their own APIs:** the Tesla through HA core Tesla Fleet, the Rivian through this repository's charge adapter, which writes its charging schedule.
-- **A forecast-predictive planner** in Home Assistant decides each car's current: smooth changes planned from the Solcast forecast and recent usage, with the home battery absorbing swings and free tariff hours used first.
+- **A planner in Home Assistant** decides each car's current: night charging in the free tariff hours by default, and smooth daytime solar charging planned from the Solcast forecast and recent usage, with the home battery absorbing swings.
 - **One dashboard** in Home Assistant to see and steer it.
 
-Start here:
+## What is here
 
-- [Working plan](docs/PLAN.md): decisions, how it works, the planner, electricity plans, dashboard, phases and what is still needed.
-- [Architecture record](docs/SOLAR_CHARGING_ARCHITECTURE.md) (earlier evcc-centred design, superseded in part): the design, what we build versus reuse, the Rivian adapter contract, evcc pitfalls, the safety model, and open questions for the owner.
-- [Roadmap](docs/ROADMAP.md) (superseded in part by the plan): phased plan with evidence gates. Tesla first, then an attended Rivian trial using the adapter, then wiring the adapter into evcc or taking the hardware path.
-- [Ecosystem survey](docs/ECOSYSTEM_SURVEY.md): what evcc, the Tesla integrations, the Rivian integration and client, charger-side options, and other orchestrators actually do, with source permalinks.
-- The earlier evcc config and HA glue package were removed when evcc was dropped; their last versions are in commit [`266b3bf`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/266b3bf0f022fcccbcf3874c6511963aac61d711/config).
+| Path | What it is |
+| --- | --- |
+| [`docs/PLAN.md`](docs/PLAN.md) | The working plan |
+| [`docs/RIVIAN_CHARGE_ADAPTER.md`](docs/RIVIAN_CHARGE_ADAPTER.md) | Guide to the Rivian charge adapter: how it works, install, entities, the attended trial, faults |
+| [`custom_components/rivian_solar_adapter/`](custom_components/rivian_solar_adapter/) | The Rivian charge adapter (HA integration, installable through HACS) |
+| [`tests/`](tests/) | The adapter's tests |
 
-Background and history:
+The planner integration and the dashboard are next ([plan phases](docs/PLAN.md#phases)). Earlier designs, research notes and prototype snapshots are in git history.
 
-- [Research and harness brief](docs/RIVIAN_SOLAR_CHARGING_RESEARCH_AND_HARNESS_BRIEF.md): earlier decisions and the acceptance contract for Rivian control evidence.
-- [Source work and artifact index](docs/SOURCE_WORK_INDEX.md): copied snapshots, source repositories, revisions, and boundaries.
-- [Complete HA prototype source snapshot](reference/ha-prototype-source/): the earlier combined Rivian/solar integration. Its Rivian schedule-safety code is the basis for the adapter; its control engine and panel are superseded by evcc.
-- [Codex discussion history](docs/CODEX_DISCUSSION_HISTORY.md): relevant chat IDs and decisions.
+Nothing here has been run against the real cars, charger or Home Assistant instance yet. The adapter installs in dry run and writes nothing until dry run is turned off.
 
-The `reference/` tree is an archival snapshot of earlier work. Its Python harness and HA tests are not installed or run by this repository. No credentials, raw Rivian responses, or live charging proof are included.
+## Checks
 
-**Checks.** There is no CI yet. Before committing adapter changes, run `ruff check custom_components tests`, `ruff format --check custom_components tests` and `python -m pytest tests -q` locally, in a Python 3.14 environment with `pytest-homeassistant-custom-component` and `rivian-python-client` installed.
+There is no CI yet. Before committing, run these locally in a Python 3.14 environment with `pytest-homeassistant-custom-component` and `rivian-python-client` installed:
+
+```sh
+ruff check custom_components tests
+ruff format --check custom_components tests
+python -m pytest tests -q
+```
