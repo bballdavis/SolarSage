@@ -1,5 +1,7 @@
 # Solar charging architecture: evcc as the brain, thin vehicle adapters
 
+> **Superseded in part (October 25, 2026).** The [working plan](PLAN.md) replaces evcc's reactive surplus loop with a forecast-predictive planner and uses Tesla's own API through HA core Tesla Fleet. Where this document conflicts with the plan, the plan wins. The Rivian adapter, evidence and pitfalls below still apply.
+
 Status: **proposed decision**, October 24, 2026. This record changes part of the earlier direction in the [research brief](RIVIAN_SOLAR_CHARGING_RESEARCH_AND_HARNESS_BRIEF.md#decisions-and-ownership); see [Consequences](#consequences-for-earlier-decisions). The evidence is in the [ecosystem survey](ECOSYSTEM_SURVEY.md) and the work plan is in the [roadmap](ROADMAP.md). Nothing in this record was tested against the live vehicles, charger, or Home Assistant instance. Upstream claims cite source at pinned commits; vehicle behavior claims are labeled by evidence strength.
 
 ## Decision

@@ -1,5 +1,7 @@
 # Roadmap: seamless solar charging for the Tesla and the Rivian
 
+> **Superseded in part (October 25, 2026).** The [working plan](PLAN.md) replaces evcc's reactive surplus loop with a forecast-predictive planner and uses Tesla's own API through HA core Tesla Fleet. Where this document conflicts with the plan, the plan wins. The Rivian adapter, evidence and pitfalls below still apply.
+
 This plan implements the [architecture decision](SOLAR_CHARGING_ARCHITECTURE.md). Each phase ends with an evidence gate. Do not skip a gate because software reports success: "accepted" and "physically changed" are separate results, and only TWC3 or independent meter readings prove the second.
 
 The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-tested, but untested against the real car. It installs in dry run, so phases 0–2 use it only to read. Phase 3 runs the attended trial with it, and phase 4A wires it into evcc.

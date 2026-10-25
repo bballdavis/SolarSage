@@ -2,17 +2,18 @@
 
 Seamless "charge on solar" in Home Assistant for **both** household EVs, a Tesla and a 2025 Gen 2 Rivian R1S. Both share one Tesla Wall Connector Gen 3 and run on a Sol-Ark solar and battery system. Despite the name, this is an orchestration project between Home Assistant, the Tesla, and the Rivian.
 
-**Direction (October 2026):** build on existing projects instead of a custom controller.
+**Direction (October 25, 2026):** the [working plan](docs/PLAN.md) is the source of truth.
 
-- **[evcc](https://github.com/evcc-io/evcc)** is the solar-charging brain.
-- **Home Assistant** supplies the measurements and the vehicle controls.
-- **This repository** owns only what nobody else solves: a small Rivian charge adapter, the HA glue configuration, and the commissioning evidence.
-- **Hardware fallback.** If the Gen 2 Rivian cannot be controlled reliably through its charging schedule, replace the Wall Connector with a locally controllable NACS EVSE. evcc then controls both cars at the charger.
+- **Existing hardware only:** Home Assistant OS, the Sol-Ark, the Tesla Wall Connector (measurement only) and the two cars.
+- **The cars through their own APIs:** the Tesla through HA core Tesla Fleet, the Rivian through this repository's charge adapter, which writes its charging schedule.
+- **A forecast-predictive planner** in Home Assistant decides each car's current: smooth changes planned from the Solcast forecast and recent usage, with the home battery absorbing swings and free tariff hours used first.
+- **One dashboard** in Home Assistant to see and steer it.
 
 Start here:
 
-- [Architecture decision](docs/SOLAR_CHARGING_ARCHITECTURE.md): the chosen design, what we build versus reuse, the Rivian adapter contract, evcc pitfalls, the safety model, and open questions for the owner.
-- [Roadmap](docs/ROADMAP.md): phased plan with evidence gates. Tesla first, then an attended Rivian trial using the adapter, then wiring the adapter into evcc or taking the hardware path.
+- [Working plan](docs/PLAN.md): decisions, how it works, the planner, electricity plans, dashboard, phases and what is still needed.
+- [Architecture record](docs/SOLAR_CHARGING_ARCHITECTURE.md) (earlier evcc-centred design, superseded in part): the design, what we build versus reuse, the Rivian adapter contract, evcc pitfalls, the safety model, and open questions for the owner.
+- [Roadmap](docs/ROADMAP.md) (superseded in part by the plan): phased plan with evidence gates. Tesla first, then an attended Rivian trial using the adapter, then wiring the adapter into evcc or taking the hardware path.
 - [Ecosystem survey](docs/ECOSYSTEM_SURVEY.md): what evcc, the Tesla integrations, the Rivian integration and client, charger-side options, and other orchestrators actually do, with source permalinks.
 - [Draft evcc config](config/evcc/evcc.example.yaml) and [draft HA glue package](config/homeassistant/packages/ev_solar_glue.example.yaml): starting points with placeholders, untested against the live installation.
 
