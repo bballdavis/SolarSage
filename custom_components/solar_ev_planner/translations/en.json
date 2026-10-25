@@ -1,0 +1,475 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Solar and home battery",
+        "description": "Map the Sol-Ark readings. Nothing is commanded until shadow mode is turned off: the planner starts in shadow mode, planning and explaining without calling any service.",
+        "data": {
+          "pv_power": "Solar power",
+          "pv_power_unit": "Solar power unit",
+          "pv_power_invert": "Invert solar power sign",
+          "grid_power": "Grid power",
+          "grid_power_unit": "Grid power unit",
+          "grid_power_invert": "Invert grid power sign",
+          "battery_power": "Battery power",
+          "battery_power_unit": "Battery power unit",
+          "battery_power_invert": "Invert battery power sign",
+          "battery_soc": "Battery level",
+          "battery_capacity": "Battery capacity sensor",
+          "battery_capacity_kwh": "Battery capacity",
+          "battery_max_charge_kw": "Battery maximum charge power",
+          "battery_max_discharge_kw": "Battery maximum discharge power",
+          "battery_reserve_pct": "Battery reserve",
+          "battery_holds_in_free_hours": "Battery holds during free hours"
+        },
+        "data_description": {
+          "pv_power": "Solar production, for example sensor.sol_ark_inverter_pv_power.",
+          "pv_power_unit": "Used when the sensor states no unit; a sensor's own W or kW always wins.",
+          "pv_power_invert": "Turn on if the sensor reports production as negative.",
+          "grid_power": "Grid power, for example sensor.sol_ark_inverter_grid_power. The planner needs import positive and export negative.",
+          "grid_power_unit": "Used when the sensor states no unit.",
+          "grid_power_invert": "Turn on if the sensor reports export as positive.",
+          "battery_power": "Home battery power, for example sensor.sol_ark_inverter_battery_power. The planner needs charging positive.",
+          "battery_power_unit": "Used when the sensor states no unit.",
+          "battery_power_invert": "Turn on if the sensor reports discharging as positive.",
+          "battery_soc": "Home battery level in %, for example sensor.sol_ark_inverter_battery_state_of_charge.",
+          "battery_capacity": "Optional. Usable capacity in kWh, for example sensor.sol_ark_battery_capacity_estimate. Without it, the fixed capacity below is used.",
+          "battery_capacity_kwh": "Usable capacity when no capacity sensor is mapped or it is unavailable.",
+          "battery_max_charge_kw": "AC-side limit of the inverter's battery charging.",
+          "battery_max_discharge_kw": "AC-side limit of the inverter's battery discharging.",
+          "battery_reserve_pct": "The level at which the inverter stops discharging.",
+          "battery_holds_in_free_hours": "On if the inverter is set to hold the battery while import is free (Sol-Ark time-of-use slot with the grid as source). The prediction then keeps the battery level through the free hours."
+        }
+      },
+      "charger": {
+        "title": "Wall Connector",
+        "description": "The Wall Connector is read only: it reports the car's power and whether a vehicle is connected.",
+        "data": {
+          "wall_power": "Wall Connector power",
+          "wall_power_unit": "Wall Connector power unit",
+          "wall_current": "Wall Connector vehicle current",
+          "wall_connected": "Wall Connector vehicle connected",
+          "wall_contactor": "Wall Connector contactor closed",
+          "charger_max_a": "Wall Connector maximum current",
+          "volts": "Charging voltage"
+        },
+        "data_description": {
+          "wall_power": "The car's charging power, for example sensor.tesla_wall_connector_total_power. House use is solar + grid - battery - this.",
+          "wall_power_unit": "Used when the sensor states no unit.",
+          "wall_current": "Optional. Shown with each change, to confirm the car followed it.",
+          "wall_connected": "Recommended. On while a vehicle is connected. Off means no car is on the charger, so no car is commanded. It does not say which car is connected.",
+          "wall_contactor": "Optional. Shown on the dashboard.",
+          "charger_max_a": "The Wall Connector's current setting (it cannot be changed through Home Assistant).",
+          "volts": "Used to turn currents into power."
+        }
+      },
+      "tariff": {
+        "title": "Forecast and free hours",
+        "description": "Prices, the night window and the other settings are entities of the planner. Add the cars and any extra price levels afterwards, from the planner's entry.",
+        "data": {
+          "forecast_today": "Solcast forecast today",
+          "forecast_tomorrow": "Solcast forecast tomorrow",
+          "forecast_last_polled": "Solcast last polled",
+          "free_hours": "Free hours"
+        },
+        "data_description": {
+          "forecast_today": "The sensor with today's detailedForecast attribute (half hours with pv_estimate10, pv_estimate and pv_estimate90), for example sensor.solcast_pv_forecast_forecast_today.",
+          "forecast_tomorrow": "The same for tomorrow, for example sensor.solcast_pv_forecast_forecast_tomorrow.",
+          "forecast_last_polled": "Optional. When Solcast was last polled; an old forecast widens the planner's uncertainty.",
+          "free_hours": "Optional. A Schedule helper that is on while import is free. Repaint it when the plan changes. Leave it empty for a flat or time-of-use plan; add other price levels as price windows."
+        }
+      }
+    },
+    "error": {
+      "same_forecast": "Today's and tomorrow's forecast must be different sensors."
+    },
+    "abort": {
+      "already_configured": "The planner is already set up.",
+      "single_instance_allowed": "The planner is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Solar and home battery",
+        "data": {
+          "pv_power": "Solar power",
+          "pv_power_unit": "Solar power unit",
+          "pv_power_invert": "Invert solar power sign",
+          "grid_power": "Grid power",
+          "grid_power_unit": "Grid power unit",
+          "grid_power_invert": "Invert grid power sign",
+          "battery_power": "Battery power",
+          "battery_power_unit": "Battery power unit",
+          "battery_power_invert": "Invert battery power sign",
+          "battery_soc": "Battery level",
+          "battery_capacity": "Battery capacity sensor",
+          "battery_capacity_kwh": "Battery capacity",
+          "battery_max_charge_kw": "Battery maximum charge power",
+          "battery_max_discharge_kw": "Battery maximum discharge power",
+          "battery_reserve_pct": "Battery reserve",
+          "battery_holds_in_free_hours": "Battery holds during free hours"
+        },
+        "data_description": {
+          "pv_power": "Solar production, for example sensor.sol_ark_inverter_pv_power.",
+          "pv_power_unit": "Used when the sensor states no unit; a sensor's own W or kW always wins.",
+          "pv_power_invert": "Turn on if the sensor reports production as negative.",
+          "grid_power": "Grid power, for example sensor.sol_ark_inverter_grid_power. The planner needs import positive and export negative.",
+          "grid_power_unit": "Used when the sensor states no unit.",
+          "grid_power_invert": "Turn on if the sensor reports export as positive.",
+          "battery_power": "Home battery power, for example sensor.sol_ark_inverter_battery_power. The planner needs charging positive.",
+          "battery_power_unit": "Used when the sensor states no unit.",
+          "battery_power_invert": "Turn on if the sensor reports discharging as positive.",
+          "battery_soc": "Home battery level in %, for example sensor.sol_ark_inverter_battery_state_of_charge.",
+          "battery_capacity": "Optional. Usable capacity in kWh, for example sensor.sol_ark_battery_capacity_estimate. Without it, the fixed capacity below is used.",
+          "battery_capacity_kwh": "Usable capacity when no capacity sensor is mapped or it is unavailable.",
+          "battery_max_charge_kw": "AC-side limit of the inverter's battery charging.",
+          "battery_max_discharge_kw": "AC-side limit of the inverter's battery discharging.",
+          "battery_reserve_pct": "The level at which the inverter stops discharging.",
+          "battery_holds_in_free_hours": "On if the inverter is set to hold the battery while import is free (Sol-Ark time-of-use slot with the grid as source). The prediction then keeps the battery level through the free hours."
+        }
+      },
+      "charger": {
+        "title": "Wall Connector",
+        "data": {
+          "wall_power": "Wall Connector power",
+          "wall_power_unit": "Wall Connector power unit",
+          "wall_current": "Wall Connector vehicle current",
+          "wall_connected": "Wall Connector vehicle connected",
+          "wall_contactor": "Wall Connector contactor closed",
+          "charger_max_a": "Wall Connector maximum current",
+          "volts": "Charging voltage"
+        },
+        "data_description": {
+          "wall_power": "The car's charging power, for example sensor.tesla_wall_connector_total_power. House use is solar + grid - battery - this.",
+          "wall_power_unit": "Used when the sensor states no unit.",
+          "wall_current": "Optional. Shown with each change, to confirm the car followed it.",
+          "wall_connected": "Recommended. On while a vehicle is connected. Off means no car is on the charger, so no car is commanded. It does not say which car is connected.",
+          "wall_contactor": "Optional. Shown on the dashboard.",
+          "charger_max_a": "The Wall Connector's current setting (it cannot be changed through Home Assistant).",
+          "volts": "Used to turn currents into power."
+        }
+      },
+      "tariff": {
+        "title": "Forecast and free hours",
+        "data": {
+          "forecast_today": "Solcast forecast today",
+          "forecast_tomorrow": "Solcast forecast tomorrow",
+          "forecast_last_polled": "Solcast last polled",
+          "free_hours": "Free hours"
+        },
+        "data_description": {
+          "forecast_today": "The sensor with today's detailedForecast attribute (half hours with pv_estimate10, pv_estimate and pv_estimate90), for example sensor.solcast_pv_forecast_forecast_today.",
+          "forecast_tomorrow": "The same for tomorrow, for example sensor.solcast_pv_forecast_forecast_tomorrow.",
+          "forecast_last_polled": "Optional. When Solcast was last polled; an old forecast widens the planner's uncertainty.",
+          "free_hours": "Optional. A Schedule helper that is on while import is free. Repaint it when the plan changes. Leave it empty for a flat or time-of-use plan; add other price levels as price windows."
+        }
+      }
+    },
+    "error": {
+      "same_forecast": "Today's and tomorrow's forecast must be different sensors."
+    }
+  },
+  "config_subentries": {
+    "car": {
+      "entry_type": "Car",
+      "initiate_flow": {
+        "user": "Add car",
+        "reconfigure": "Reconfigure car"
+      },
+      "step": {
+        "user": {
+          "title": "Add a car",
+          "description": "Choose the kind of car. Only one car can be on the Wall Connector at a time; the planner commands only the car it sees on it.",
+          "data": {
+            "kind": "Kind"
+          }
+        },
+        "car": {
+          "title": "Car entities",
+          "description": "Map the {kind} car's entities. Each Tesla command is billed by Tesla's API; each Rivian change is a charging-schedule write through the charge adapter.",
+          "data": {
+            "name": "Name",
+            "switch": "Charge switch",
+            "current": "Charge current",
+            "soc": "Battery level",
+            "limit": "Charge limit",
+            "plugged": "Charge cable connected",
+            "location": "Location",
+            "control_state": "Adapter control state",
+            "min_a": "Minimum current",
+            "max_a": "Maximum current",
+            "step_a": "Current step",
+            "capacity_kwh": "Usable pack energy"
+          },
+          "data_description": {
+            "name": "Used for the car's device and entity IDs, for example R1S or Roxxo.",
+            "switch": "Tesla: the Tesla Fleet charge switch (switch.roxxo_charge). Rivian: the charge adapter's Solar charging switch (switch.r1s_solar_adapter_solar_charging).",
+            "current": "Tesla: the Tesla Fleet charge current (number.roxxo_charge_current). Rivian: the adapter's Solar current (number.r1s_solar_adapter_solar_current).",
+            "soc": "The car's battery level in %.",
+            "limit": "The car's own charge limit in %.",
+            "plugged": "On while this car's cable is connected (any charger). The planner commands a car only while it is plugged in, at home, and the Wall Connector does not report no vehicle.",
+            "location": "Recommended. The car's own device tracker (home), not a person, or a binary sensor that is on at home.",
+            "control_state": "Optional, recommended for a Rivian: sensor.r1s_solar_adapter_control_state. Its attributes tell a pause from no request, so a request the adapter dropped is sent again.",
+            "min_a": "Rivian 8 A, Tesla 6 A.",
+            "max_a": "48 A for both on a 48 A Wall Connector. The current number's own maximum also applies.",
+            "step_a": "Rivian 2 A (even currents), Tesla 1 A.",
+            "capacity_kwh": "Usable battery energy, used to turn levels into kWh."
+          }
+        },
+        "reconfigure": {
+          "title": "Car entities",
+          "description": "Change the {kind} car's entities.",
+          "data": {
+            "name": "Name",
+            "switch": "Charge switch",
+            "current": "Charge current",
+            "soc": "Battery level",
+            "limit": "Charge limit",
+            "plugged": "Charge cable connected",
+            "location": "Location",
+            "control_state": "Adapter control state",
+            "min_a": "Minimum current",
+            "max_a": "Maximum current",
+            "step_a": "Current step",
+            "capacity_kwh": "Usable pack energy"
+          },
+          "data_description": {
+            "name": "Used for the car's device and entity IDs, for example R1S or Roxxo.",
+            "switch": "Tesla: the Tesla Fleet charge switch (switch.roxxo_charge). Rivian: the charge adapter's Solar charging switch (switch.r1s_solar_adapter_solar_charging).",
+            "current": "Tesla: the Tesla Fleet charge current (number.roxxo_charge_current). Rivian: the adapter's Solar current (number.r1s_solar_adapter_solar_current).",
+            "soc": "The car's battery level in %.",
+            "limit": "The car's own charge limit in %.",
+            "plugged": "On while this car's cable is connected (any charger). The planner commands a car only while it is plugged in, at home, and the Wall Connector does not report no vehicle.",
+            "location": "Recommended. The car's own device tracker (home), not a person, or a binary sensor that is on at home.",
+            "control_state": "Optional, recommended for a Rivian: sensor.r1s_solar_adapter_control_state. Its attributes tell a pause from no request, so a request the adapter dropped is sent again.",
+            "min_a": "Rivian 8 A, Tesla 6 A.",
+            "max_a": "48 A for both on a 48 A Wall Connector. The current number's own maximum also applies.",
+            "step_a": "Rivian 2 A (even currents), Tesla 1 A.",
+            "capacity_kwh": "Usable battery energy, used to turn levels into kWh."
+          }
+        }
+      },
+      "error": {
+        "max_below_min": "The maximum current is below the minimum.",
+        "own_entity": "Map the car's own charge switch and current, not one of the planner's entities."
+      },
+      "abort": {
+        "already_configured": "This car is already set up."
+      }
+    },
+    "price_window": {
+      "entry_type": "Price window",
+      "initiate_flow": {
+        "user": "Add price window",
+        "reconfigure": "Reconfigure price window"
+      },
+      "step": {
+        "user": {
+          "title": "Price window",
+          "description": "A price level painted on a Schedule helper. The free hours come first, then the price windows in the order they were added; outside all of them the planner's import price applies.",
+          "data": {
+            "schedule": "Schedule",
+            "label": "Name",
+            "price": "Import price",
+            "export_price": "Export price"
+          },
+          "data_description": {
+            "schedule": "A Schedule helper that is on while this price applies, for example a peak period.",
+            "label": "Shown in the price entity's name, for example Peak.",
+            "price": "Per kWh while the schedule is on. It can be changed later from the planner's price entity.",
+            "export_price": "Optional. What exported solar earns while the schedule is on; otherwise the solar buyback."
+          }
+        },
+        "reconfigure": {
+          "title": "Price window",
+          "data": {
+            "schedule": "Schedule",
+            "label": "Name",
+            "price": "Import price",
+            "export_price": "Export price"
+          },
+          "data_description": {
+            "schedule": "A Schedule helper that is on while this price applies, for example a peak period.",
+            "label": "Shown in the price entity's name, for example Peak.",
+            "price": "Per kWh while the schedule is on. It can be changed later from the planner's price entity.",
+            "export_price": "Optional. What exported solar earns while the schedule is on; otherwise the solar buyback."
+          }
+        }
+      },
+      "abort": {
+        "already_configured": "This schedule already has a price."
+      }
+    }
+  },
+  "selector": {
+    "power_unit": {
+      "options": {
+        "W": "W",
+        "kW": "kW"
+      }
+    },
+    "car_kind": {
+      "options": {
+        "rivian": "Rivian (through the charge adapter)",
+        "tesla": "Tesla (through Tesla Fleet)"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "charging_wanted": {
+        "name": "Charging wanted"
+      }
+    },
+    "number": {
+      "night_charging_current": {
+        "name": "Night charging current"
+      },
+      "battery_floor": {
+        "name": "Battery floor"
+      },
+      "battery_wanted_at_free_hours": {
+        "name": "Battery wanted at free hours"
+      },
+      "minimum_time_between_changes": {
+        "name": "Minimum time between changes"
+      },
+      "largest_change": {
+        "name": "Largest change"
+      },
+      "paid_grid_tolerance": {
+        "name": "Paid grid tolerance"
+      },
+      "import_price": {
+        "name": "Import price"
+      },
+      "solar_buyback": {
+        "name": "Solar buyback"
+      },
+      "window_price": {
+        "name": "Price"
+      },
+      "charge_limit": {
+        "name": "Charge limit"
+      },
+      "plan_target": {
+        "name": "Plan target"
+      },
+      "restore_current": {
+        "name": "Restore current at unplug"
+      }
+    },
+    "select": {
+      "caution": {
+        "name": "Caution",
+        "state": {
+          "near_certain": "Near-certain",
+          "conservative": "Conservative",
+          "balanced": "Balanced",
+          "typical_day": "Typical day"
+        }
+      },
+      "charger_car_override": {
+        "name": "Charger car override",
+        "state": {
+          "auto": "Auto",
+          "rivian": "Rivian",
+          "tesla": "Tesla"
+        }
+      },
+      "plan_days": {
+        "name": "Plan days",
+        "state": {
+          "off": "Off",
+          "once": "Once",
+          "weekdays": "Weekdays",
+          "daily": "Every day",
+          "weekends": "Weekends"
+        }
+      }
+    },
+    "sensor": {
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "off": "Off",
+          "empty": "Charger empty",
+          "stale": "Car data stale",
+          "full": "Car at its limit",
+          "day": "Solar charging",
+          "wait": "Waiting",
+          "night": "Night charging",
+          "no_data": "No data"
+        }
+      },
+      "reason": {
+        "name": "Reason"
+      },
+      "next_change": {
+        "name": "Next change"
+      },
+      "battery_minimum": {
+        "name": "Battery minimum"
+      },
+      "battery_minimum_time": {
+        "name": "Battery minimum time"
+      },
+      "forecast_correction": {
+        "name": "Forecast correction"
+      },
+      "car_on_charger": {
+        "name": "Car on charger",
+        "state": {
+          "none": "None",
+          "rivian": "Rivian",
+          "tesla": "Tesla"
+        }
+      },
+      "heartbeat": {
+        "name": "Heartbeat",
+        "state": {
+          "active": "Active",
+          "shadow": "Shadow"
+        }
+      },
+      "planned_current": {
+        "name": "Planned current"
+      },
+      "outlook": {
+        "name": "Outlook"
+      },
+      "solar_energy": {
+        "name": "Energy from sun"
+      },
+      "free_energy": {
+        "name": "Energy in free hours"
+      },
+      "paid_energy": {
+        "name": "Energy paid"
+      }
+    },
+    "switch": {
+      "planning": {
+        "name": "Planning"
+      },
+      "shadow_mode": {
+        "name": "Shadow mode"
+      },
+      "daytime_solar_charging": {
+        "name": "Daytime solar charging"
+      }
+    },
+    "time": {
+      "night_window_start": {
+        "name": "Night window start"
+      },
+      "night_window_end": {
+        "name": "Night window end"
+      },
+      "plan_time": {
+        "name": "Plan time"
+      }
+    }
+  }
+}

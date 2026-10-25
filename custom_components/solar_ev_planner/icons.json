@@ -1,0 +1,143 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "charging_wanted": {
+        "default": "mdi:ev-station",
+        "state": {
+          "off": "mdi:pause-circle-outline"
+        }
+      }
+    },
+    "number": {
+      "night_charging_current": {
+        "default": "mdi:current-ac"
+      },
+      "battery_floor": {
+        "default": "mdi:battery-arrow-down-outline"
+      },
+      "battery_wanted_at_free_hours": {
+        "default": "mdi:battery-clock-outline"
+      },
+      "minimum_time_between_changes": {
+        "default": "mdi:timer-sand"
+      },
+      "largest_change": {
+        "default": "mdi:stairs"
+      },
+      "paid_grid_tolerance": {
+        "default": "mdi:transmission-tower-import"
+      },
+      "import_price": {
+        "default": "mdi:cash"
+      },
+      "solar_buyback": {
+        "default": "mdi:cash-refund"
+      },
+      "window_price": {
+        "default": "mdi:cash-clock"
+      },
+      "charge_limit": {
+        "default": "mdi:battery-charging-80"
+      },
+      "plan_target": {
+        "default": "mdi:target"
+      },
+      "restore_current": {
+        "default": "mdi:restore"
+      }
+    },
+    "select": {
+      "caution": {
+        "default": "mdi:weather-partly-cloudy"
+      },
+      "charger_car_override": {
+        "default": "mdi:car-select"
+      },
+      "plan_days": {
+        "default": "mdi:calendar-week"
+      }
+    },
+    "sensor": {
+      "mode": {
+        "default": "mdi:state-machine",
+        "state": {
+          "day": "mdi:solar-power-variant",
+          "night": "mdi:weather-night",
+          "wait": "mdi:timer-sand",
+          "off": "mdi:power-off",
+          "no_data": "mdi:alert-circle-outline"
+        }
+      },
+      "reason": {
+        "default": "mdi:message-text-outline"
+      },
+      "next_change": {
+        "default": "mdi:clock-start"
+      },
+      "battery_minimum": {
+        "default": "mdi:battery-arrow-down"
+      },
+      "battery_minimum_time": {
+        "default": "mdi:battery-clock"
+      },
+      "forecast_correction": {
+        "default": "mdi:sun-compass"
+      },
+      "car_on_charger": {
+        "default": "mdi:ev-plug-type2",
+        "state": {
+          "none": "mdi:power-plug-off-outline"
+        }
+      },
+      "heartbeat": {
+        "default": "mdi:heart-pulse"
+      },
+      "planned_current": {
+        "default": "mdi:current-ac"
+      },
+      "outlook": {
+        "default": "mdi:crystal-ball"
+      },
+      "solar_energy": {
+        "default": "mdi:solar-power"
+      },
+      "free_energy": {
+        "default": "mdi:weather-night"
+      },
+      "paid_energy": {
+        "default": "mdi:cash"
+      }
+    },
+    "switch": {
+      "planning": {
+        "default": "mdi:robot",
+        "state": {
+          "off": "mdi:robot-off"
+        }
+      },
+      "shadow_mode": {
+        "default": "mdi:eye-outline",
+        "state": {
+          "off": "mdi:send-outline"
+        }
+      },
+      "daytime_solar_charging": {
+        "default": "mdi:solar-power-variant",
+        "state": {
+          "off": "mdi:solar-power-variant-outline"
+        }
+      }
+    },
+    "time": {
+      "night_window_start": {
+        "default": "mdi:weather-sunset-down"
+      },
+      "night_window_end": {
+        "default": "mdi:weather-sunset-up"
+      },
+      "plan_time": {
+        "default": "mdi:clock-check-outline"
+      }
+    }
+  }
+}

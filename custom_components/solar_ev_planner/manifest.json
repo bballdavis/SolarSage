@@ -1,0 +1,16 @@
+{
+  "domain": "solar_ev_planner",
+  "name": "Solar EV Planner",
+  "after_dependencies": ["schedule"],
+  "codeowners": ["@bballdavis"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/bballdavis/HASS-Solar-Rivian",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/bballdavis/HASS-Solar-Rivian/issues",
+  "loggers": ["custom_components.solar_ev_planner"],
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
