@@ -11,9 +11,9 @@ from unittest.mock import patch
 
 from conftest import (
     CHARGER_STATE_ENTITY,
+    CHARGING_ENTITY,
     COORDINATE_FRAGMENTS,
     EMAIL,
-    EVCC_ENABLED_ENTITY,
     LIVENESS_ENTITY,
     LOCATION_ENTITY,
     OVERRIDE_ENTITY,
@@ -37,6 +37,7 @@ from homeassistant.components.number import (
     DOMAIN as NUMBER_DOMAIN,
     SERVICE_SET_VALUE,
 )
+from homeassistant.components.recorder import Recorder, history
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import (
@@ -59,9 +60,21 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
     get_scheduled_timer_handles,
 )
+from pytest_homeassistant_custom_component.components.recorder.common import (
+    async_wait_recording_done,
+)
 from rivian.exceptions import RivianApiException, RivianBadRequestError, RivianUnauthenticated
 
-from custom_components.rivian_solar_adapter.const import DOMAIN, TICK_INTERVAL, journal_key
+from custom_components.rivian_solar_adapter.const import (
+    CONF_CEILING_HOLD,
+    CONF_CHARGING_ENTITY,
+    CONF_INCREASE_MARGIN,
+    CONF_LIVENESS_ENTITY,
+    CONF_PLUGGED_ENTITY,
+    DOMAIN,
+    TICK_INTERVAL,
+    journal_key,
+)
 from custom_components.rivian_solar_adapter.controller import Observation
 from custom_components.rivian_solar_adapter.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -165,7 +178,7 @@ async def test_setup_creates_entities(
     assert state(hass, "switch", "lease_renewal") == "on"
     assert state(hass, "number", "solar_current") == "8"
     assert state(hass, "sensor", "control_state") == "idle"
-    assert state(hass, "sensor", "evcc_status") == "b"
+    assert state(hass, "sensor", "charger_status") == "b"
     for platform, key in (
         ("button", "release"),
         ("button", "clear_fault"),
@@ -360,6 +373,139 @@ async def test_remove_after_setup_failure_restores_and_clears_issue(
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
+# Migration --------------------------------------------------------------
+
+LEGACY_STATUS_ID = "sensor.test_r1s_solar_adapter_evcc_status"
+CHARGER_STATUS_ID = "sensor.test_r1s_solar_adapter_charger_status"
+
+
+def legacy_entry(**option_overrides: Any) -> MockConfigEntry:
+    """A config entry as version 1.1 of the adapter, made for evcc, created it."""
+    current = make_entry(**option_overrides)
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title=current.title,
+        unique_id=current.unique_id,
+        data=dict(current.data),
+        options={
+            key: value
+            for key, value in current.options.items()
+            if key not in (CONF_INCREASE_MARGIN, CONF_CEILING_HOLD)
+        },
+        version=1,
+        minor_version=1,
+    )
+
+
+def register_legacy_status_sensor(
+    hass: HomeAssistant, entry: MockConfigEntry, object_id: str
+) -> er.RegistryEntry:
+    """Register the evcc status sensor as version 1.1 of the adapter left it."""
+    return er.async_get(hass).async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{VEHICLE_ID}_evcc_status",
+        config_entry=entry,
+        suggested_object_id=object_id,
+    )
+
+
+async def test_migration_renames_the_evcc_options_and_status_sensor(
+    hass: HomeAssistant, mock_rivian: FakeRivian
+) -> None:
+    """An entry made for evcc keeps its mapping, and its status sensor its registry entry."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    hass.states.async_set(LIVENESS_ENTITY, "2026-10-25T12:00:00+00:00")
+    hass.states.async_set(CHARGING_ENTITY, "on")
+    entry = legacy_entry(evcc_liveness_entity=LIVENESS_ENTITY, evcc_enabled_entity=CHARGING_ENTITY)
+    entry.add_to_hass(hass)
+    legacy = register_legacy_status_sensor(hass, entry, "test_r1s_solar_adapter_evcc_status")
+    assert legacy.entity_id == LEGACY_STATUS_ID
+    await set_up(hass, entry)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert (entry.version, entry.minor_version) == (1, 2)
+    assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
+    assert entry.options[CONF_CHARGING_ENTITY] == CHARGING_ENTITY
+    assert not {"evcc_liveness_entity", "evcc_enabled_entity"} & set(entry.options)
+    assert entry.options[CONF_PLUGGED_ENTITY] == PLUGGED_ENTITY
+    obs = entry.runtime_data.observation()
+    assert obs.controller_alive is True
+    assert obs.controller_charging is True
+    # The evcc-era increase rules take the new defaults: off.
+    config = entry.runtime_data.controller.config
+    assert config.increase_margin_amps == 0
+    assert config.ceiling_hold == timedelta(0)
+
+    registry = er.async_get(hass)
+    migrated = registry.async_get(legacy.id)
+    assert migrated is not None
+    assert migrated.unique_id == f"{VEHICLE_ID}_charger_status"
+    assert migrated.entity_id == CHARGER_STATUS_ID
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{VEHICLE_ID}_evcc_status") is None
+    assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 8
+    assert hass.states.get(CHARGER_STATUS_ID).state == "b"
+    assert hass.states.get(LEGACY_STATUS_ID) is None
+
+
+async def test_migration_keeps_an_entity_id_changed_by_hand(
+    hass: HomeAssistant, mock_rivian: FakeRivian
+) -> None:
+    """Only the generated entity ID follows the new name."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = legacy_entry()
+    entry.add_to_hass(hass)
+    legacy = register_legacy_status_sensor(hass, entry, "rivian_on_the_charger")
+    await set_up(hass, entry)
+
+    migrated = er.async_get(hass).async_get(legacy.id)
+    assert migrated.unique_id == f"{VEHICLE_ID}_charger_status"
+    assert migrated.entity_id == "sensor.rivian_on_the_charger"
+    assert hass.states.get("sensor.rivian_on_the_charger").state == "b"
+    assert entry.minor_version == 2
+
+
+async def test_migration_keeps_the_status_sensor_history(
+    recorder_mock: Recorder, hass: HomeAssistant, mock_rivian: FakeRivian
+) -> None:
+    """The recorder moves the evcc status sensor's history to the charger status sensor."""
+    entry = legacy_entry()
+    entry.add_to_hass(hass)
+    register_legacy_status_sensor(hass, entry, "test_r1s_solar_adapter_evcc_status")
+    start = dt_util.utcnow()
+    hass.states.async_set(LEGACY_STATUS_ID, "c")
+    await async_wait_recording_done(hass)
+    hass.states.async_remove(LEGACY_STATUS_ID)  # as after a restart
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    await set_up(hass, entry)
+    await async_wait_recording_done(hass)
+
+    states = await recorder_mock.async_add_executor_job(
+        history.get_significant_states, hass, start, None, [CHARGER_STATUS_ID]
+    )
+    # The evcc-era reading, the removal at the "restart", the new sensor's reading.
+    assert [item.state for item in states[CHARGER_STATUS_ID]] == ["c", "", "b"]
+
+
+async def test_migration_without_a_status_sensor(
+    hass: HomeAssistant, mock_rivian: FakeRivian
+) -> None:
+    """An entry whose status sensor was deleted migrates its options; the sensor is new."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = legacy_entry(evcc_liveness_entity=LIVENESS_ENTITY)
+    entry.add_to_hass(hass)
+    await set_up(hass, entry)
+
+    assert entry.minor_version == 2
+    assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
+    assert CONF_CHARGING_ENTITY not in entry.options
+    assert entity_id(hass, "sensor", "charger_status") == CHARGER_STATUS_ID
+
+
 # Control ----------------------------------------------------------------
 
 
@@ -388,9 +534,8 @@ async def test_switch_on_writes_lease(
     assert attributes(hass)["lease_amps"] == 8
     assert attributes(hass)["owner_schedule_count"] == 2
 
-    # The request is shown as sent. Increases wait for the increase interval and
-    # keep a 3 A margin below evcc's request (evcc adds up to 2 A for measuring
-    # lag and truncates): 20 A requested is applied as 16 A, and 18 A as 14 A.
+    # The request is shown as sent. Increases wait for the increase interval,
+    # then apply the request exactly: the planner asks for exact currents.
     await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=20)
     assert state(hass, "number", "solar_current") == "20"
     assert len(mock_rivian.writes) == 1
@@ -398,9 +543,8 @@ async def test_switch_on_writes_lease(
     assert len(mock_rivian.writes) == 1  # the increase interval runs from the start
     await advance(hass, freezer, TICK_INTERVAL)
     assert len(mock_rivian.writes) == 2
-    assert mock_rivian.writes[-1][0]["amperage"] == 16
+    assert mock_rivian.writes[-1][0]["amperage"] == 20
 
-    # At evcc's 48 A ceiling there is no lag to absorb, so 48 A is applied as is.
     await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=48)
     await advance(hass, freezer, timedelta(seconds=125))
     assert mock_rivian.writes[-1][0]["amperage"] == 48
@@ -420,10 +564,43 @@ async def test_switch_on_writes_lease(
     assert state(hass, "sensor", "control_state") == "paused"
 
 
-async def test_evcc_current_counts_as_start(
+async def test_evcc_increase_rules_are_options(
+    hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
+) -> None:
+    """With evcc's margin and ceiling hold set, increases land below the request again."""
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = make_entry(increase_margin_amps=3, ceiling_hold_minutes=30)
+    await set_up(hass, entry)
+    config = entry.runtime_data.controller.config
+    assert config.increase_margin_amps == 3
+    assert config.ceiling_hold == timedelta(minutes=30)
+
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=48)
+    assert mock_rivian.writes[-1][0]["amperage"] == 48
+    # Just short of 48 A, then 48 A again: the margin is held at the ceiling.
+    await advance(hass, freezer, timedelta(seconds=31))
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=46)
+    assert mock_rivian.writes[-1][0]["amperage"] == 46
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=48)
+    await advance(hass, freezer, timedelta(minutes=3))
+    assert mock_rivian.writes[-1][0]["amperage"] == 46  # 48 A minus 3 A is no increase
+    # Lower requests keep the margin too: 20 A requested is written as 16 A.
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=12)
+    assert mock_rivian.writes[-1][0]["amperage"] == 12
+    await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=20)
+    await advance(hass, freezer, timedelta(minutes=3))
+    assert mock_rivian.writes[-1][0]["amperage"] == 16
+
+
+async def test_current_counts_as_start(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
 ) -> None:
-    """evcc sets the current before it enables charging; the current alone starts."""
+    """A current request alone starts charging unless charging was turned off.
+
+    evcc set the current before it enabled charging; the planner turns the
+    switch on or off explicitly.
+    """
     await call(hass, NUMBER_DOMAIN, SERVICE_SET_VALUE, "number", "solar_current", value=16)
     assert len(mock_rivian.writes) == 1
     assert mock_rivian.writes[-1][0]["amperage"] == 16
@@ -437,7 +614,7 @@ async def test_evcc_current_counts_as_start(
 async def test_requests_do_not_wait_for_rivian(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
 ) -> None:
-    """evcc's calls return while the provider read is still pending."""
+    """The controller's calls return while the provider read is still pending."""
     controller = loaded_entry.runtime_data.controller
     mock_rivian.read_gate = asyncio.Event()
     with patch.object(controller, "async_tick", wraps=controller.async_tick) as tick:
@@ -508,7 +685,7 @@ async def test_request_while_away_is_not_acted_on_later(
     hass.states.async_set(LOCATION_ENTITY, "not_home")
     await hass.async_block_till_done(wait_background_tasks=True)
     await start_charging(hass)
-    assert state(hass, "sensor", "evcc_status") == "a"
+    assert state(hass, "sensor", "charger_status") == "a"
 
     await advance(hass, freezer, timedelta(days=2))
     hass.states.async_set(LOCATION_ENTITY, "home")
@@ -540,7 +717,7 @@ async def test_dry_run_writes_nothing(
     assert "location" not in target
 
 
-async def test_evcc_status_follows_eligibility(
+async def test_charger_status_follows_eligibility(
     hass: HomeAssistant, mock_rivian: FakeRivian
 ) -> None:
     """a unless plugged in at home and not known absent from the Wall Connector."""
@@ -553,7 +730,7 @@ async def test_evcc_status_follows_eligibility(
     runtime = entry.runtime_data
 
     def status() -> str:
-        return state(hass, "sensor", "evcc_status")
+        return state(hass, "sensor", "charger_status")
 
     assert status() == "a"
     hass.states.async_set(PLUGGED_ENTITY, "on")
@@ -586,7 +763,7 @@ async def test_evcc_status_follows_eligibility(
 
 
 async def test_vehicle_override_entity(hass: HomeAssistant, mock_rivian: FakeRivian) -> None:
-    """While the override names another vehicle, evcc sees the Rivian as absent."""
+    """While the override names another vehicle, the charger status shows the Rivian absent."""
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
     hass.states.async_set(OVERRIDE_ENTITY, "auto")
@@ -604,36 +781,36 @@ async def test_vehicle_override_entity(hass: HomeAssistant, mock_rivian: FakeRiv
     ):
         hass.states.async_set(OVERRIDE_ENTITY, override)
         await hass.async_block_till_done()
-        assert state(hass, "sensor", "evcc_status") == expected, override
+        assert state(hass, "sensor", "charger_status") == expected, override
     assert attributes(hass)["vehicle_override_active"] is True
 
     hass.states.async_remove(OVERRIDE_ENTITY)
     await hass.async_block_till_done()
-    assert state(hass, "sensor", "evcc_status") == "b"
+    assert state(hass, "sensor", "charger_status") == "b"
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
 async def test_liveness_lost_stops_renewal(
     hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
 ) -> None:
-    """While evcc's liveness entity is unavailable, nothing is renewed or started.
+    """While the controller's liveness entity is unavailable, nothing is renewed or started.
 
-    Once evcc has looked down for the grace period, its last request is held and
-    the lease is parked. When evcc is back with nothing saying it kept running
-    (no evcc enabled entity is mapped here), that request is dropped: evcc must
-    ask again.
+    Once the controller has looked down for the grace period, its last request
+    is held and the lease is parked. When it is back with nothing saying it
+    kept running (no charging entity is mapped here), that request is dropped:
+    the controller must ask again.
     """
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
     hass.states.async_set(LIVENESS_ENTITY, "pv")
-    entry = make_entry(evcc_liveness_entity=LIVENESS_ENTITY)
+    entry = make_entry(controller_liveness_entity=LIVENESS_ENTITY)
     await set_up(hass, entry)
     assert entry.runtime_data.observation().controller_alive is True
 
     await start_charging(hass)
     assert len(mock_rivian.writes) == 1
 
-    # With evcc alive the lease is renewed once 8 minutes or less remain.
+    # With the controller alive the lease is renewed once 8 minutes or less remain.
     await advance(hass, freezer, timedelta(minutes=12, seconds=15))
     assert len(mock_rivian.writes) == 2
     assert state(hass, "sensor", "control_state") == "lease_active"
@@ -641,7 +818,7 @@ async def test_liveness_lost_stops_renewal(
     hass.states.async_set(LIVENESS_ENTITY, "unavailable")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data.observation().controller_alive is False
-    # One unavailable reading (a failed ha-evcc poll) is not enough.
+    # One unavailable reading (a planner reload, say) is not enough.
     await advance(hass, freezer, timedelta(minutes=2))
     assert state(hass, "switch", "solar_charging") == "on"
     assert len(mock_rivian.writes) == 2
@@ -657,14 +834,15 @@ async def test_liveness_lost_stops_renewal(
         await advance(hass, freezer, timedelta(minutes=6))
     assert len(mock_rivian.writes) == 3
 
-    # A missing entity counts as evcc being down too.
+    # A missing entity counts as the controller being down too.
     hass.states.async_remove(LIVENESS_ENTITY)
     await advance(hass, freezer, TICK_INTERVAL)
     assert entry.runtime_data.observation().controller_alive is False
     assert len(mock_rivian.writes) == 3
 
-    # evcc is back, but has not asked again: nothing is started on its old request.
-    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
+    # The controller is back, but has not asked again: nothing is started on its
+    # old request.
+    hass.states.async_set(LIVENESS_ENTITY, "2026-10-25T12:00:00+00:00")
     await hass.async_block_till_done(wait_background_tasks=True)
     await advance(hass, freezer, timedelta(seconds=30))
     assert len(mock_rivian.writes) == 3
@@ -677,23 +855,23 @@ async def test_liveness_lost_stops_renewal(
     assert state(hass, "sensor", "control_state") == "lease_active"
 
 
-async def test_held_request_resumes_while_evcc_has_charging_enabled(
+async def test_held_request_resumes_while_the_controller_wants_charging(
     hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
 ) -> None:
-    """The liveness sensor failed while evcc kept running: evcc's enabled state resumes it."""
+    """The liveness entity failed while the controller ran on: its charging state resumes it."""
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
-    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
-    hass.states.async_set(EVCC_ENABLED_ENTITY, "on")
+    hass.states.async_set(LIVENESS_ENTITY, "2026-10-25T12:00:00+00:00")
+    hass.states.async_set(CHARGING_ENTITY, "on")
     entry = make_entry(
-        evcc_liveness_entity=LIVENESS_ENTITY, evcc_enabled_entity=EVCC_ENABLED_ENTITY
+        controller_liveness_entity=LIVENESS_ENTITY, controller_charging_entity=CHARGING_ENTITY
     )
     await set_up(hass, entry)
-    assert entry.runtime_data.observation().evcc_enabled is True
+    assert entry.runtime_data.observation().controller_charging is True
     await start_charging(hass)
     assert len(mock_rivian.writes) == 1
 
-    for entity_id in (LIVENESS_ENTITY, EVCC_ENABLED_ENTITY):
+    for entity_id in (LIVENESS_ENTITY, CHARGING_ENTITY):
         hass.states.async_set(entity_id, "unavailable")
     await hass.async_block_till_done(wait_background_tasks=True)
     await advance(hass, freezer, timedelta(minutes=2))
@@ -701,10 +879,10 @@ async def test_held_request_resumes_while_evcc_has_charging_enabled(
     assert len(mock_rivian.writes) == 2  # held and parked
     assert attributes(hass)["request_held"] is True
 
-    # The REST resource answers again; evcc never restarted, so it still has
-    # charging enabled and will not ask again.
-    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
-    hass.states.async_set(EVCC_ENABLED_ENTITY, "on")
+    # The entities are back; the controller never restarted, so it still wants
+    # charging and will not ask again.
+    hass.states.async_set(LIVENESS_ENTITY, "2026-10-25T12:05:00+00:00")
+    hass.states.async_set(CHARGING_ENTITY, "on")
     await hass.async_block_till_done(wait_background_tasks=True)
     await advance(hass, freezer, TICK_INTERVAL)
     assert len(mock_rivian.writes) == 3
@@ -715,11 +893,11 @@ async def test_held_request_resumes_while_evcc_has_charging_enabled(
 async def test_tick_sees_entities_written_together(
     hass: HomeAssistant, mock_rivian: FakeRivian
 ) -> None:
-    """Entities one REST resource updates together are read by the same tick."""
+    """Entities the controller updates together are read by the same tick."""
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
     entry = make_entry(
-        evcc_liveness_entity=LIVENESS_ENTITY, evcc_enabled_entity=EVCC_ENABLED_ENTITY
+        controller_liveness_entity=LIVENESS_ENTITY, controller_charging_entity=CHARGING_ENTITY
     )
     await set_up(hass, entry)
     controller = entry.runtime_data.controller
@@ -731,10 +909,10 @@ async def test_tick_sees_entities_written_together(
         await tick(now, obs, **kwargs)
 
     controller.async_tick = record
-    hass.states.async_set(LIVENESS_ENTITY, "0.318.0")
-    hass.states.async_set(EVCC_ENABLED_ENTITY, "on")
+    hass.states.async_set(LIVENESS_ENTITY, "2026-10-25T12:00:00+00:00")
+    hass.states.async_set(CHARGING_ENTITY, "on")
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert seen and seen[0].controller_alive is True and seen[0].evcc_enabled is True
+    assert seen and seen[0].controller_alive is True and seen[0].controller_charging is True
 
 
 async def test_unplug_restores_owner_schedule(
@@ -751,7 +929,7 @@ async def test_unplug_restores_owner_schedule(
     await advance(hass, freezer, timedelta(seconds=75))
     assert mock_rivian.schedules == OWNER_SCHEDULES
     assert state(hass, "sensor", "control_state") == "idle"
-    assert state(hass, "sensor", "evcc_status") == "a"
+    assert state(hass, "sensor", "charger_status") == "a"
 
 
 async def test_release_button_hands_back(
@@ -760,7 +938,7 @@ async def test_release_button_hands_back(
     mock_rivian: FakeRivian,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """The release button restores the owner's schedules and ignores evcc until unplug."""
+    """Release restores the owner's schedules and ignores the controller until unplug."""
     await start_charging(hass)
     assert state(hass, "sensor", "control_state") == "lease_active"
 
@@ -772,7 +950,7 @@ async def test_release_button_hands_back(
     assert state(hass, "switch", "solar_charging") == "off"
     assert read_journal(hass)["phase"] == "idle"
 
-    # evcc's requests are ignored until the vehicle is unplugged.
+    # The controller's requests are ignored until the vehicle is unplugged.
     writes = len(mock_rivian.writes)
     await start_charging(hass)
     await advance(hass, freezer, TICK_INTERVAL)
@@ -998,13 +1176,13 @@ async def test_missing_liveness_entity_raises_repair_issue(
     """A mapped liveness entity that does not exist blocks charging; it is reported."""
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
-    entry = make_entry(evcc_liveness_entity=LIVENESS_ENTITY)
+    entry = make_entry(controller_liveness_entity=LIVENESS_ENTITY)
     await set_up(hass, entry)
     issues = ir.async_get(hass)
-    issue_id = f"missing_entity_{entry.entry_id}_evcc_liveness_entity"
+    issue_id = f"missing_entity_{entry.entry_id}_controller_liveness_entity"
     assert entry.runtime_data.observation().controller_alive is False
 
-    # Missing means evcc is down: no lease is started.
+    # Missing means the controller is down: no lease is started.
     await start_charging(hass)
     assert not any(window["duration"] == 30 for write in mock_rivian.writes for window in write)
     assert state(hass, "sensor", "control_state") != "lease_active"
@@ -1014,7 +1192,7 @@ async def test_missing_liveness_entity_raises_repair_issue(
     await advance(hass, freezer, timedelta(minutes=1, seconds=15))
     issue = issues.async_get_issue(DOMAIN, issue_id)
     assert issue is not None
-    assert issue.translation_key == "missing_evcc_liveness_entity"
+    assert issue.translation_key == "missing_controller_liveness_entity"
     assert issue.translation_placeholders == {"entity_id": LIVENESS_ENTITY, "title": VEHICLE_NAME}
 
     hass.states.async_set(LIVENESS_ENTITY, "pv")
@@ -1343,6 +1521,7 @@ async def test_diagnostics_redacted(
     assert diagnostics["entry"]["data"]["access_token"] == "**REDACTED**"
     assert diagnostics["entry"]["data"]["vehicle_id"] == "**REDACTED**"
     assert diagnostics["control_state"] == "lease_active"
+    assert diagnostics["charger_status"] == "b"
     assert diagnostics["controller"]["lease_amps"] == 8
     assert diagnostics["controller"]["start_blocked_by"] == []
     check(attributes(hass))
@@ -1396,8 +1575,8 @@ async def test_unload_keeps_ownership_and_stops_ticking(
     assert await hass.config_entries.async_setup(loaded_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert loaded_entry.runtime_data.controller.journal.original == OWNER_SCHEDULES
-    # The lease lapsed while unloaded and nothing says evcc still wants charging
-    # (an evcc restart would have it ask again), so its old request is dropped
+    # The lease lapsed while unloaded and nothing says the controller still wants
+    # charging (a restarted controller asks again), so its old request is dropped
     # and the window parked.
     await advance(hass, freezer, timedelta(seconds=30))
     assert state(hass, "switch", "solar_charging") == "off"

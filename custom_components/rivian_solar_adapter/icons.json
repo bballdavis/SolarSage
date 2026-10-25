@@ -26,7 +26,7 @@
           "handed_back": "mdi:account-arrow-left-outline"
         }
       },
-      "evcc_status": {
+      "charger_status": {
         "default": "mdi:ev-plug-type1",
         "state": {
           "a": "mdi:power-plug-off-outline",

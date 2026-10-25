@@ -31,7 +31,7 @@ async def async_get_config_entry_diagnostics(
                 "options": dict(entry.options),
             },
             "control_state": controller.state(now).value,
-            "evcc_status": runtime.evcc_status,
+            "charger_status": runtime.charger_status,
             "observation": asdict(runtime.observation()),
             "vehicle_override_active": runtime.override_active,
             "reauth_required": runtime.reauth_required,

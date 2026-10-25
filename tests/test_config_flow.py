@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from conftest import (
     CHARGER_STATE_ENTITY,
+    CHARGING_ENTITY,
     EMAIL,
     LIVENESS_ENTITY,
     LOCATION_ENTITY,
@@ -36,9 +37,12 @@ from rivian.exceptions import (
 )
 
 from custom_components.rivian_solar_adapter.const import (
+    CONF_CEILING_HOLD,
     CONF_CHARGER_STATE_ENTITY,
+    CONF_CHARGING_ENTITY,
     CONF_DRY_RUN,
     CONF_EMAIL,
+    CONF_INCREASE_MARGIN,
     CONF_LEASE_MINUTES,
     CONF_LIVENESS_ENTITY,
     CONF_LOCATION_ENTITY,
@@ -51,6 +55,8 @@ from custom_components.rivian_solar_adapter.const import (
     CONF_WALL_CONNECTOR_ENTITY,
     DEFAULT_OPTIONS,
     DOMAIN,
+    ENTRY_MINOR_VERSION,
+    ENTRY_VERSION,
 )
 
 INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "rivian_solar_adapter"
@@ -128,6 +134,11 @@ async def test_user_flow_without_otp(
         **DEFAULT_OPTIONS,
     }
     assert result["options"][CONF_DRY_RUN] is True
+    # The evcc-era increase rules are off for the planner.
+    assert result["options"][CONF_INCREASE_MARGIN] == 0
+    assert result["options"][CONF_CEILING_HOLD] == 0
+    entry = result["result"]
+    assert (entry.version, entry.minor_version) == (ENTRY_VERSION, ENTRY_MINOR_VERSION)
     assert mock_rivian.init_kwargs[0]["request_timeout"] == 30
     assert len(mock_setup_entry.mock_calls) == 1
 
@@ -299,6 +310,7 @@ async def test_options_flow(
         CONF_LOCATION_ENTITY: LOCATION_ENTITY,
         CONF_WALL_CONNECTOR_ENTITY: WALL_CONNECTOR_ENTITY,
         CONF_LIVENESS_ENTITY: LIVENESS_ENTITY,
+        CONF_CHARGING_ENTITY: CHARGING_ENTITY,
         CONF_OVERRIDE_ENTITY: OVERRIDE_ENTITY,
         **DEFAULT_OPTIONS,
     }
@@ -310,16 +322,27 @@ async def test_options_flow(
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        base | {CONF_LEASE_MINUTES: 15.0, CONF_RENEW_BEFORE_MINUTES: 6.0, CONF_DRY_RUN: False},
+        base
+        | {
+            CONF_LEASE_MINUTES: 15.0,
+            CONF_RENEW_BEFORE_MINUTES: 6.0,
+            CONF_INCREASE_MARGIN: 3.0,
+            CONF_CEILING_HOLD: 30.0,
+            CONF_DRY_RUN: False,
+        },
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_LEASE_MINUTES] == 15
     assert isinstance(entry.options[CONF_LEASE_MINUTES], int)
     assert entry.options[CONF_RENEW_BEFORE_MINUTES] == 6
+    # evcc's increase rules can be turned back on.
+    assert entry.options[CONF_INCREASE_MARGIN] == 3
+    assert entry.options[CONF_CEILING_HOLD] == 30
     assert entry.options[CONF_DRY_RUN] is False
     assert entry.options[CONF_WALL_CONNECTOR_ENTITY] == WALL_CONNECTOR_ENTITY
     assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
+    assert entry.options[CONF_CHARGING_ENTITY] == CHARGING_ENTITY
     assert entry.options[CONF_OVERRIDE_ENTITY] == OVERRIDE_ENTITY
     # The charger state entity was cleared, so it is no longer used.
     assert CONF_CHARGER_STATE_ENTITY not in entry.options
@@ -349,12 +372,23 @@ async def test_location_accepts_only_device_trackers(
             result["flow_id"],
             options | {CONF_LOCATION_ENTITY: LOCATION_ENTITY, CONF_OVERRIDE_ENTITY: "sensor.x"},
         )
+    # The controller's charging entity is a binary sensor: the adapter's own
+    # charging switch must never confirm its own request.
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            options
+            | {
+                CONF_LOCATION_ENTITY: LOCATION_ENTITY,
+                CONF_CHARGING_ENTITY: "switch.test_r1s_solar_adapter_solar_charging",
+            },
+        )
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        options | {CONF_LOCATION_ENTITY: LOCATION_ENTITY, CONF_LIVENESS_ENTITY: "sensor.evcc"},
+        options | {CONF_LOCATION_ENTITY: LOCATION_ENTITY, CONF_LIVENESS_ENTITY: "sensor.planner"},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_LIVENESS_ENTITY] == "sensor.evcc"
+    assert entry.options[CONF_LIVENESS_ENTITY] == "sensor.planner"
 
 
 async def test_second_flow_for_same_vehicle_aborts(
@@ -384,10 +418,15 @@ def test_translations_match_strings() -> None:
     for key in ("already_configured", "already_in_progress", "no_vehicles", "wrong_account"):
         assert key in strings["config"]["abort"]
     options = strings["options"]["step"]["init"]
-    for key in (CONF_LIVENESS_ENTITY, CONF_OVERRIDE_ENTITY):
+    for key in (CONF_LIVENESS_ENTITY, CONF_CHARGING_ENTITY, CONF_OVERRIDE_ENTITY):
         assert key in options["data"]
         assert key in options["data_description"]
         assert key in strings["config"]["step"]["entities"]["data"]
+        assert key in strings["config"]["step"]["entities"]["data_description"]
+    for key in (CONF_INCREASE_MARGIN, CONF_CEILING_HOLD):
+        assert key in options["data"]
+        assert key in options["data_description"]
+    assert set(strings["entity"]["sensor"]["charger_status"]["state"]) == {"a", "b", "c"}
     assert "handed_back" in strings["entity"]["sensor"]["control_state"]["state"]
     assert "force_restore" in strings["services"]
     assert "restored" in options["data_description"][CONF_DRY_RUN]

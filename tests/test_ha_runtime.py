@@ -71,7 +71,7 @@ async def test_observation(
 async def test_charging_unknown_without_charger_entity(
     hass: HomeAssistant, mock_rivian: FakeRivian
 ) -> None:
-    """Without a charger state entity, charging is unknown and evcc sees b, never c."""
+    """Without a charger state entity, charging is unknown: the status is b, never c."""
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
     hass.states.async_set(CHARGER_STATE_ENTITY, "charging_active")
@@ -91,7 +91,7 @@ async def test_charging_unknown_without_charger_entity(
 
     runtime = entry.runtime_data
     assert runtime.observation() == Observation(plugged=True, home=True, charging=None)
-    assert runtime.evcc_status == "b"
+    assert runtime.charger_status == "b"
 
 
 async def test_attribute_changes_do_not_tick(
@@ -133,7 +133,7 @@ async def test_observation_wall_connector_and_liveness(
         if value is not None:
             hass.states.async_set(entity_id, value)
     entry = make_entry(
-        wall_connector_entity=WALL_CONNECTOR_ENTITY, evcc_liveness_entity=LIVENESS_ENTITY
+        wall_connector_entity=WALL_CONNECTOR_ENTITY, controller_liveness_entity=LIVENESS_ENTITY
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -147,7 +147,7 @@ async def test_observation_wall_connector_and_liveness(
 async def test_unconfigured_liveness_is_unknown(
     hass: HomeAssistant, loaded_entry: MockConfigEntry
 ) -> None:
-    """Without a liveness entity, evcc's liveness is not known, so it does not block."""
+    """Without a liveness entity, the controller's liveness is unknown and does not block."""
     obs = loaded_entry.runtime_data.observation()
     assert obs.controller_alive is None
     assert obs.at_charger is None
@@ -212,7 +212,7 @@ def test_translations_cover_issues_and_errors(name: str) -> None:
     for placeholder in ("{title}", "{error}", "{path}"):
         assert placeholder in setup_issue
     assert "remove the integration" in setup_issue
-    liveness_issue = strings["issues"]["missing_evcc_liveness_entity"]["description"]
+    liveness_issue = strings["issues"]["missing_controller_liveness_entity"]["description"]
     assert "starts and renewals are blocked" in liveness_issue
     for key in ("force_restore_unverified", "force_restore_archive_unsafe"):
         assert strings["exceptions"][key]["message"]

@@ -3,8 +3,9 @@
 The runtime reads the vehicle facts the controller needs from Home Assistant
 entities, ticks the controller, and tells the adapter's entities to update.
 
-Requests from evcc (the switch and number entities) only record the request in
-the journal and schedule a tick; they never wait for a Rivian round trip.
+Requests from the charging controller (the solar planner, through the switch
+and number entities) only record the request in the journal and schedule a
+tick; they never wait for a Rivian round trip.
 """
 
 from __future__ import annotations
@@ -44,13 +45,18 @@ from .api import AuthError, ScheduleApiError
 from .const import (
     ACTIVE_CHARGER_STATES,
     AUTH_RETRY_INTERVAL,
+    CHARGER_STATUS_CHARGING,
+    CHARGER_STATUS_CONNECTED,
+    CHARGER_STATUS_DISCONNECTED,
     CONF_ACCESS_TOKEN,
+    CONF_CEILING_HOLD,
     CONF_CHARGER_STATE_ENTITY,
+    CONF_CHARGING_ENTITY,
     CONF_CLOCK_SKEW_MINUTES,
     CONF_DRY_RUN,
     CONF_EMAIL,
-    CONF_EVCC_ENABLED_ENTITY,
     CONF_INCREASE_INTERVAL,
+    CONF_INCREASE_MARGIN,
     CONF_LEASE_MINUTES,
     CONF_LIVENESS_ENTITY,
     CONF_LOCATION_ENTITY,
@@ -66,9 +72,6 @@ from .const import (
     DEFAULT_OPTIONS,
     DOMAIN,
     ENTITY_OPTIONS,
-    EVCC_STATUS_CHARGING,
-    EVCC_STATUS_CONNECTED,
-    EVCC_STATUS_DISCONNECTED,
     MISSING_ENTITY_GRACE,
     MONITORED_ENTITY_OPTIONS,
     OVERRIDE_PASS_STATES,
@@ -125,6 +128,8 @@ def adapter_config_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> Adapte
         clock_skew_minutes=int(options[CONF_CLOCK_SKEW_MINUTES]),
         min_write_interval=timedelta(seconds=int(options[CONF_MIN_WRITE_INTERVAL])),
         increase_interval=timedelta(seconds=int(options[CONF_INCREASE_INTERVAL])),
+        increase_margin_amps=float(options[CONF_INCREASE_MARGIN]),
+        ceiling_hold=timedelta(minutes=int(options[CONF_CEILING_HOLD])),
         release_delay=timedelta(seconds=int(options[CONF_RELEASE_DELAY])),
         dry_run=bool(options[CONF_DRY_RUN]),
     )
@@ -217,11 +222,11 @@ class AdapterRuntime:
             charging=charging,
             at_charger=_binary_state(self.hass, options.get(CONF_WALL_CONNECTOR_ENTITY)),
             controller_alive=self._controller_alive(),
-            evcc_enabled=_binary_state(self.hass, options.get(CONF_EVCC_ENABLED_ENTITY)),
+            controller_charging=_binary_state(self.hass, options.get(CONF_CHARGING_ENTITY)),
         )
 
     def _controller_alive(self) -> bool | None:
-        """Whether evcc's liveness entity is available; None if none is configured."""
+        """Whether the charging controller's liveness entity is available; None if unmapped."""
         if not (entity_id := self.entry.options.get(CONF_LIVENESS_ENTITY)):
             return None
         return _known_state(self.hass, entity_id) is not None
@@ -233,16 +238,16 @@ class AdapterRuntime:
         return state is not None and state.casefold() not in OVERRIDE_PASS_STATES
 
     @property
-    def evcc_status(self) -> str:
-        """The vehicle status for evcc: a (not here), b (connected) or c (charging).
+    def charger_status(self) -> str:
+        """The vehicle's charger status: a (not here), b (connected) or c (charging).
 
-        Eligibility is the controller's: known plugged in at home, and not
-        known absent from the Wall Connector.
+        Eligibility is the schedule controller's: known plugged in at home, and
+        not known absent from the Wall Connector.
         """
         obs = self.observation()
         if self.override_active or not obs.eligible:
-            return EVCC_STATUS_DISCONNECTED
-        return EVCC_STATUS_CHARGING if obs.charging is True else EVCC_STATUS_CONNECTED
+            return CHARGER_STATUS_DISCONNECTED
+        return CHARGER_STATUS_CHARGING if obs.charging is True else CHARGER_STATUS_CONNECTED
 
     def attributes(self, now: datetime) -> dict[str, Any]:
         """Controller snapshot plus what the runtime knows; no coordinates."""
@@ -377,8 +382,8 @@ class AdapterRuntime:
         if self._tick_running:
             return
         self._tick_running = True
-        # Not eager: entities updated together (one REST resource, say) are all
-        # written before the tick reads them.
+        # Not eager: entities updated together (the planner's heartbeat and its
+        # charging entity, say) are all written before the tick reads them.
         self._tick_task = self.entry.async_create_background_task(
             self.hass,
             self._async_run_ticks(),
@@ -436,7 +441,7 @@ class AdapterRuntime:
         if old_state and new_state and old_state.state == new_state.state:
             # Attribute updates (a tracker's coordinates, say) change nothing here.
             return
-        # evcc_status follows the mapped entities immediately.
+        # The charger status follows the mapped entities immediately.
         self.async_notify()
         self.request_tick()
 
@@ -463,8 +468,8 @@ class AdapterRuntime:
         """Raise a repair issue while a mapped plug, location or liveness entity is missing.
 
         A missing plug or location entity is treated as unknown. A missing
-        liveness entity is treated as evcc being down, which blocks every start
-        and renewal.
+        liveness entity is treated as the charging controller being down, which
+        blocks every start and renewal.
         """
         for option in MONITORED_ENTITY_OPTIONS:
             if not (entity_id := self.entry.options.get(option)):
@@ -483,7 +488,7 @@ class AdapterRuntime:
                 "%s, mapped as the adapter's %s entity, does not exist; %s",
                 entity_id,
                 option.removesuffix("_entity"),
-                "evcc is treated as down, so no charging is started or renewed"
+                "the controller is treated as down, so no charging is started or renewed"
                 if option == CONF_LIVENESS_ENTITY
                 else "the adapter treats its state as unknown",
             )
@@ -536,7 +541,7 @@ class AdapterRuntime:
     # Requests ------------------------------------------------------------
 
     async def async_request_charge(self, charge: bool) -> None:
-        """Record evcc's start/stop request and tick in the background."""
+        """Record the charging controller's start/stop request and tick in the background."""
         try:
             accepted = await self._async_journal_call(self.controller.async_request_charge(charge))
         finally:
@@ -544,7 +549,7 @@ class AdapterRuntime:
         self._async_after_request(accepted)
 
     async def async_request_amps(self, amps: float) -> None:
-        """Record evcc's current request and tick in the background."""
+        """Record the charging controller's current request and tick in the background."""
         try:
             accepted = await self._async_journal_call(self.controller.async_request_amps(amps))
         finally:
@@ -555,8 +560,8 @@ class AdapterRuntime:
     def _async_after_request(self, accepted: bool) -> None:
         if not accepted:
             _LOGGER.debug(
-                "Ignoring an evcc request: control was handed back to the owner until the "
-                "vehicle is unplugged"
+                "Ignoring a charging request: control was handed back to the owner until "
+                "the vehicle is unplugged"
             )
         self.request_tick()
 

@@ -1,4 +1,4 @@
-"""Switches: evcc's start/stop request and lease renewal."""
+"""Switches: the controller's start/stop request and lease renewal."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ async def async_setup_entry(
 
 
 class SolarChargingSwitch(RivianSolarAdapterEntity, SwitchEntity):
-    """Charging allowed or paused; evcc's ``start_charging`` service target.
+    """Charging allowed or paused, set by the controller (the solar planner).
 
     Turning it on or off records the request and returns at once. The schedule
     write happens in the background.

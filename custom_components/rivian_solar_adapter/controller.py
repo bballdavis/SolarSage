@@ -1,12 +1,13 @@
 """Ownership state machine for solar control of a Rivian charging schedule.
 
-The controller turns two requests from evcc, "charging allowed" and
-"current", into writes of the vehicle's charging schedule. A Gen 2 vehicle has
-no usable start/stop command, so the schedule is the only lever:
+The state machine turns two requests from the charging controller (the solar
+planner), "charging allowed" and "current", into writes of the vehicle's
+charging schedule. A Gen 2 vehicle has no usable start/stop command, so the
+schedule is the only lever:
 
 - **Lease.** A short window covering now permits charging at the requested
   amperage. It is renewed only while the car is known to be plugged in at
-  home and evcc is alive; otherwise it lapses on its own.
+  home and the controller is alive; otherwise it lapses on its own.
 - **Parked window.** A window that ended a few minutes ago makes the vehicle
   wait.
 
@@ -64,9 +65,9 @@ LAPSE_PARK_MARGIN = timedelta(minutes=1)
 # The 48 A ceiling hold arms only for a decrease from 48 A to at least this much:
 # that is the chase it prevents, not a cloud's deep dip.
 CEILING_BAND_MIN_AMPS = AMPS_MAX - 4
-# Without an evcc enabled reading, an unconfirmed request is dropped only once
-# evcc has looked up this long, in case that reading is just late.
-ENABLED_STATE_WAIT = timedelta(seconds=30)
+# Without a charging reading, an unconfirmed request is dropped only once the
+# controller has looked up this long, in case that reading is just late.
+CHARGING_STATE_WAIT = timedelta(seconds=30)
 
 
 class ScheduleProvider(Protocol):
@@ -140,9 +141,9 @@ class Observation:
     charging: bool | None = None
     at_charger: bool | None = None
     controller_alive: bool | None = None
-    # Whether evcc has charging enabled for this vehicle (its loadpoint's
-    # "enabled"); None if unknown or not configured.
-    evcc_enabled: bool | None = None
+    # Whether the controller wants this vehicle charging (its charging entity);
+    # None if unknown or not configured.
+    controller_charging: bool | None = None
 
     @property
     def eligible(self) -> bool:
@@ -172,11 +173,13 @@ class AdapterConfig:
     min_write_interval: timedelta = timedelta(seconds=30)
     transition_interval: timedelta = timedelta(seconds=5)
     increase_interval: timedelta = timedelta(minutes=2)
-    increase_margin_amps: float = 3.0
-    # After a decrease from the 48 A ceiling, increases keep the margin there too.
-    ceiling_hold: timedelta = timedelta(minutes=30)
-    # How long evcc must look down before a request made earlier is dropped;
-    # the longer grace applies until evcc has been seen up since startup.
+    # Increases are applied this far below the request; 0 applies it exactly.
+    increase_margin_amps: float = 0.0
+    # After a decrease from the 48 A ceiling, increases keep the margin there too
+    # for this long; 0 is off. Without a margin it has no effect.
+    ceiling_hold: timedelta = timedelta(0)
+    # How long the controller must look down before a request made earlier is
+    # held; the longer grace applies until it has been seen up since startup.
     liveness_grace: timedelta = timedelta(minutes=3)
     liveness_startup_grace: timedelta = timedelta(minutes=10)
     release_delay: timedelta = timedelta(minutes=1)
@@ -425,13 +428,13 @@ class RivianScheduleController:
         self._alive_seen = False
         self._down_since: datetime | None = None
         self._up_since: datetime | None = None
-        # evcc's request is unconfirmed after this process starts ("startup")
-        # and after evcc looks down ("outage"), until evcc calls again or its
-        # enabled state settles it. None: confirmed.
+        # The controller's request is unconfirmed after this process starts
+        # ("startup") and after the controller looks down ("outage"), until it
+        # calls again or its charging state settles it. None: confirmed.
         self._epoch: str | None = None
         self._epoch_calls = 0
         self._epoch_held = False
-        self._evcc_calls = 0
+        self._controller_calls = 0
         self._request_unsaved = False
         self._ceiling_hold_until: datetime | None = None
         self._release_reason: str | None = None
@@ -463,15 +466,16 @@ class RivianScheduleController:
         if not data:
             return False
         self._journal = Journal.from_dict(data)
-        # A request from before the restart may be from an evcc that has since restarted.
-        self._epoch, self._epoch_calls, self._epoch_held = "startup", self._evcc_calls, False
+        # A request from before the restart may be from a controller that has
+        # since restarted.
+        self._epoch, self._epoch_calls, self._epoch_held = "startup", self._controller_calls, False
         return True
 
     # Requests -------------------------------------------------------------
     # Requests only update the journal; the next tick acts on them. They do not
-    # wait for a running tick, so a caller such as evcc is never held up by
-    # provider round trips. Unchanged requests are not saved again. Every call,
-    # changed or not, shows that evcc is running.
+    # wait for a running tick, so the controller is never held up by provider
+    # round trips. Unchanged requests are not saved again. Every call, changed
+    # or not, shows that the controller is running.
 
     @property
     def _unchanged_ok(self) -> bool:
@@ -479,8 +483,8 @@ class RivianScheduleController:
         return not self._releasing and not self._request_unsaved
 
     async def async_request_charge(self, charge: bool) -> bool:
-        """Record evcc's start/stop. Returns False if ignored (handed back)."""
-        self._evcc_calls += 1
+        """Record the controller's start/stop. Returns False if ignored (handed back)."""
+        self._controller_calls += 1
         journal = self._journal
         if journal.handed_back:
             return False
@@ -493,12 +497,13 @@ class RivianScheduleController:
         return True
 
     async def async_request_amps(self, amps: float) -> bool:
-        """Record evcc's current. Returns False if ignored (handed back).
+        """Record the controller's current. Returns False if ignored (handed back).
 
-        A current request carries evcc's intent to charge, so it counts as a
-        start unless charging was explicitly turned off.
+        A current request carries the intent to charge, so it counts as a start
+        unless charging was explicitly turned off. (evcc set the current before
+        it enabled charging.)
         """
-        self._evcc_calls += 1
+        self._controller_calls += 1
         journal = self._journal
         if journal.handed_back:
             return False
@@ -521,8 +526,8 @@ class RivianScheduleController:
     async def async_request_release(self, reason: str, *, hand_back: bool = True) -> ReleaseResult:
         """Restore the owner's schedule and, by default, hand control back.
 
-        Handing back ignores evcc's requests until the next unplug, so evcc
-        cannot immediately take the schedule over again.
+        Handing back ignores the controller's requests until the next unplug,
+        so the controller cannot immediately take the schedule over again.
         """
         journal = self._journal
         journal.request_seq += 1
@@ -600,7 +605,8 @@ class RivianScheduleController:
                 journal.release_requested = "dry run enabled"
                 journal.release_hand_back = False
             if obs.session_ended and journal.command_received:
-                # The session is over for evcc too: forget its request and park now.
+                # The session is over for the controller too: forget its request
+                # and park now.
                 journal.command_received = False
                 journal.desired_charge = None
                 journal.request_seq += 1
@@ -618,7 +624,7 @@ class RivianScheduleController:
         # Idle.
         if journal.command_received and obs.session_ended:
             # A request for an unplugged car does not carry over to a later plug-in.
-            # (Away while still plugged in is kept: evcc may not repeat it.)
+            # (Away while still plugged in is kept: the controller may not repeat it.)
             journal.command_received = False
             journal.desired_charge = None
             await self._save()
@@ -629,8 +635,8 @@ class RivianScheduleController:
             or obs.controller_alive is False
             or self._request_unconfirmed
         ):
-            # While evcc looks down, or its request is not yet confirmed, the
-            # owner's schedule is left alone.
+            # While the controller looks down, or its request is not yet
+            # confirmed, the owner's schedule is left alone.
             self.dry_run_target = None
             return
         if self.config.dry_run:
@@ -694,10 +700,11 @@ class RivianScheduleController:
         may_extend = self._may_extend(obs)
         requested = journal.requested_amps
         amps_down = applied_amps(requested)
-        # Increases keep a margin below evcc's request: evcc adds up to 2 A for
-        # measured-current lag and truncates, so following it exactly makes the
-        # two loops chase each other. At evcc's ceiling there is no lag to absorb,
-        # unless surplus just short of the ceiling made it decrease from there.
+        # An optional margin below the request for increases, off by default.
+        # evcc added up to 2 A for measured-current lag and truncated, so
+        # following it exactly made the two loops chase each other (it used
+        # 3 A). At the ceiling there is no lag to absorb, unless surplus just
+        # short of it made the request decrease from there (the ceiling hold).
         at_ceiling = requested >= AMPS_MAX and (
             self._ceiling_hold_until is None or now >= self._ceiling_hold_until
         )
@@ -709,8 +716,9 @@ class RivianScheduleController:
         active = False
         amps = AMPS_MIN
         extend = False
-        # A request held while evcc looks down allows no window over now, and
-        # an unconfirmed one may keep a live lease running but not start one.
+        # A request held while the controller looks down allows no window over
+        # now, and an unconfirmed one may keep a live lease running but not
+        # start one.
         wants = journal.desired_charge is True and not self._request_held
         if wants and (live or (may_extend and not self._request_unconfirmed)):
             active = True
@@ -784,7 +792,12 @@ class RivianScheduleController:
         new_lease = Lease(active, amps, now, expires_at, offset)
         if active and (lease is None or not lease.active or amps != lease.amps):
             self._last_amps_change_at = now
-        if reason == "decrease" and lease.amps == AMPS_MAX and amps >= CEILING_BAND_MIN_AMPS:
+        if (
+            reason == "decrease"
+            and self.config.ceiling_hold > timedelta(0)
+            and lease.amps == AMPS_MAX
+            and amps >= CEILING_BAND_MIN_AMPS
+        ):
             self._ceiling_hold_until = now + self.config.ceiling_hold
         _LOGGER.debug("Schedule write for %s at %d A", reason, amps)
         await self._write(now, [window], Purpose.LEASE, new_lease, strict=True)
@@ -804,8 +817,8 @@ class RivianScheduleController:
     def _clear_ownership(self) -> None:
         """Return to idle, keeping history, archive, renewal and newer requests.
 
-        evcc's request is also kept through an away release while the car is
-        still plugged in (often a location glitch): evcc may not repeat it.
+        The controller's request is also kept through an away release while the
+        car is still plugged in (often a location glitch): it may not repeat it.
         """
         journal = self._journal
         hand_back = journal.release_hand_back and journal.release_requested is not None
@@ -1318,8 +1331,8 @@ class RivianScheduleController:
     def _start_blocked_by(self) -> list[str]:
         """Why charging cannot be started or extended (for diagnostics).
 
-        evcc being down is always reported; the rest only while charging is
-        requested.
+        The controller being down is always reported; the rest only while
+        charging is requested.
         """
         obs = self.last_observation
         reasons = []
@@ -1329,13 +1342,13 @@ class RivianScheduleController:
             elif not obs.eligible:
                 reasons.append("vehicle_not_at_charger")
         if obs.controller_alive is False:
-            reasons.append("evcc_unavailable")
+            reasons.append("controller_unavailable")
         if self._journal.desired_charge is True and not self._journal.renewal_enabled:
             reasons.append("renewal_off")
         return reasons
 
     def _track_liveness(self, now: datetime, obs: Observation) -> None:
-        """Time how long evcc has looked down; its request is unconfirmed from then on."""
+        """Time how long the controller has looked down; its request is unconfirmed from then."""
         if obs.controller_alive is True:
             self._alive_seen = True
         if obs.controller_alive is not False:
@@ -1346,33 +1359,34 @@ class RivianScheduleController:
         if self._down_since is None:
             self._down_since = now
             if self._epoch is None:
-                self._epoch, self._epoch_calls, self._epoch_held = "outage", self._evcc_calls, False
+                self._epoch, self._epoch_calls = "outage", self._controller_calls
+                self._epoch_held = False
 
     @property
     def _request_unconfirmed(self) -> bool:
-        """evcc's request is from before a restart or an outage, and not yet settled."""
+        """The controller's request is from before a restart or an outage, not yet settled."""
         return self._epoch is not None and self._journal.command_received
 
     @property
     def _request_held(self) -> bool:
-        """evcc looked down long enough that its unconfirmed request is held."""
+        """The controller looked down long enough that its unconfirmed request is held."""
         return self._epoch is not None and self._epoch_held
 
     async def _settle_request(self, now: datetime, obs: Observation) -> None:
-        """Confirm or drop a request evcc made before a restart or an outage.
+        """Confirm or drop a request the controller made before a restart or an outage.
 
-        evcc may have restarted meanwhile; it then asks again if it still wants
-        charging, so its old request is stale. Any call since shows it is
-        running. While evcc looks down for the grace period (one unavailable
-        reading is not enough), the request is held: no window covers now.
-        Once evcc is up, its enabled state decides. Without one, a request is
-        kept only if evcc never looked down for the grace period and, after a
-        restart, the lease is still live.
+        The controller may have restarted meanwhile; it then asks again if it
+        still wants charging, so its old request is stale. Any call since shows
+        it is running. While it looks down for the grace period (one
+        unavailable reading is not enough), the request is held: no window
+        covers now. Once it is up, its charging state decides. Without one, a
+        request is kept only if the controller never looked down for the grace
+        period and, after a restart, the lease is still live.
         """
         journal = self._journal
         if self._epoch is None:
             return
-        if not journal.command_received or self._evcc_calls != self._epoch_calls:
+        if not journal.command_received or self._controller_calls != self._epoch_calls:
             self._epoch = None
             return
         if obs.controller_alive is False:
@@ -1387,22 +1401,24 @@ class RivianScheduleController:
                 and now - self._down_since >= grace
             ):
                 self._epoch_held = True
-                _LOGGER.info("evcc looks down; its earlier charging request is on hold")
+                _LOGGER.info("The controller looks down; its earlier charging request is on hold")
             return
-        if obs.evcc_enabled is True or (
-            obs.evcc_enabled is None
+        if obs.controller_charging is True or (
+            obs.controller_charging is None
             and not self._epoch_held
             and (self._epoch == "outage" or self._lease_live(now))
         ):
             self._epoch = None
             return
         if (
-            obs.evcc_enabled is None
+            obs.controller_charging is None
             and self._up_since is not None
-            and now - self._up_since < ENABLED_STATE_WAIT
+            and now - self._up_since < CHARGING_STATE_WAIT
         ):
             return
-        _LOGGER.info("Dropping evcc's charging request from before evcc was last seen running")
+        _LOGGER.info(
+            "Dropping the controller's charging request from before it was last seen running"
+        )
         self._epoch = None
         journal.command_received = False
         journal.desired_charge = None

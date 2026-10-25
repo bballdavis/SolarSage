@@ -1,4 +1,4 @@
-"""Sensors: the adapter's control state and the vehicle status for evcc."""
+"""Sensors: the adapter's control state and the vehicle's charger status."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import EVCC_STATUSES
+from .const import CHARGER_STATUS_KEY, CHARGER_STATUSES
 from .controller import ControlState
 from .entity import RivianSolarAdapterEntity
 from .runtime import AdapterRuntime, RivianSolarAdapterConfigEntry
@@ -24,7 +24,7 @@ async def async_setup_entry(
 ) -> None:
     """Add the sensors."""
     runtime = entry.runtime_data
-    async_add_entities([ControlStateSensor(runtime), EvccStatusSensor(runtime)])
+    async_add_entities([ControlStateSensor(runtime), ChargerStatusSensor(runtime)])
 
 
 class ControlStateSensor(RivianSolarAdapterEntity, SensorEntity):
@@ -47,17 +47,22 @@ class ControlStateSensor(RivianSolarAdapterEntity, SensorEntity):
         return self.runtime.attributes(dt_util.utcnow())
 
 
-class EvccStatusSensor(RivianSolarAdapterEntity, SensorEntity):
-    """Vehicle status for evcc's ``status`` sensor: a, b or c."""
+class ChargerStatusSensor(RivianSolarAdapterEntity, SensorEntity):
+    """The vehicle's charger status (IEC 61851 states): a, b or c.
+
+    It was the evcc status sensor (unique ID ``<vehicle>_evcc_status``) before
+    minor version 2 of the config entry. The entry migration moves its registry
+    entry, so its history is kept.
+    """
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = EVCC_STATUSES
+    _attr_options = CHARGER_STATUSES
 
     def __init__(self, runtime: AdapterRuntime) -> None:
-        super().__init__(runtime, "evcc_status")
+        super().__init__(runtime, CHARGER_STATUS_KEY)
 
     @property
     def native_value(self) -> str:
         """a unless eligible (plugged in at home, at the Wall Connector if known)
         or while the override names another vehicle; c while charging, else b."""
-        return self.runtime.evcc_status
+        return self.runtime.charger_status

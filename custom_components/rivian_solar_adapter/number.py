@@ -1,4 +1,4 @@
-"""Number: evcc's charging current request."""
+"""Number: the controller's charging current request."""
 
 from __future__ import annotations
 
@@ -24,11 +24,12 @@ async def async_setup_entry(
 
 
 class SolarCurrentNumber(RivianSolarAdapterEntity, NumberEntity):
-    """Requested current; evcc's ``setMaxCurrent`` service target.
+    """Requested current, set by the controller (the solar planner).
 
-    Any current evcc may send is accepted and shown as requested. Rivian
-    schedules take even amperages from 8 to 48 A, so the controller applies
-    the request rounded down to an even value within that range.
+    Any current from 0 to 80 A is accepted and shown as requested. Rivian
+    schedules take even amperages from 8 to 48 A, so the adapter applies the
+    request rounded down to an even value within that range: below 8 A it
+    charges at 8 A. Pausing is the charging switch's job.
     """
 
     _attr_device_class = NumberDeviceClass.CURRENT
@@ -43,7 +44,7 @@ class SolarCurrentNumber(RivianSolarAdapterEntity, NumberEntity):
 
     @property
     def native_value(self) -> float:
-        """The current evcc last requested."""
+        """The current the controller last requested."""
         amps = self.runtime.controller.journal.requested_amps
         return int(amps) if float(amps).is_integer() else amps
 

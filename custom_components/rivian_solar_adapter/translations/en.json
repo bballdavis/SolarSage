@@ -38,18 +38,18 @@
           "location_entity": "Vehicle location",
           "charger_state_entity": "Charger state",
           "wall_connector_entity": "Wall Connector vehicle connected",
-          "evcc_liveness_entity": "evcc liveness",
-          "evcc_enabled_entity": "evcc charging enabled",
+          "controller_liveness_entity": "Controller liveness",
+          "controller_charging_entity": "Controller wants charging",
           "vehicle_override_entity": "Wall Connector vehicle override"
         },
         "data_description": {
           "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle. Unknown or unavailable is never treated as unplugged or plugged in.",
           "location_entity": "The vehicle's device tracker; its state is home while the vehicle is at home. A person entity cannot be used: a person can be home without the car.",
           "charger_state_entity": "Optional. Rivian charger state sensor; charging_active, charging_connecting and smart_charging_active count as charging.",
-          "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the evcc status a; unknown is ignored. It does not tell which vehicle is connected.",
-          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, such as the REST sensor on evcc's /api/state from the example glue package. Do not use an ha-evcc entity: with ha-evcc's default websocket connection, its entities stay available after evcc stops. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once evcc has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), a request it made before is put on hold and the charging window is parked, so charging stops. Any request evcc sends meanwhile shows it is running.",
-          "evcc_enabled_entity": "Optional, recommended with evcc liveness. Binary sensor that is on while evcc's loadpoint has charging enabled for this vehicle, such as the one the example glue package reads from the same REST resource. After a restart of Home Assistant, or once evcc is back after looking down, it tells whether evcc's earlier request still stands: on keeps or resumes it, off drops it. Without it, such a request is kept only if the charging window is still live, so charging can stay off until evcc asks again.",
-          "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector, such as auto, tesla or rivian. While its state is anything other than auto or rivian, the evcc status is a."
+          "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the charger status a; unknown is ignored. It does not tell which vehicle is connected.",
+          "controller_liveness_entity": "Optional, recommended. An entity that is unavailable or unknown while the controller (the solar planner) is down: the planner's heartbeat, sensor.solar_ev_planner_heartbeat. Do not use one of this adapter's own entities: they stay available. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once the controller has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), a request it made before is put on hold and the charging window is parked, so charging stops. Any request the controller sends meanwhile shows it is running.",
+          "controller_charging_entity": "Optional, recommended with controller liveness. Binary sensor that is on while the controller wants this vehicle charging: the planner's Charging wanted sensor for this car, such as binary_sensor.r1s_planner_charging_wanted. After a restart of Home Assistant, or once the controller is back after looking down, it tells whether the controller's earlier request still stands: on keeps or resumes it, off drops it. Without it, such a request is kept only if the charging window is still live, so charging can stay off until the controller asks again.",
+          "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector (auto, tesla or rivian), such as the planner's select.solar_ev_planner_charger_car_override. While its state is anything other than auto or rivian, the charger status is a."
         }
       }
     },
@@ -78,14 +78,16 @@
           "location_entity": "Vehicle location",
           "charger_state_entity": "Charger state",
           "wall_connector_entity": "Wall Connector vehicle connected",
-          "evcc_liveness_entity": "evcc liveness",
-          "evcc_enabled_entity": "evcc charging enabled",
+          "controller_liveness_entity": "Controller liveness",
+          "controller_charging_entity": "Controller wants charging",
           "vehicle_override_entity": "Wall Connector vehicle override",
           "lease_minutes": "Lease length",
           "renew_before_minutes": "Renew before expiry",
           "clock_skew_minutes": "Vehicle clock tolerance",
           "min_write_interval_s": "Minimum time between writes",
           "increase_interval_s": "Minimum time before a current increase",
+          "increase_margin_amps": "Increase margin",
+          "ceiling_hold_minutes": "Ceiling hold after a decrease",
           "release_delay_s": "Release delay",
           "dry_run": "Dry run"
         },
@@ -93,15 +95,17 @@
           "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle. Unknown or unavailable is never treated as unplugged or plugged in.",
           "location_entity": "The vehicle's device tracker; its state is home while the vehicle is at home. A person entity cannot be used: a person can be home without the car.",
           "charger_state_entity": "Optional. Rivian charger state sensor; charging_active, charging_connecting and smart_charging_active count as charging.",
-          "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the evcc status a; unknown is ignored. It does not tell which vehicle is connected.",
-          "evcc_liveness_entity": "Optional, recommended. An entity that is unavailable while evcc is down, such as the REST sensor on evcc's /api/state from the example glue package. Do not use an ha-evcc entity: with ha-evcc's default websocket connection, its entities stay available after evcc stops. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once evcc has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), a request it made before is put on hold and the charging window is parked, so charging stops. Any request evcc sends meanwhile shows it is running.",
-          "evcc_enabled_entity": "Optional, recommended with evcc liveness. Binary sensor that is on while evcc's loadpoint has charging enabled for this vehicle, such as the one the example glue package reads from the same REST resource. After a restart of Home Assistant, or once evcc is back after looking down, it tells whether evcc's earlier request still stands: on keeps or resumes it, off drops it. Without it, such a request is kept only if the charging window is still live, so charging can stay off until evcc asks again.",
-          "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector, such as auto, tesla or rivian. While its state is anything other than auto or rivian, the evcc status is a.",
+          "wall_connector_entity": "Optional, recommended. Wall Connector binary sensor that is on while a vehicle is connected. Off ends the charging session at once and makes the charger status a; unknown is ignored. It does not tell which vehicle is connected.",
+          "controller_liveness_entity": "Optional, recommended. An entity that is unavailable or unknown while the controller (the solar planner) is down: the planner's heartbeat, sensor.solar_ev_planner_heartbeat. Do not use one of this adapter's own entities: they stay available. While this entity is unknown, unavailable or missing, nothing is started or renewed. Once the controller has looked down for 3 minutes (10 minutes until it has been seen up since Home Assistant started), a request it made before is put on hold and the charging window is parked, so charging stops. Any request the controller sends meanwhile shows it is running.",
+          "controller_charging_entity": "Optional, recommended with controller liveness. Binary sensor that is on while the controller wants this vehicle charging: the planner's Charging wanted sensor for this car, such as binary_sensor.r1s_planner_charging_wanted. After a restart of Home Assistant, or once the controller is back after looking down, it tells whether the controller's earlier request still stands: on keeps or resumes it, off drops it. Without it, such a request is kept only if the charging window is still live, so charging can stay off until the controller asks again.",
+          "vehicle_override_entity": "Optional. Input select or select naming the vehicle on the Wall Connector (auto, tesla or rivian), such as the planner's select.solar_ev_planner_charger_car_override. While its state is anything other than auto or rivian, the charger status is a.",
           "lease_minutes": "How far ahead each charging window reaches. If renewals stop, charging stops when it ends.",
           "renew_before_minutes": "Renew an active lease this long before it ends. Must be shorter than the lease.",
           "clock_skew_minutes": "Each window starts this much before now and ends this much after the lease, in case the vehicle's clock differs from Home Assistant's.",
           "min_write_interval_s": "Schedule writes are at least this far apart; starting and pausing only wait 5 seconds.",
-          "increase_interval_s": "A higher current is written only once this long has passed since the last current change, and 3 A below evcc's request to absorb evcc's measuring margin (48 A is written as 48 A). Lower currents are written right away.",
+          "increase_interval_s": "A higher current is written only once this long has passed since the last current change. Lower currents are written right away.",
+          "increase_margin_amps": "Write a higher current this much below the request, rounded down to an even value; a request of 48 A or more is written as 48 A. 0, the default, writes the request exactly, as the solar planner needs. evcc needed 3 A, because it added up to 2 A to its requests.",
+          "ceiling_hold_minutes": "Only with an increase margin: after the current drops from 48 A to 44 or 46 A, a request of 48 A also keeps the margin for this long, so a surplus just short of 48 A does not make the current cycle. 0, the default, is off; evcc used 30 minutes.",
           "release_delay_s": "How long the vehicle must be unplugged before the owner's schedules are restored.",
           "dry_run": "Compute what would be written without writing it. Nothing is written to Rivian, except that the owner's schedules are restored if the adapter still controls them."
         }
@@ -143,8 +147,8 @@
           "dry_run": "Dry run"
         }
       },
-      "evcc_status": {
-        "name": "evcc status",
+      "charger_status": {
+        "name": "Charger status",
         "state": {
           "a": "A (not connected)",
           "b": "B (connected)",
@@ -211,7 +215,7 @@
   "services": {
     "release": {
       "name": "Restore owner schedule",
-      "description": "Restores the owner's original charging schedules and hands control back to the owner until the vehicle is unplugged; evcc's requests are ignored meanwhile. During a fault, the release runs once the fault is cleared.",
+      "description": "Restores the owner's original charging schedules and hands control back to the owner until the vehicle is unplugged; the controller's requests are ignored meanwhile. During a fault, the release runs once the fault is cleared.",
       "fields": {
         "config_entry_id": {
           "name": "Adapter",
@@ -263,19 +267,19 @@
   "issues": {
     "missing_plugged_entity": {
       "title": "Solar adapter plug entity is missing",
-      "description": "The solar adapter for {title} uses {entity_id} to know whether the vehicle is plugged in, but that entity does not exist. Until it does, the adapter treats the plug state as unknown: evcc sees the vehicle as not connected and the owner's schedules are not restored on unplug. Map an existing entity in the adapter's options, or restore the entity."
+      "description": "The solar adapter for {title} uses {entity_id} to know whether the vehicle is plugged in, but that entity does not exist. Until it does, the adapter treats the plug state as unknown: the charger status is a (not connected), no charging is started or renewed, and the owner's schedules are not restored on unplug. Map an existing entity in the adapter's options, or restore the entity."
     },
     "missing_location_entity": {
       "title": "Solar adapter location entity is missing",
-      "description": "The solar adapter for {title} uses {entity_id} to know whether the vehicle is at home, but that entity does not exist. Until it does, the adapter treats the location as unknown: evcc sees the vehicle as not connected and the owner's schedules are not restored when the vehicle leaves. Map an existing entity in the adapter's options, or restore the entity."
+      "description": "The solar adapter for {title} uses {entity_id} to know whether the vehicle is at home, but that entity does not exist. Until it does, the adapter treats the location as unknown: the charger status is a (not connected), no charging is started or renewed, and the owner's schedules are not restored when the vehicle leaves. Map an existing entity in the adapter's options, or restore the entity."
     },
-    "missing_evcc_liveness_entity": {
-      "title": "Solar adapter evcc liveness entity is missing",
-      "description": "The solar adapter for {title} uses {entity_id} to know whether evcc is running, but that entity does not exist. Until it does, the adapter treats evcc as down: starts and renewals are blocked, so the vehicle does not charge under the adapter, and after 10 minutes evcc's earlier request is put on hold. Map an existing entity in the adapter's options, clear the option, or restore the entity."
+    "missing_controller_liveness_entity": {
+      "title": "Solar adapter controller liveness entity is missing",
+      "description": "The solar adapter for {title} uses {entity_id} to know whether the controller (the solar planner) is running, but that entity does not exist. Until it does, the adapter treats the controller as down: starts and renewals are blocked, so the vehicle does not charge under the adapter, and after 10 minutes the controller's earlier request is put on hold. Map an existing entity in the adapter's options, clear the option, or restore the entity."
     },
-    "missing_evcc_enabled_entity": {
-      "title": "Solar adapter evcc charging enabled entity is missing",
-      "description": "The solar adapter for {title} uses {entity_id} to know whether evcc has charging enabled for the vehicle, but that entity does not exist. Until it does, after a restart or an evcc outage the adapter keeps evcc's earlier request only if the charging window is still live, so charging can stay off until evcc asks again. Map an existing entity in the adapter's options, clear the option, or restore the entity."
+    "missing_controller_charging_entity": {
+      "title": "Solar adapter controller charging entity is missing",
+      "description": "The solar adapter for {title} uses {entity_id} to know whether the controller wants the vehicle charging, but that entity does not exist. Until it does, after a restart or a controller outage the adapter keeps the controller's earlier request only if the charging window is still live, so charging can stay off until the controller asks again. Map an existing entity in the adapter's options, clear the option, or restore the entity."
     },
     "setup_failed_while_owning": {
       "title": "Solar adapter cannot run while it controls the charging schedule",

@@ -37,6 +37,8 @@ from custom_components.rivian_solar_adapter.const import (
     CONF_VEHICLE_ID,
     DEFAULT_OPTIONS,
     DOMAIN,
+    ENTRY_MINOR_VERSION,
+    ENTRY_VERSION,
     journal_key,
 )
 
@@ -61,8 +63,9 @@ PLUGGED_ENTITY = "binary_sensor.test_r1s_charger_connection"
 LOCATION_ENTITY = "device_tracker.test_r1s_location"
 CHARGER_STATE_ENTITY = "sensor.test_r1s_charger_state"
 WALL_CONNECTOR_ENTITY = "binary_sensor.test_wall_connector_vehicle_connected"
-LIVENESS_ENTITY = "sensor.test_evcc_api"
-EVCC_ENABLED_ENTITY = "binary_sensor.test_evcc_rivian_charging_enabled"
+# The controller's entities, as the solar planner would provide them.
+LIVENESS_ENTITY = "sensor.test_planner_heartbeat"
+CHARGING_ENTITY = "binary_sensor.test_planner_r1s_wants_charging"
 OVERRIDE_ENTITY = "input_select.test_wall_connector_vehicle"
 
 # The pytest Home Assistant instance is at a fictional test location
@@ -218,14 +221,27 @@ def entry_options(**overrides: Any) -> dict[str, Any]:
 
 
 def make_entry(**option_overrides: Any) -> MockConfigEntry:
-    """A config entry for the test vehicle."""
+    """A config entry for the test vehicle, at the version the config flow creates."""
     return MockConfigEntry(
         domain=DOMAIN,
         title=VEHICLE_NAME,
         unique_id=VEHICLE_ID,
         data={CONF_EMAIL: EMAIL, CONF_VEHICLE_ID: VEHICLE_ID, **TOKENS},
         options=entry_options(**option_overrides),
+        version=ENTRY_VERSION,
+        minor_version=ENTRY_MINOR_VERSION,
     )
+
+
+@pytest.fixture
+def mock_recorder_before_hass(request: pytest.FixtureRequest) -> None:
+    """Prepare the recorder's database before Home Assistant in tests that record.
+
+    The test modules enable custom integrations with an autouse fixture, which
+    sets up Home Assistant before a test's own recorder fixture could.
+    """
+    if "recorder_mock" in request.fixturenames:
+        request.getfixturevalue("recorder_db_url")
 
 
 @pytest.fixture
