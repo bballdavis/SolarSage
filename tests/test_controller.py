@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -18,6 +19,7 @@ from custom_components.rivian_solar_adapter.api import (
 from custom_components.rivian_solar_adapter.controller import (
     AdapterConfig,
     ControlState,
+    Journal,
     JournalSaveError,
     Observation,
     Phase,
@@ -275,6 +277,23 @@ async def test_increase_reaches_the_ceiling_without_a_margin():
     assert provider.sets[-1][0]["amperage"] == 48
 
 
+async def test_decrease_from_the_ceiling_holds_the_margin_there():
+    # Surplus just short of 48 A: evcc's +2 A allowance, clamped at 48, must not
+    # make the adapter chase it up and down.
+    controller, provider, _ = make()
+    await start(controller, amps=48)
+    await controller.async_request_amps(46.4)
+    await controller.async_tick(at(minutes=1), CHARGING)
+    assert provider.sets[-1][0]["amperage"] == 46
+    await controller.async_request_amps(48)
+    for minute in range(3, 31):
+        await controller.async_tick(at(minutes=minute), CHARGING)
+    # Renewals only (at 13 and 25 minutes), no increase while the hold lasts.
+    assert [s[0]["amperage"] for s in provider.sets[1:]] == [46, 46, 46]
+    await controller.async_tick(at(minutes=31, seconds=1), CHARGING)
+    assert provider.sets[-1][0]["amperage"] == 48  # the hold has ended
+
+
 async def test_band_just_below_an_even_step_does_not_increase():
     # evcc asks 20 A for a car at 16 A whose real headroom is about 17.9 A.
     controller, provider, _ = make()
@@ -348,29 +367,107 @@ async def test_unknown_vehicle_state_stops_renewals_parks_but_does_not_release()
     await start(controller, amps=32)
     await controller.async_tick(at(minutes=13), UNKNOWN)
     assert len(provider.sets) == 1  # no renewal
+    # The window runs on the vehicle until 5 minutes (the clock skew) past the
+    # lease's end; that lapse is the cloud-free stop, so nothing is written yet.
     await controller.async_tick(at(minutes=21), UNKNOWN)
-    # The lapsed lease is parked so it cannot recur a week later at 32 A.
+    await controller.async_tick(at(minutes=25, seconds=59), UNKNOWN)
+    assert len(provider.sets) == 1
+    assert controller.state(at(minutes=21)) is ControlState.LEASE_LAPSED
+    await controller.async_tick(at(minutes=26), UNKNOWN)
+    # Then the lapsed lease is parked so it cannot recur a week later at 32 A.
     [parked] = provider.sets[-1]
     assert len(provider.sets) == 2 and parked["amperage"] == 8
     assert controller.journal.phase is Phase.OWNED
-    assert controller.state(at(minutes=21)) is ControlState.PAUSED
-    await controller.async_tick(at(minutes=25), CHARGING)
-    assert controller.state(at(minutes=25)) is ControlState.LEASE_ACTIVE  # resumes when known
+    assert controller.state(at(minutes=26)) is ControlState.PAUSED
+    await controller.async_tick(at(minutes=27), CHARGING)
+    assert controller.state(at(minutes=27)) is ControlState.LEASE_ACTIVE  # resumes when known
 
 
-async def test_evcc_down_clears_its_request_and_parks():
+async def test_stop_request_after_lease_end_parks_at_once():
     controller, provider, _ = make()
-    await start(controller, obs=Observation(plugged=True, home=True, controller_alive=True))
-    dead = Observation(plugged=True, home=True, charging=True, controller_alive=False)
-    await controller.async_tick(at(minutes=1), dead)
+    await start(controller, amps=32)
+    await controller.async_tick(at(minutes=13), UNKNOWN)
+    await controller.async_request_charge(False)
+    await controller.async_tick(at(minutes=21), UNKNOWN)
+    # evcc asked to stop: the window's tail on the vehicle is not waited out.
+    assert len(provider.sets) == 2 and provider.sets[-1][0]["amperage"] == 8
+
+
+DEAD = Observation(plugged=True, home=True, charging=True, controller_alive=False)
+ALIVE = Observation(plugged=True, home=True, charging=True, controller_alive=True)
+
+
+async def test_evcc_down_for_the_grace_drops_its_request_and_parks():
+    controller, provider, _ = make()
+    await start(controller, obs=ALIVE)
+    await controller.async_tick(at(minutes=1), DEAD)
+    await controller.async_tick(at(minutes=3, seconds=59), DEAD)
+    assert controller.journal.command_received is True  # one reading is not enough
+    assert len(provider.sets) == 1
+    assert controller.snapshot(at(minutes=3))["start_blocked_by"] == ["evcc_unavailable"]
+    await controller.async_tick(at(minutes=4), DEAD)
     assert controller.journal.command_received is False
     assert provider.sets[-1][0]["amperage"] == 8  # parked
+    assert controller.snapshot(at(minutes=4))["start_blocked_by"] == ["evcc_unavailable"]
     alive = Observation(plugged=True, home=True, charging=False, controller_alive=True)
     await controller.async_tick(at(minutes=30), alive)
     assert len(provider.sets) == 2  # no stale restart: evcc must ask again
     await controller.async_request_charge(True)
     await controller.async_tick(at(minutes=31), alive)
     assert controller.state(at(minutes=31)) is ControlState.LEASE_ACTIVE
+
+
+async def test_liveness_gap_shorter_than_the_grace_keeps_charging():
+    controller, provider, _ = make()
+    await start(controller, amps=48, obs=ALIVE)
+    await controller.async_tick(at(minutes=12), DEAD)  # one failed ha-evcc poll
+    assert len(provider.sets) == 1  # no renewal while evcc looks down
+    await controller.async_tick(at(minutes=13), ALIVE)
+    assert controller.journal.command_received is True
+    assert len(provider.sets) == 2  # renewed at the same 48 A, no new command needed
+    assert provider.sets[-1][0]["amperage"] == 48
+    assert controller.state(at(minutes=13)) is ControlState.LEASE_ACTIVE
+
+
+async def test_liveness_never_seen_since_startup_gets_the_longer_grace():
+    controller, provider, _ = make()  # e.g. Home Assistant restarted before ha-evcc loaded
+    await start(controller, obs=CHARGING)
+    for minute in range(1, 11):
+        await controller.async_tick(at(minutes=minute), DEAD)
+    assert controller.journal.command_received is True
+    await controller.async_tick(at(minutes=11), DEAD)
+    assert controller.journal.command_received is False
+    assert provider.sets[-1][0]["amperage"] == 8
+
+
+async def test_request_sent_while_evcc_looks_down_is_kept_until_it_is_back():
+    controller, provider, _ = make()
+    await start(controller, obs=ALIVE)
+    await controller.async_tick(at(minutes=1), DEAD)
+    await controller.async_tick(at(minutes=4), DEAD)
+    assert controller.journal.command_received is False  # the old request was dropped
+    # evcc restarted and asks again before ha-evcc shows it as available.
+    await controller.async_request_amps(20)
+    await controller.async_request_charge(True)
+    for minute in range(5, 15):
+        await controller.async_tick(at(minutes=minute), DEAD)
+    assert controller.journal.command_received is True
+    assert provider.sets[-1][0]["amperage"] == 8  # nothing starts while evcc looks down
+    await controller.async_tick(at(minutes=15), ALIVE)
+    assert controller.state(at(minutes=15)) is ControlState.LEASE_ACTIVE
+    assert provider.sets[-1][0]["amperage"] == 20
+
+
+async def test_no_takeover_while_evcc_looks_down():
+    controller, provider, _ = make()
+    await controller.async_request_charge(True)
+    for minute in range(0, 30, 5):
+        await controller.async_tick(at(minutes=minute), DEAD)
+    # The owner's schedule is never taken over just to be parked.
+    assert provider.gets == 0 and provider.sets == []
+    assert controller.journal.phase is Phase.IDLE
+    assert controller.journal.command_received is False  # stale after the grace
+    assert controller.snapshot(at(minutes=30))["start_blocked_by"] == ["evcc_unavailable"]
 
 
 # Session boundaries -------------------------------------------------------------
@@ -420,6 +517,32 @@ async def test_away_while_plugged_releases_only_after_the_long_delay():
     assert controller.journal.phase is Phase.OWNED
     await controller.async_tick(at(minutes=11, seconds=1), AWAY_PLUGGED)
     assert provider.schedules == OWNER
+
+
+async def test_away_glitch_while_plugged_keeps_evcc_request():
+    controller, provider, _ = make()
+    await start(controller, amps=48)
+    await controller.async_tick(at(minutes=1), AWAY_PLUGGED)
+    await controller.async_tick(at(minutes=11, seconds=1), AWAY_PLUGGED)
+    assert provider.schedules == OWNER
+    assert controller.journal.phase is Phase.IDLE
+    # Still plugged in: evcc's request stands (evcc may not repeat it).
+    assert controller.journal.command_received is True
+    await controller.async_tick(at(minutes=13), PLUGGED)
+    assert controller.state(at(minutes=13)) is ControlState.LEASE_ACTIVE
+    assert provider.sets[-1][0]["amperage"] == 48
+
+
+async def test_away_then_unplugged_forgets_evcc_request():
+    controller, provider, _ = make()
+    await start(controller)
+    await controller.async_tick(at(minutes=1), AWAY_PLUGGED)
+    await controller.async_tick(at(minutes=11, seconds=1), AWAY_PLUGGED)
+    away_unplugged = Observation(plugged=False, home=False, charging=False)
+    await controller.async_tick(at(minutes=12), away_unplugged)
+    assert controller.journal.command_received is False
+    await controller.async_tick(at(minutes=26 * 60), PLUGGED)
+    assert provider.schedules == OWNER and controller.journal.phase is Phase.IDLE
 
 
 # Faults and operator actions -----------------------------------------------------
@@ -739,6 +862,51 @@ async def test_restart_mid_write_resolves_from_journal():
     assert provider.schedules == OWNER
 
 
+async def test_sent_outcome_is_saved_before_the_write_settles():
+    controller, provider, store = make()
+    provider.apply_set = False  # accepted, not visible yet
+    await start(controller)
+    assert controller.journal.phase is Phase.WRITING
+    assert store.data["pending"]["outcome"] == "sent"
+    restarted = RivianScheduleController(provider, store, controller.config)
+    await restarted.async_load()
+    assert restarted.journal.pending is restarted.journal.attempts[-1]
+    provider.schedules = deepcopy(provider.sets[-1])  # it lands after the restart
+    await restarted.async_tick(at(seconds=40), CHARGING)
+    assert restarted.journal.fault is None
+    assert restarted.state(at(seconds=40)) is ControlState.LEASE_ACTIVE
+    assert len(provider.sets) == 1
+
+
+async def test_restart_before_the_outcome_save_keeps_the_write_as_ours():
+    controller, provider, store = make()
+    provider.apply_set = False
+    provider.set_error = RuntimeError("process stopped")
+    with pytest.raises(RuntimeError):
+        await start(controller)
+    assert store.data["pending"]["outcome"] == "unsent"  # it may still have been sent
+    first = provider.sets[-1]
+    restarted = RivianScheduleController(provider, store, controller.config)
+    await restarted.async_load()
+    provider.set_error = None
+    provider.apply_set = True
+    await restarted.async_tick(at(minutes=1), CHARGING)
+    assert len(provider.sets) == 2  # sent again
+    provider.schedules = deepcopy(first)  # then the first write lands late
+    await restarted.async_request_amps(10)
+    await restarted.async_tick(at(minutes=2), CHARGING)
+    assert restarted.journal.fault is None
+    assert provider.sets[-1][0]["amperage"] == 10
+
+
+async def test_reloaded_pending_write_is_the_same_object_as_its_attempt():
+    controller, provider, store = make()
+    provider.apply_set = False
+    await start(controller)
+    loaded = Journal.from_dict(store.data)
+    assert loaded.pending is not None and loaded.pending is loaded.attempts[-1]
+
+
 async def test_release_during_the_takeover_save_writes_no_lease():
     controller, provider, store = make()
     await controller.async_request_charge(True)
@@ -808,6 +976,44 @@ async def test_failed_request_save_rolls_back():
         await controller.async_request_charge(True)
     assert controller.journal.command_received is False
     assert controller.journal.desired_charge is None
+
+
+async def test_failed_request_save_keeps_the_journal_a_tick_is_using():
+    controller, _, store = make()
+    await start(controller)
+    journal, lease = controller.journal, controller.journal.lease
+    store.fail = True
+    with pytest.raises(JournalSaveError):
+        await controller.async_request_amps(10)
+    assert controller.journal is journal and journal.lease is lease
+    assert journal.requested_amps == 16
+
+
+async def test_failed_request_save_stands_once_a_later_save_holds_it():
+    controller, provider, store = make()
+    await start(controller)
+    gate = asyncio.Event()
+    save = store.async_save
+    calls = 0
+
+    async def slow_then_failing_save(data):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await gate.wait()
+            raise OSError("disk error")
+        await save(data)
+
+    store.async_save = slow_then_failing_save
+    request = asyncio.create_task(controller.async_request_amps(10))
+    await asyncio.sleep(0)
+    await controller.async_tick(at(minutes=1), CHARGING)  # writes the decrease
+    gate.set()
+    await request
+    assert controller.journal.requested_amps == 10
+    assert controller.journal.lease.amps == 10
+    assert store.data["requested_amps"] == 10
+    assert provider.sets[-1][0]["amperage"] == 10
 
 
 async def test_snapshot_explains_what_blocks_a_start():

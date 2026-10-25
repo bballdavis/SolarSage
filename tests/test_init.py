@@ -615,8 +615,8 @@ async def test_liveness_lost_stops_renewal(
 ) -> None:
     """While evcc's liveness entity is unavailable, nothing is renewed or started.
 
-    evcc's last request is stale while it is down, so it is dropped and the lease
-    is parked at once. After evcc is back, it must ask again.
+    Once evcc has looked down for the grace period, its last request is stale, so
+    it is dropped and the lease is parked. After evcc is back, it must ask again.
     """
     hass.states.async_set(PLUGGED_ENTITY, "on")
     hass.states.async_set(LOCATION_ENTITY, "home")
@@ -636,9 +636,12 @@ async def test_liveness_lost_stops_renewal(
     hass.states.async_set(LIVENESS_ENTITY, "unavailable")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data.observation().controller_alive is False
+    # One unavailable reading (a failed ha-evcc poll) is not enough.
+    await advance(hass, freezer, timedelta(minutes=2))
+    assert state(hass, "switch", "solar_charging") == "on"
+    assert len(mock_rivian.writes) == 2
+    await advance(hass, freezer, timedelta(minutes=1))
     assert state(hass, "switch", "solar_charging") == "off"  # the request is dropped
-    # The pause waits only for the 5 s spacing after the renewal.
-    await advance(hass, freezer, TICK_INTERVAL)
     assert len(mock_rivian.writes) == 3
     [parked] = mock_rivian.writes[-1]
     assert parked["duration"] == 20  # a parked window: it ended 5 minutes ago
@@ -802,7 +805,8 @@ async def test_lease_renewal_switch(
 ) -> None:
     """With renewal off, an active lease is left to lapse; the setting is persisted.
 
-    Once the lease has lapsed it is parked, so its window cannot recur a week later.
+    The window ends on the vehicle with no write (the cloud-free stop). Once it
+    has ended, it is parked so it cannot recur a week later.
     """
     await start_charging(hass)
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_OFF, "switch", "lease_renewal")
@@ -816,7 +820,12 @@ async def test_lease_renewal_switch(
     assert len(mock_rivian.writes) == 1
     assert state(hass, "sensor", "control_state") == "lease_active"
 
+    # The lease has ended; its window still runs 5 minutes (the clock skew) on the car.
     await advance(hass, freezer, timedelta(minutes=2))
+    assert len(mock_rivian.writes) == 1
+    assert state(hass, "sensor", "control_state") == "lease_lapsed"
+
+    await advance(hass, freezer, timedelta(minutes=5))
     assert len(mock_rivian.writes) == 2
     [parked] = mock_rivian.writes[-1]
     assert parked["duration"] == 20  # a parked window, not a new lease
