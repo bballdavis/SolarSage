@@ -42,7 +42,7 @@ The [Rivian charge adapter](RIVIAN_CHARGE_ADAPTER.md) is built and software-test
 
 - [ ] Install the evcc add-on (0.318.0 at the time of writing) and the `ha-evcc` integration.
 - [ ] Start from [`config/evcc/evcc.example.yaml`](../config/evcc/evcc.example.yaml). Configure meters, the `twc3` charger, the solar tariff, and both vehicles **without** control services. The loadpoint stays in mode `off`; the Rivian keeps `mode: now` until phase 4A.
-- [ ] Set the adapter's **evcc liveness** option to `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the glue package. Do not use an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. Without a liveness entity, an evcc outage cannot stop the adapter's lease renewals. Check it by stopping the evcc add-on: `sensor.evcc_api` turns unavailable within a minute.
+- [ ] Set the adapter's **evcc liveness** option to `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the glue package. Do not use an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. Without a liveness entity, an evcc outage cannot stop the adapter's lease renewals. Check it by stopping the evcc add-on: `sensor.evcc_api` turns unavailable within a minute. Also set the **evcc charging enabled** option to `binary_sensor.evcc_rivian_charging_enabled` from the same REST resource; it turns on while evcc has charging enabled for the Rivian.
 - [ ] In the evcc UI, set:
   - loadpoint phases **1**;
   - min current 6 A;

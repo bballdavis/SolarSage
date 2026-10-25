@@ -2,7 +2,7 @@
 
 **What it is.** The Rivian charge adapter (`custom_components/rivian_solar_adapter`) is the one control component this project owns in the [architecture decision](SOLAR_CHARGING_ARCHITECTURE.md). It gives evcc a start/stop switch and a current setting for a Gen 2 Rivian, which has no usable remote charging command. It does this by writing the vehicle's **charging schedule**.
 
-**Status: software-tested only.** Three rounds of independent adversarial review shaped the design, including closed-loop simulations against a model of evcc's charging loop. Its tests run against Home Assistant 2026.10.3 with a simulated Rivian provider. It has not been run against a real account, vehicle, or Wall Connector. **It installs in dry-run mode, and nothing is written until you turn dry run off.**
+**Status: software-tested only.** Four rounds of independent adversarial review shaped the design, including closed-loop simulations against a model of evcc's charging loop. Its tests run against Home Assistant 2026.10.3 with a simulated Rivian provider. It has not been run against a real account, vehicle, or Wall Connector. **It installs in dry-run mode, and nothing is written until you turn dry run off.**
 
 ## How it works
 
@@ -10,11 +10,12 @@
 | --- | --- | --- |
 | Charging on, at N A | A **lease**: one window from 5 minutes ago to `lease_minutes` + 5 minutes from now, at N A rounded down to an even 8–48 A. The 5-minute padding absorbs clock differences. | Charges at N A |
 | A lower current | The same lease at the lower amperage, at the next allowed write | Current drops |
-| A higher current | Only once N − 3 A reaches the next even step, and at most once per increase interval after the last current change. The margin absorbs evcc's +2 A allowance and its rounding, so the two loops do not chase each other. A request of 48 A goes straight to 48, except for 30 minutes after the current dropped from 48: surplus just short of 48 A would otherwise make the two loops chase each other at the ceiling. | Current rises |
+| A higher current | Only once N − 3 A reaches the next even step, and at most once per increase interval after the last current change. The margin absorbs evcc's +2 A allowance and its rounding, so the two loops do not chase each other. A request of 48 A goes straight to 48, except for 30 minutes after the current dropped from 48 to 44 or 46 A: surplus just short of 48 A would otherwise make the two loops chase each other at the ceiling. A deeper drop, such as a cloud, does not start that hold. | Current rises |
 | Charging off | A **parked window** at 8 A that ended 5 minutes ago, so no window covers now | Waits |
 | Nothing new | Renews the lease when 8 minutes remain, but **only** while the car is known plugged in at home and evcc is alive | Keeps charging |
 | Nothing new, and the lease cannot be extended (evcc looks down, the car's state unknown, or renewal off) | Nothing: the window ends on the vehicle by itself, `lease_minutes` + 5 minutes after it was written. That is the cloud-free stop. A minute later a parked window replaces it, so it cannot recur a week later. | Stops at the window end |
-| Nothing, and evcc has looked down for 3 minutes | evcc's request from before the outage is dropped and the window is parked. One unavailable reading is not enough. Until the liveness entity has been seen available since Home Assistant started, the wait is 10 minutes. A request evcc sends meanwhile is kept, because only a running evcc sends one, and acts once the entity is available. After a restart evcc asks again. | Stops |
+| Nothing, and evcc has looked down for 3 minutes | evcc's request from before the outage is **held** and the window is parked. One unavailable reading is not enough. Until the liveness entity has been seen available since Home Assistant started, the wait is 10 minutes. Any call evcc makes meanwhile, changed or not, shows it is running and confirms its request. | Stops |
+| evcc is back after looking down | evcc may have restarted, and a restarted evcc asks again if it wants charging. The **evcc charging enabled** entity tells: on means evcc kept running and still wants charging, so a held request resumes; off drops it. Without that entity, a held request is dropped. A shorter gap keeps the request. | Resumes, or waits for evcc |
 | Nothing (Home Assistant itself down) | Nothing; the window ends on its own within `lease_minutes` + 5 minutes | Stops at the window end |
 
 **Ownership rules:**
@@ -36,6 +37,8 @@
    - **Away while still plugged in** is usually a location glitch. The owner's list is restored, but evcc's request is kept, so the adapter takes over again once the car shows home. evcc does not always repeat a request.
 5. **Restarts resume.**
    - **The journal** is stored per vehicle at `.storage/rivian_solar_adapter.<hash of the vehicle id>`, so it survives a remove and re-add. It is written atomically and resumed after a restart.
+   - **evcc's request after a restart** is unconfirmed, because evcc may have restarted too (a power cut). It keeps a lease that is still live running, but it never starts charging or takes over the owner's schedule. Any call from evcc confirms it, and so does the **evcc charging enabled** entity being on; off drops it. Without that entity, a request whose lease lapsed meanwhile is dropped 30 seconds after evcc is seen up, and evcc asks again if it wants charging.
+   - **A failed journal save of a request** is reported to the caller, but the request is kept: saves queued behind it already hold it. Until a save succeeds, a repeated request is saved again rather than acknowledged.
    - **An interrupted write** is resolved by reading Rivian. A write is recorded as sent as soon as Rivian answers, so a restart before it settles still recognizes it if it lands late. A write that may or may not have been sent before a crash is treated the same way.
    - **If setup fails while the adapter owns the schedule**, for example because Rivian is unreachable, a persistent repair issue says so. Removing the integration restores the schedule.
    - **If a disable or removal cannot restore the owner's schedule**, a persistent repair issue says so and survives restarts. It goes away when the adapter is enabled again or added again for the vehicle, which resumes the restore.
@@ -59,6 +62,7 @@
      | Charger state | The Rivian charger state sensor | Recommended: without it evcc's status can never be "charging" (`c`) |
      | Wall Connector vehicle connected | `binary_sensor.tesla_wall_connector_vehicle_connected` | Recommended: it ends a session when the Wall Connector sees no vehicle, and blocks control of a Rivian plugged in elsewhere |
      | evcc liveness | `sensor.evcc_api`, the REST sensor on evcc's `/api/state` from the [glue package](../config/homeassistant/packages/ev_solar_glue.example.yaml). **Not** an `ha-evcc` entity: with `ha-evcc`'s default websocket connection its entities stay available after evcc stops. | **Strongly recommended**: without it, an evcc outage cannot stop renewals |
+     | evcc charging enabled | `binary_sensor.evcc_rivian_charging_enabled` from the same REST resource in the glue package: evcc's loadpoint `enabled` while the Rivian is its vehicle | **Recommended** with liveness: it lets charging resume after a liveness outage in which evcc kept running, and after a long Home Assistant restart |
      | Vehicle override | `input_select.twc3_vehicle_override` from the [glue package](../config/homeassistant/packages/ev_solar_glue.example.yaml) | Optional: when it names another car, evcc's status reports `a` |
 
 4. Options (**Configure**):
@@ -166,7 +170,7 @@ Entering a fault posts a Home Assistant notification. While faulted, the adapter
 - **Other errors** back off from 15 seconds up to 15 minutes.
 - **An expired login** starts Home Assistant's re-authentication flow.
 - **A missing mapped entity** for more than 5 minutes raises a repair issue. A missing liveness entity counts as evcc being down.
-- **evcc down** blocks starts and renewals at once; `start_blocked_by` shows `evcc_unavailable`. See [How it works](#how-it-works) for when its request is dropped.
+- **evcc down** blocks starts and renewals at once; `start_blocked_by` shows `evcc_unavailable`. The `request_held` and `request_unconfirmed` attributes show where evcc's request stands. See [How it works](#how-it-works).
 
 ## Known limits
 
@@ -175,5 +179,7 @@ Entering a fault posts a Home Assistant notification. While faulted, the adapter
 - **Lease lapse is the only cloud-free stop.** A cloud or network outage cannot stop a lease that is already active; it lapses on its own after at most `lease_minutes` + clock skew. The trial (T4) must show that a lapsing window stops a session.
 - **The vehicle's time zone must match Home Assistant's.** Windows are built in Home Assistant's local time, and the setup warns if that is UTC.
 - **evcc's maximum current should be 48 A.** The 3 A increase margin applies below 48 A, so with evcc's `maxCurrent` at 40 A the lease stops at 36 A, 4 A short. Use `maxCurrent: 48` as in the example config.
-- **Liveness sees a stopped evcc, not a stuck one.** The REST sensor fails when evcc's API does not answer. An evcc that runs but no longer updates its loop goes unnoticed.
+- **Liveness sees a stopped evcc, not a stuck one.** The REST sensor fails when evcc's API does not answer properly. An evcc that runs but no longer updates its loop goes unnoticed.
+- **Without the evcc charging enabled entity, some stops last until evcc asks again.** These are a liveness outage of 3 minutes or more while evcc keeps running, and a Home Assistant restart long enough for the lease to lapse. evcc does not repeat a request whose value has not changed, so in "now" mode or at 48 A of surplus charging stays off until the car is unplugged, evcc restarts, or its mode or plan changes. The entity closes this gap.
+- **The 48 A hold also applies after a switch to "now".** If surplus just short of 48 A started the hold, a switch to "now" charges at 46 A until the hold ends, at most 30 minutes.
 - **A hand-edited adapter window can be taken for the owner's.** After abandon ownership, a window the adapter wrote and the owner then edited to another length is no longer recognized. The next takeover would snapshot it as the owner's list, and a second abandon would replace the archived original with it. Recreate the owner's schedule in the Rivian app before evcc takes over again.

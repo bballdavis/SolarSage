@@ -92,7 +92,8 @@ vehicles:
   # Rivian R1S (Gen 2): read-only until the attended trial (roadmap phase 3) passes and
   # phase 4A wires the Rivian charge adapter (custom_components/rivian_solar_adapter) in.
   # Adapter entity IDs follow its config entry title; these assume the title "R1S".
-  # Copy the real IDs from the adapter's device page.
+  # Copy the real IDs from the adapter's device page. Keep the name "rivian": the glue
+  # package's binary_sensor.evcc_rivian_charging_enabled matches evcc's vehicleName to it.
   - name: rivian
     type: template
     template: homeassistant

@@ -18,9 +18,10 @@
 #      (sensor.<title>_solar_adapter_evcc_status, e.g. sensor.r1s_solar_adapter_evcc_status).
 #      Point the adapter's vehicle override option at input_select.twc3_vehicle_override
 #      so both sensors honor the same override.
-#   3. An evcc liveness sensor, a stale-input sensor and two watchdogs. evcc keeps the
-#      last value of an unavailable meter, and nothing stops a car if evcc itself stops.
-#      Point the adapter's evcc liveness option at sensor.evcc_api.
+#   3. Two evcc sensors from one REST resource, a stale-input sensor and two watchdogs.
+#      evcc keeps the last value of an unavailable meter, and nothing stops a car if evcc
+#      itself stops. Point the adapter's evcc liveness option at sensor.evcc_api and its
+#      evcc charging enabled option at binary_sensor.evcc_rivian_charging_enabled.
 #   4. A Tesla amp restore at unplug. The Tesla keeps the last current evcc set, so a
 #      later manual charge would otherwise start at that current, possibly 6 A.
 
@@ -50,19 +51,36 @@ input_number:
     icon: mdi:current-ac
 
 rest:
-  # evcc liveness: unavailable whenever evcc's API does not answer (add-on stopped,
-  # crashed or restarting). Do not use an ha-evcc entity for this: with ha-evcc's
-  # default websocket connection its entities stay available after evcc stops.
-  # /api/state needs no login; jq keeps the answer to the version string.
+  # evcc's /api/state needs no login; jq trims the answer to what the adapter uses.
+  # Both entities come from this one resource, so they always change together.
   # This detects a stopped evcc, not one that runs but no longer updates.
-  - resource: http://<evcc_host>:7070/api/state?jq=.version
+  - resource: http://<evcc_host>:7070/api/state
+    params:
+      jq: "{version: .version, lp: (.loadpoints[0] | {enabled, vehicleName})}"
     scan_interval: 30
     timeout: 10
     sensor:
+      # evcc liveness: unavailable whenever evcc does not answer properly (add-on
+      # stopped, crashed or still starting). Do not use an ha-evcc entity for this:
+      # with ha-evcc's default websocket connection its entities stay available after
+      # evcc stops.
       - name: evcc api
         unique_id: evcc_api_liveness
-        value_template: "{{ value_json | default('up', true) }}"
+        availability: "{{ value_json is mapping and value_json.version is string }}"
+        value_template: "{{ value_json.version }}"
         icon: mdi:heart-pulse
+    binary_sensor:
+      # On while evcc's loadpoint has charging enabled for the Rivian. evcc keeps this
+      # through an outage of the liveness sensor, but a restarted evcc starts with it off
+      # unless the car is charging, so the adapter can tell the two apart. "rivian" is
+      # the vehicle name in evcc.yaml.
+      - name: evcc rivian charging enabled
+        unique_id: evcc_rivian_charging_enabled
+        availability: "{{ value_json is mapping and value_json.lp is mapping }}"
+        value_template: >-
+          {{ value_json.lp.enabled is sameas true
+             and value_json.lp.vehicleName == 'rivian' }}
+        icon: mdi:ev-station
 
 template:
   - sensor:
