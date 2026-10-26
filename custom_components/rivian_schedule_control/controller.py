@@ -654,7 +654,7 @@ class RivianScheduleController:
             self.dry_run_target = None
             return
         if self.config.dry_run:
-            self.dry_run_target = self._dry_run_target(now)
+            self.dry_run_target = self._dry_run_target(now, obs)
             return
         await self._take_ownership(now, obs)
         if journal.phase is Phase.OWNED and not journal.release_requested:
@@ -1343,15 +1343,18 @@ class RivianScheduleController:
 
     # Helpers --------------------------------------------------------------
 
-    def _dry_run_target(self, now: datetime) -> dict[str, Any]:
+    def _dry_run_target(self, now: datetime, obs: Observation) -> dict[str, Any]:
         journal = self._journal
+        active = journal.desired_charge is True
+        until = self._fixed_until(now, obs) if active else None
         window = lease_window(
             now.astimezone(self.config.time_zone),
-            active=journal.desired_charge is True,
+            active=active,
             lease_minutes=self.config.lease_minutes,
             skew_minutes=self.config.clock_skew_minutes,
-            amps=applied_amps(journal.requested_amps) if journal.desired_charge else AMPS_MIN,
+            amps=applied_amps(journal.requested_amps) if active else AMPS_MIN,
             location=self.config.home_location,
+            end=until.astimezone(self.config.time_zone) if until is not None else None,
         )
         window.pop("location")
         return window
@@ -1373,8 +1376,9 @@ class RivianScheduleController:
     def _fixed_until(self, now: datetime, obs: Observation) -> datetime | None:
         """The controller's until time for a fixed window, or None for a lease.
 
-        It must lie ahead; a window may last at most a day, so a later time is cut
-        to that (the next start then writes the rest).
+        It must lie ahead; a window may last at most a day on the vehicle's wall
+        clock (from ``clock_skew_minutes`` ago), so a later time is cut to that,
+        also across a clock change (the next start then writes the rest).
         """
         until = obs.controller_until
         if until is None:
@@ -1382,9 +1386,10 @@ class RivianScheduleController:
         until = _floor_minute(until.astimezone(UTC))
         if until <= _floor_minute(now):
             return None
-        latest = _floor_minute(now) + timedelta(
-            minutes=MINUTES_PER_DAY - self.config.clock_skew_minutes
+        start = _floor_minute(now).astimezone(self.config.time_zone) - timedelta(
+            minutes=self.config.clock_skew_minutes
         )
+        latest = (start + timedelta(minutes=MINUTES_PER_DAY)).astimezone(UTC)
         return min(until, latest)
 
     def _may_extend(self, obs: Observation) -> bool:

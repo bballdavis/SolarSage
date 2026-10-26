@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.rivian_schedule_control.schedule import (
+    MINUTES_PER_DAY,
     applied_amps,
     fingerprint,
     lease_window,
@@ -17,6 +19,7 @@ from custom_components.rivian_schedule_control.schedule import (
 )
 
 CDT = timezone(timedelta(hours=-5))
+LA = ZoneInfo("America/Los_Angeles")
 HOME = {"latitude": 1.0, "longitude": 2.0}
 
 
@@ -176,3 +179,98 @@ def test_naive_time_rejected():
             amps=8,
             location=HOME,
         )
+
+
+# Fixed windows (one per free night) -----------------------------------------------
+
+
+def fixed_window(now: datetime, end: datetime, *, lease_minutes: int = 20, amps: int = 48):
+    return lease_window(
+        now,
+        active=True,
+        lease_minutes=lease_minutes,
+        skew_minutes=5,
+        amps=amps,
+        location=HOME,
+        end=end,
+    )
+
+
+def test_fixed_window_runs_from_the_skew_ago_to_its_end_across_midnight():
+    now = datetime(2026, 10, 23, 20, 0, 42, tzinfo=LA)  # Friday, the free hours begin
+    end = datetime(2026, 10, 24, 6, 0, tzinfo=LA)  # Saturday, they end
+    window = fixed_window(now, end)
+    assert window == {
+        "weekDays": ["Friday"],
+        "startTime": 19 * 60 + 55,
+        "duration": 10 * 60 + 5,
+        "location": HOME,
+        "amperage": 48,
+        "enabled": True,
+    }
+    assert (window["startTime"] + window["duration"]) % MINUTES_PER_DAY == 6 * 60
+    normalize_schedule(window, strict=True)
+    # Its length comes from the end alone, not from the lease length.
+    assert fixed_window(now, end, lease_minutes=5) == window
+
+
+def test_fixed_window_has_no_padding_at_its_end():
+    now = datetime(2026, 10, 24, 13, 7, 42, tzinfo=CDT)
+    lease = lease_window(now, active=True, lease_minutes=20, skew_minutes=5, amps=16, location=HOME)
+    # The same 20 minutes as a fixed window: the skew before now, nothing after the end
+    # (past it the vehicle would charge in paid hours). The end's seconds are dropped.
+    window = fixed_window(now, datetime(2026, 10, 24, 13, 27, 59, tzinfo=CDT), amps=16)
+    assert window["startTime"] == lease["startTime"] == 13 * 60 + 2
+    assert (lease["duration"], window["duration"]) == (30, 25)
+    assert window["startTime"] + window["duration"] == 13 * 60 + 27
+
+
+def test_fixed_window_across_fall_back_ends_at_its_end_on_the_wall_clock():
+    # Saturday 20:00 PDT to Sunday 06:00 PST is 11 hours, but the vehicle counts minutes on
+    # its local wall clock.
+    end = datetime(2026, 11, 1, 6, 0, tzinfo=LA)
+    window = fixed_window(datetime(2026, 10, 31, 20, 0, tzinfo=LA), end)
+    assert window["weekDays"] == ["Saturday"]
+    assert (window["startTime"], window["duration"]) == (19 * 60 + 55, 10 * 60 + 5)
+    # Rewritten at the second 01:00 (PST), it still ends at 06:00.
+    rewritten = fixed_window(datetime(2026, 11, 1, 1, 0, fold=1, tzinfo=LA), end)
+    assert rewritten["weekDays"] == ["Sunday"]
+    assert (rewritten["startTime"], rewritten["duration"]) == (55, 5 * 60 + 5)
+
+
+@pytest.mark.parametrize(
+    ("end_minutes", "duration"), [(1, 6), (MINUTES_PER_DAY - 5, MINUTES_PER_DAY)]
+)
+def test_fixed_window_lasts_from_a_minute_up_to_a_day(end_minutes, duration):
+    now = datetime(2026, 10, 23, 20, 0, tzinfo=LA)
+    window = fixed_window(now, now + timedelta(minutes=end_minutes))
+    assert window["duration"] == duration
+    normalize_schedule(window, strict=True)
+
+
+@pytest.mark.parametrize("end_minutes", [MINUTES_PER_DAY - 4, 2 * MINUTES_PER_DAY, -5, -6])
+def test_fixed_window_must_end_within_a_day_after_it_starts(end_minutes):
+    # The window starts 5 minutes (the skew) before now: more than a day after that, or
+    # not after it at all, cannot be written as one window.
+    now = datetime(2026, 10, 23, 20, 0, tzinfo=LA)
+    with pytest.raises(ValueError, match="within a day"):
+        fixed_window(now, now + timedelta(minutes=end_minutes))
+
+
+def test_end_does_not_change_a_parked_window():
+    now = datetime(2026, 10, 24, 13, 7, tzinfo=CDT)
+    parked = lease_window(
+        now, active=False, lease_minutes=20, skew_minutes=5, amps=8, location=HOME
+    )
+    assert (
+        lease_window(
+            now,
+            active=False,
+            lease_minutes=20,
+            skew_minutes=5,
+            amps=8,
+            location=HOME,
+            end=now + timedelta(hours=3),
+        )
+        == parked
+    )

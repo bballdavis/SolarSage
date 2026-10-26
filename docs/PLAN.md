@@ -1,6 +1,6 @@
 # Working plan: smart solar charging for the Tesla and the Rivian
 
-Last updated: October 25, 2026. This is the plan we work from. Earlier designs and research notes are in git history.
+Last updated: October 26, 2026. This is the plan we work from. Earlier designs and research notes are in git history.
 
 **Where things stand:** Rivian schedule control, the planner integration and the real-data test tools are built and tested against fakes only. Nothing has run against the real cars, charger or Home Assistant yet. The next step is the owner's: [TESTING.md](TESTING.md) walks through phases 1 to 6, and [Open items](#open-items) lists what remains.
 
@@ -34,7 +34,7 @@ Made:
 6. **Electricity plans are configurable.** Today's plan has free hours from 8 PM to 6 AM, and that will change; time of use, flat and buyback plans must also work by changing settings, not code.
 7. **One dashboard in Home Assistant** with built-in cards, plus the planner's settings.
 8. **The planner controls the cars directly; evcc is not used** (October 25, 2026). evcc's core is a loop that follows the surplus every 30 seconds, which is what decision 5 replaces, and night charging in free hours is simple to do in the planner. Keeping evcc as a pass-through would leave two systems competing for the same controls. **Reversible:** the evcc config and glue package are in commit [`c2a4303`](https://github.com/bballdavis/HASS-Solar-Rivian/tree/c2a4303ad0c1386be10f99023b937848c129eca2/config), and Rivian schedule control exposes the same switch and current number evcc would use, so bringing evcc back means installing the add-on and restoring one file.
-9. **Plugging in by day starts solar charging; overnight is the default otherwise.** A car plugged in during the day charges from excess solar automatically. A car on the charger in the free hours charges at its full current from the moment they begin until it reaches its charge limit; there is nothing else to plan then. The free hours are a Schedule helper (8 PM to 6 AM for now).
+9. **Plugging in by day starts solar charging; overnight is the default otherwise.** A car plugged in during the day charges from excess solar automatically. A car on the charger in the free hours charges at its full current from the moment they begin until it reaches its charge limit; there is nothing else to plan then. The free hours are a Schedule helper (8 PM to 6 AM for now). **The Rivian gets one schedule write per free night** (October 25, 2026): one window at full current that ends exactly when the free hours end, written once. It is not renewed, it is not parked while the planner is down (Planning off at night leaves it charging on free power until then), and nothing is written at 6 AM. By day the Rivian keeps its short, renewed windows.
 10. **The energy-budget planner** (October 25, 2026). Of three designs simulated against an evcc-like follower, the one that sets one steady current from the predicted battery path was chosen: it is as good as the best on the owner's tariff, holds up on plans, and is the simplest to explain ([PLANNER_DESIGN.md](PLANNER_DESIGN.md)). The simulation came before decisions 9 and 14 took their present form; [The planner](#the-planner) says what it assumed.
 11. **Shadow mode first.** The planner installs in shadow mode and sends nothing until the owner turns it off; Rivian schedule control installs in dry run.
 12. **Paid power only for plans.** Without a plan, the planner never chooses paid power. A plan's remainder that sun, battery and free hours cannot cover is charged from paid hours.
@@ -53,7 +53,7 @@ flowchart LR
   Tariff["Tariff schedules (HA helpers)"] --> Planner
   Settings["Planner settings and car plans (dashboard)"] --> Planner
   Planner["Solar EV planner (HA integration, this repo)"] -->|"charge switch + current"| TeslaFleet["Tesla Fleet (HA core)"]
-  Planner -->|"charge switch + current; heartbeat + charging wanted"| ScheduleControl["Rivian schedule control (this repo)"]
+  Planner -->|"charge switch + current; heartbeat, charging wanted, charging until"| ScheduleControl["Rivian schedule control (this repo)"]
   TeslaFleet --> Tesla["Tesla API"]
   ScheduleControl --> Rivian["Rivian API: charging schedule"]
   Planner --> Dashboard["Dashboard: status, outlook, reasons"]
@@ -65,7 +65,7 @@ A Home Assistant integration in this repo ([PLANNER.md](PLANNER.md): install, co
 
 **Daytime solar charging (the main purpose).** Plugging a car in during the day starts it automatically, with no app or button. The goal is to put excess solar into the car while keeping paid grid import as low as possible. Every 15 minutes the planner plans the car's current as described below. If the car is still below its charge limit when the free hours begin, night charging takes over.
 
-**Night charging (the default overnight).** Throughout the free hours, from the moment they begin or the car is plugged in, the car on the charger charges at its full current (its own maximum, capped by the Wall Connector's) until it reaches its charge limit, then stops. The dashboard shows this mode as "Free hours". If sun, battery and free hours together cannot deliver a plan's target by its time, the car's outlook says so, and the remainder is charged from paid hours: at once when the deadline falls inside today's solar window, otherwise in the cheapest paid hours as late as possible. The home battery does not feed the car at night: the Sol-Ark's own settings charge it from the grid during the free hours, so each paid day starts full (decision 14).
+**Night charging (the default overnight).** Throughout the free hours, from the moment they begin or the car is plugged in, the car on the charger charges at its full current (its own maximum, capped by the Wall Connector's) until it reaches its charge limit, then stops. For the Rivian that is one charging-schedule window to the end of the free hours, written once (decision 9). The dashboard shows this mode as "Free hours". If sun, battery and free hours together cannot deliver a plan's target by its time, the car's outlook says so, and the remainder is charged from paid hours: at once when the deadline falls inside today's solar window, otherwise in the cheapest paid hours as late as possible. The home battery does not feed the car at night: the Sol-Ark's own settings charge it from the grid during the free hours, so each paid day starts full (decision 14).
 
 Daytime solar charging works like this:
 
@@ -87,14 +87,14 @@ Daytime solar charging works like this:
 - paid grid import for longer than the tolerance: reduce or pause;
 - battery full and exporting for a while: allow an early increase;
 - car unplugged, away, at its limit, or its data stale: stop commanding it;
-- planner off or unable to plan: its heartbeat goes unavailable, and Rivian schedule control parks the Rivian's charging window after 3 minutes; the Tesla keeps its last current up to its own charge limit;
-- Home Assistant down: the Rivian's charging window lapses on its own within about 25 minutes (schedule control behaviour); the Tesla keeps its last current up to its own charge limit.
+- planner off or unable to plan: its heartbeat goes unavailable, and by day Rivian schedule control parks the Rivian's charging window after 3 minutes; in the free hours the Rivian's window runs on to their end; the Tesla keeps its last current up to its own charge limit;
+- Home Assistant down: the Rivian's charging window ends on its own, by day within about 25 minutes (schedule control behaviour), in the free hours when they end; the Tesla keeps its last current up to its own charge limit.
 
 **Settings** (entities of the planner, listed in [PLANNER.md](PLANNER.md#settings); the defaults held up in the simulation, apart from the battery level wanted when free hours start, which it ran at 40%):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Planner | on | Off: no plans, nothing sent. The Tesla keeps its last current; Rivian schedule control parks the Rivian's charging window within minutes. |
+| Planner | on | Off: no plans, nothing sent. The Tesla keeps its last current. By day Rivian schedule control parks the Rivian's charging window within minutes; in the free hours the Rivian charges on until they end. |
 | Shadow mode | on | Plan and explain, send nothing. Turned off by the owner in phases 4 and 6. |
 | Free hours | 8 PM–6 AM daily | A Schedule helper; repaint it when the plan changes |
 | Price outside free hours | $0.32/kWh | Used to weigh paid grid power against other choices |
@@ -146,7 +146,7 @@ Each phase ends with a check that must pass before the next. [TESTING.md](TESTIN
 | 3. Build the planner | HA integration with tests: night charging first, then daytime solar charging; tariff schedules; dashboard. Runs in **shadow mode**: it plans and explains, but sends nothing. | A week of shadow plans that the owner finds sensible. | **Built** and tested against fakes; starting dashboard only. Owner's shadow week to do. |
 | 4. Tesla under the planner | Let the planner command the Tesla. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. | Ready: `tools/attended_test.py tesla` first |
 | 5. Rivian trial | Attended trial with Rivian schedule control ([steps](RIVIAN_SCHEDULE_CONTROL.md#attended-trial)): current changes, pause, lapse, exact restore of the owner's schedule. | The car follows schedule changes reliably. If it does not, decide between Rivian on a fixed schedule only or a controllable charger. | Ready: `tools/attended_test.py rivian` |
-| 6. Rivian under the planner | Let the planner command the Rivian through Rivian schedule control. | Same checks as phase 4, plus the owner's own Rivian schedule restored on unplug. | Ready after phase 5 |
+| 6. Rivian under the planner | Let the planner command the Rivian through Rivian schedule control. | Same checks as phase 4, plus one schedule write per free night and the owner's own Rivian schedule restored on unplug. | Ready after phase 5 |
 | 7. Unattended | Notifications for faults and safety-rule trips; review a month of results. | A month without manual intervention. | Not started |
 
 ## Repository changes
@@ -157,8 +157,9 @@ Done:
 - [x] **Renamed** the Rivian charge adapter to Rivian schedule control (`custom_components/rivian_schedule_control`, guide [RIVIAN_SCHEDULE_CONTROL.md](RIVIAN_SCHEDULE_CONTROL.md)), because "adapter" read like a piece of hardware: it is software that controls the Rivian through its charging-schedule API, and the Rivian plugs into the same Wall Connector as the Tesla. Nothing was installed under the old name, so there is no migration.
 - [x] **Fitted Rivian schedule control to the planner:**
   - its liveness and charging options are `controller_liveness_entity` and `controller_charging_entity`, pointed at the planner's heartbeat and the car's charging-wanted sensor, and its status sensor is `sensor.r1s_schedule_control_charger_status`; these replace the evcc-era `evcc_*` options and evcc status sensor;
+  - its `controller_until_entity` option, pointed at the planner's `sensor.r1s_planner_charging_until`, makes the free hours one fixed window to their end, written once, instead of a lease renewed all night (decision 9);
   - the two evcc-era current rules (the 3 A increase margin and the hold just below 48 A) are options, off by default.
-- [x] **Added the planner integration** (`custom_components/solar_ev_planner`): the core from the design, the config flow with the owner's entities as suggestions, cars and price windows as subentries, the settings as entities, shadow mode, the executor, and the heartbeat and charging-wanted entities for Rivian schedule control ([PLANNER.md](PLANNER.md)).
+- [x] **Added the planner integration** (`custom_components/solar_ev_planner`): the core from the design, the config flow with the owner's entities as suggestions, cars and price windows as subentries, the settings as entities, shadow mode, the executor, and the heartbeat, charging-wanted and charging-until entities for Rivian schedule control ([PLANNER.md](PLANNER.md)).
 - [x] **Moved the glue's useful logic into the planner:** which car is on the Wall Connector, the vehicle override, the Tesla current restore at unplug, and the stale-input check.
 - [x] **Tariff helpers:** the free hours and every price level are Schedule helpers; prices are entities.
 - [x] **Added `PLANNER_DESIGN.md`**, and [TESTING.md](TESTING.md) for the real-data path.
@@ -176,7 +177,7 @@ Retired:
 - [ ] **Start recording Solcast forecasts now** (`python -m tools.snapshot record-forecasts` on an always-on machine). Home Assistant does not keep Solcast's half hours, so replays of past days use an approximation until it has run for a while.
 - [ ] **A finished dashboard.** [PLANNER.md](PLANNER.md#a-starting-dashboard) has a starting one with built-in cards; the battery outlook as a chart and the per-car outlook still need a layout.
 - [ ] **Recalibrate the caution level** from the shadow week: in simulation (before the present free-hours behaviour) the 90% battery path held only 76% of the time ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
-- [ ] **Confirm what Planning off should mean.** Today it sends nothing: the Tesla keeps its last current, and Rivian schedule control, seeing the heartbeat down, parks the Rivian's charging window within minutes. Going back to shadow mode also sends nothing, so both cars keep their last command until they are paused or unplugged ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)).
+- [ ] **Confirm what Planning off should mean.** Today it sends nothing: the Tesla keeps its last current. By day Rivian schedule control, seeing the heartbeat down, parks the Rivian's charging window within minutes; in the free hours the Rivian's one window runs on to their end, which the owner accepted (decision 9). Going back to shadow mode also sends nothing, so both cars keep their last command until they are paused or unplugged ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)).
 - [ ] **Phase 7:** notifications for Rivian schedule control faults, safety-rule trips and the planner not planning.
 - [ ] **Installing through HACS** gives only Rivian schedule control. Moving the planner into its own repository would make it installable through HACS too; until then it is copied by hand.
 - [ ] **Small known limits:** the executor's hourly command count resets on restart; the planner needs the Wall Connector power sensor to plan; real Tesla Fleet timing, Solcast attribute types and the Sol-Ark's reporting cadence are unchecked until phases 1 and 3.
@@ -191,7 +192,7 @@ Retired:
 
 Answered:
 
-- **Tariff:** free hours are 8 PM–6 AM for now; the price outside them is $0.32/kWh; solar buyback is $0.00/kWh. All of them are settings. In the free hours the car on the charger charges at its full current (decision 9).
+- **Tariff:** free hours are 8 PM–6 AM for now; the price outside them is $0.32/kWh; solar buyback is $0.00/kWh. All of them are settings. In the free hours the car on the charger charges at its full current, and the Rivian gets one schedule write per night (decision 9).
 - **The home battery in free hours:** the Sol-Ark's own settings charge it to 100% from the grid, so every paid day starts full (decision 14).
 - **The Tesla:** a 2020 Model Y, which takes 48 A (11.5 kW) on the Wall Connector, as the planner's Tesla preset assumes (about 75 kWh usable). The planner also reads the car's own maximum from Tesla Fleet's current number.
 - **Which car charges:** the cars swap; whichever is plugged in is the one charged (decision 15).
@@ -200,10 +201,10 @@ Answered:
 
 ## Risks and unknowns
 
-- **Gen 2 Rivian behaviour** is unconfirmed until the phase 5 trial.
+- **Gen 2 Rivian behaviour** is unconfirmed until the phase 5 trial. The one window per free night runs past midnight; the first night of phase 6 confirms that the car follows it.
 - **Forecast quality** on fast-changing days: the planner leans on the battery and the safety rules there.
 - **Tesla API cost and limits:** a few commands an hour stays within Tesla's monthly credit; verify on Tesla's developer dashboard in phase 4.
-- **Internet down:** both cars' APIs are cloud services, so neither can be commanded. The Rivian's window lapses on its own; the Tesla keeps charging at its last current up to its limit.
+- **Internet down:** both cars' APIs are cloud services, so neither can be commanded. The Rivian's window ends on its own (in the free hours, when they end); the Tesla keeps charging at its last current up to its limit.
 - **The free-hours refill is assumed to reach 100%.** The daytime plan counts on it and leaves the refill to the Sol-Ark's own settings. If its time-of-use slot or grid-charge rate changes so that the battery is no longer full when the free hours end, the assumption breaks: a day planned down to the floor can leave the next morning short, and the house imports paid power until the sun covers it. Phase 1 checks the refill in the Sol-Ark's history.
 - **The caution level is optimistic** until it is recalibrated from shadow-mode data; the safety rules and re-planning every 15 minutes cover the gap in simulation.
 - **Nothing has run against the real system.** Every test so far uses fakes; the phases above are where the real behaviour is checked.

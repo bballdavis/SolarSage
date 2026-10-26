@@ -288,7 +288,7 @@ class Decision:
     next_change: PlannedChange | None = None
     safety: str | None = None  # the safety rule that acted, if any
     debug: Mapping[str, Any] = field(default_factory=dict)
-    free_until: datetime | None = None  # night: when these free hours end
+    free_until: datetime | None = None  # in free hours: when they end (any mode)
 
     @property
     def amps(self) -> int | None:

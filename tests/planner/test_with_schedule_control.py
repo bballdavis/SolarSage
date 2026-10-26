@@ -253,6 +253,35 @@ async def test_one_window_per_free_night(
     assert control(hass)["state"] == "paused"
 
 
+@pytest.mark.parametrize("event", ["full", "shadow"])
+async def test_nothing_is_written_after_the_free_night(
+    both: tuple[HomeAssistant, PlannerCoordinator, Any],
+    freezer: FrozenDateTimeFactory,
+    event: str,
+) -> None:
+    """The car reaching its limit in the night, or shadow mode turned on then, leaves the
+    night's request standing: its window still ends at 06:00 and nothing restarts it."""
+    hass, coordinator, rivian = both
+    await turn(hass, SHADOW, False)
+    await tick(hass, freezer, 30)
+    set_site(hass, pv_w=0, grid_w=900, battery_w=0)
+    await cycle(hass, coordinator, freezer, minutes=8 * 60)  # 20:00
+    await tick(hass, freezer, 30)
+    night = len(rivian.writes)
+    assert rivian.writes[-1][0]["amperage"] == 48
+    for k in range(90):  # to 11:00, a cloudy morning
+        if k == 30:  # 01:00
+            if event == "full":
+                set_rivian_telemetry(hass, soc=85)
+            else:
+                await turn(hass, SHADOW, True)
+        await cycle(hass, coordinator, freezer, minutes=10)
+        await tick(hass, freezer, 15)
+    assert len(rivian.writes) == night
+    assert coordinator.data.mode == ("full" if event == "full" else "day")
+    assert control(hass)["state"] == "paused"
+
+
 async def test_planning_off_parks_the_rivian_and_on_resumes(
     both: tuple[HomeAssistant, PlannerCoordinator, Any], freezer: FrozenDateTimeFactory
 ) -> None:

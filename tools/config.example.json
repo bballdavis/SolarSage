@@ -47,6 +47,7 @@
       "current": "number.r1s_schedule_control_solar_current",
       "control_state": "sensor.r1s_schedule_control_control_state",
       "charging_wanted": "binary_sensor.r1s_planner_charging_wanted",
+      "charging_until": "sensor.r1s_planner_charging_until",
       "charger_status": "sensor.r1s_schedule_control_charger_status",
       "charger_state": "sensor.r1s_charger_state",
       "lease_renewal": "switch.r1s_schedule_control_lease_renewal",

@@ -2,7 +2,7 @@
 
 **What it is.** Rivian schedule control is software, not a device: a Home Assistant integration in this repository (`custom_components/rivian_schedule_control`). Nothing is added at the charger or the car. The Rivian plugs into the same Tesla Wall Connector as the Tesla, with its usual cable, and the Wall Connector is only read, never controlled.
 
-A 2025 Gen 2 Rivian accepts no remote command to start, stop or set its charging current. Rivian schedule control does it the one way Rivian's API allows: it rewrites the car's **charging schedule**, the same schedules the Rivian app shows. In Home Assistant this appears as a start/stop switch and a current setting for the car. In the [working plan](PLAN.md) the solar planner uses them: it sets the switch and the current, and provides two entities that tell the schedule control whether the planner is running and whether it wants the car charging ([what the planner must provide](#driving-schedule-control-from-the-planner)). The planner itself is described in [PLANNER.md](PLANNER.md).
+A 2025 Gen 2 Rivian accepts no remote command to start, stop or set its charging current. Rivian schedule control does it the one way Rivian's API allows: it rewrites the car's **charging schedule**, the same schedules the Rivian app shows. In Home Assistant this appears as a start/stop switch and a current setting for the car. In the [working plan](PLAN.md) the solar planner uses them: it sets the switch and the current, and provides three entities that tell the schedule control whether the planner is running, whether it wants the car charging and, in the free hours, until when ([what the planner must provide](#driving-schedule-control-from-the-planner)). The planner itself is described in [PLANNER.md](PLANNER.md).
 
 **Status: software-tested only.** Four rounds of independent adversarial review shaped the design, including closed-loop simulations against evcc's charging loop. Its tests run against Home Assistant 2026.10.3 with a simulated Rivian provider. It has not been run against a real account, vehicle, or Wall Connector. **It installs in dry-run mode, and nothing is written until you turn dry run off.**
 
@@ -11,14 +11,16 @@ A 2025 Gen 2 Rivian accepts no remote command to start, stop or set its charging
 | The controller asks for | Schedule control writes | Expected vehicle behavior (to be confirmed by the [trial](#attended-trial)) |
 | --- | --- | --- |
 | Charging on, at N A | A **lease**: one window from 5 minutes ago to `lease_minutes` + 5 minutes from now, at N A rounded down to an even 8–48 A. The 5-minute padding absorbs clock differences. | Charges at N A |
-| A lower current | The same lease at the lower amperage, at the next allowed write | Current drops |
-| A higher current | The same lease at N A rounded down to an even 8–48 A, once the increase interval has passed since the last current change. Two evcc-era rules are options, off by default: an **increase margin** writes increases that much below the request, and a **ceiling hold** keeps the margin at 48 A for a while after the current dropped from 48 to 44 or 46 A. evcc needed 3 A and 30 minutes, because it added up to 2 A to its requests and chased the surplus; the planner asks for exact currents and rate-limits itself. | Current rises |
-| Charging off | A **parked window** at 8 A that ended 5 minutes ago, so no window covers now | Waits |
-| Nothing new | Renews the lease when 8 minutes remain, but **only** while the car is known plugged in at home and the controller is alive | Keeps charging |
+| Charging on, at N A, with an until time ahead (the end of the free hours, from the **controller charging until** entity) | A **fixed window**: one window from 5 minutes ago to exactly that time, at N A, written once. There is no padding at the end, so it never runs past that time into paid hours. A window lasts at most a day: a later time gets a day now and the rest when it ends. | Charges at N A until that time |
+| A lower current | The same lease at the lower amperage, at the next allowed write. A fixed window keeps its end. | Current drops |
+| A higher current | The same lease at N A rounded down to an even 8–48 A, once the increase interval has passed since the last current change. Two evcc-era rules are options, off by default: an **increase margin** writes increases that much below the request, and a **ceiling hold** keeps the margin at 48 A for a while after the current dropped from 48 to 44 or 46 A. evcc needed 3 A and 30 minutes, because it added up to 2 A to its requests and chased the surplus; the planner asks for exact currents and rate-limits itself. A fixed window keeps its end. | Current rises |
+| Charging off | A **parked window** at 8 A that ended 5 minutes ago, so no window covers now. A live fixed window is parked too. | Waits |
+| Nothing new | Renews the lease when 8 minutes remain, but **only** while the car is known plugged in at home and the controller is alive. A fixed window is never renewed. | Keeps charging |
 | Nothing new, and the lease cannot be extended (the controller looks down, the car's state unknown, or renewal off) | Nothing: the window ends on the vehicle by itself, `lease_minutes` + 5 minutes after it was written. That is the cloud-free stop. A minute later a parked window replaces it, so it cannot recur a week later. | Stops at the window end |
-| Nothing, and the controller has looked down for 3 minutes | Its request from before the outage is **held** and the window is parked. One unavailable reading is not enough. Until the liveness entity has been seen available since Home Assistant started, the wait is 10 minutes. Any request the controller makes meanwhile, changed or not, shows it is running and confirms its request. | Stops |
+| Nothing new, and a fixed window reaches its end | Nothing: the vehicle stops by itself, and the control state shows `paused`. While the until entity still gives that end, nothing starts again. Once it gives another time, or none, a standing request starts again: a fixed window to the new time, or a lease. An ended fixed window would recur a week later, so it is parked if nothing else has been written six days after it. | Stops at the window end |
+| Nothing, and the controller has looked down for 3 minutes | Its request from before the outage is **held** and the window is parked. One unavailable reading is not enough. Until the liveness entity has been seen available since Home Assistant started, the wait is 10 minutes. Any request the controller makes meanwhile, changed or not, shows it is running and confirms its request. A fixed window is not parked: it runs to its end. | Stops (a fixed window at its end) |
 | The controller is back after looking down | It may have restarted, and then it asks again if it wants charging. The **controller charging** entity tells: on means the controller still wants this car charging, so a held request resumes; off drops it. Without that entity, a held request is dropped. A shorter gap keeps the request. | Resumes, or waits for the controller |
-| Nothing (Home Assistant itself down) | Nothing; the window ends on its own within `lease_minutes` + 5 minutes | Stops at the window end |
+| Nothing (Home Assistant itself down) | Nothing; the window ends on its own within `lease_minutes` + 5 minutes, a fixed window at its end | Stops at the window end |
 
 **Ownership rules:**
 
@@ -46,7 +48,7 @@ A 2025 Gen 2 Rivian accepts no remote command to start, stop or set its charging
    - **If a disable or removal cannot restore the owner's schedule**, a persistent repair issue says so and survives restarts. It goes away when Rivian schedule control is enabled again or added again for the vehicle, which resumes the restore.
    - **A change of Home Assistant's time zone** reloads the integration, which then rewrites its window in the new local time. A change of the home location takes effect at the next reload or restart.
 
-**While the schedule control owns the schedule, the owner's own schedules are suspended.** Overnight charging then comes from the planner, which charges the car at full current in the free hours, not from the owner's Rivian schedule.
+**While the schedule control owns the schedule, the owner's own schedules are suspended.** Overnight charging then comes from the planner, which charges the car at full current in the free hours, as one fixed window to their end, not from the owner's Rivian schedule.
 
 ## Install and configure
 
@@ -65,6 +67,7 @@ A 2025 Gen 2 Rivian accepts no remote command to start, stop or set its charging
      | Wall Connector vehicle connected (`wall_connector_entity`) | `binary_sensor.tesla_wall_connector_vehicle_connected` | Recommended: it ends a session when the Wall Connector sees no vehicle, and blocks control of a Rivian plugged in elsewhere |
      | Controller liveness (`controller_liveness_entity`) | The planner's heartbeat, `sensor.solar_ev_planner_heartbeat`: unavailable while the planner is off or down. Leave it empty until the planner is installed. | **Strongly recommended** once a controller runs: without it, a controller outage cannot stop renewals |
      | Controller wants charging (`controller_charging_entity`) | The planner's charging-wanted sensor for this car, `binary_sensor.r1s_planner_charging_wanted` | **Recommended** with liveness: it lets charging resume after an outage of the liveness entity, and after a long Home Assistant restart |
+     | Controller charging until (`controller_until_entity`) | The planner's charging-until sensor for this car, `sensor.r1s_planner_charging_until`: a timestamp, the end of the free hours while the planner charges the car through them | **Recommended** with the planner: it gives the free hours one fixed window, written once. Without it they run on leases renewed all night. |
      | Vehicle override (`vehicle_override_entity`) | The planner's charger car override, `select.solar_ev_planner_charger_car_override` (`auto`, `tesla`, `rivian`) | Optional: when it names another car, the charger status reports `a` |
 
 4. Options (**Configure**):
@@ -72,16 +75,16 @@ A 2025 Gen 2 Rivian accepts no remote command to start, stop or set its charging
    | Option (key) | Default | Meaning |
    | --- | --- | --- |
    | Dry run (`dry_run`) | **on** | Write nothing, except restoring the owner's list if the schedule control still owns it. Shows the would-be schedule. |
-   | Lease minutes (`lease_minutes`) | 20 | How long a charging window lasts without renewal. This is the fail-safe horizon (plus the clock skew). |
-   | Renew before, minutes (`renew_before_minutes`) | 8 | Renew when this little time remains |
-   | Clock skew, minutes (`clock_skew_minutes`) | 5 | Padding at both ends of a lease, for a vehicle clock that differs from Home Assistant's |
+   | Lease minutes (`lease_minutes`) | 20 | How long a charging window lasts without renewal. This is the fail-safe horizon (plus the clock skew). A fixed window ends at the controller's until time instead. |
+   | Renew before, minutes (`renew_before_minutes`) | 8 | Renew when this little time remains. A fixed window is never renewed. |
+   | Clock skew, minutes (`clock_skew_minutes`) | 5 | Padding at both ends of a lease, for a vehicle clock that differs from Home Assistant's. A fixed window has it only at the start. |
    | Minimum write interval, s (`min_write_interval_s`) | 30 | Spacing between current changes and renewals. Start and stop use 5 s. |
    | Increase interval, s (`increase_interval_s`) | 120 | Minimum spacing before raising the current |
    | Increase margin, A (`increase_margin_amps`) | 0 | Write a higher current this much below the request, rounded down to an even value; 48 A or more is still written as 48 A. 0 writes the request exactly, which is what the planner needs. evcc used 3. |
    | Ceiling hold after a decrease, minutes (`ceiling_hold_minutes`) | 0 (off) | Only with a margin: after the current drops from 48 to 44 or 46 A, a request of 48 A keeps the margin for this long. evcc used 30. |
    | Release delay, s (`release_delay_s`) | 60 | How long unplugged must last before restoring the owner's schedule. A replug within it keeps the window parked until the controller asks again. |
 
-   To drive the schedule control from evcc instead of the planner ([plan decision 8](PLAN.md#decisions)), set the increase margin to 3 A and the ceiling hold to 30 minutes, and map the two controller options to evcc's entities.
+   To drive the schedule control from evcc instead of the planner ([plan decision 8](PLAN.md#decisions)), set the increase margin to 3 A and the ceiling hold to 30 minutes, map the liveness and charging options to evcc's entities, and leave the until option empty.
 
 ## Entities
 
@@ -92,13 +95,13 @@ The examples assume the config entry is titled `R1S`; your entity IDs follow you
 | `switch.r1s_schedule_control_solar_charging` | Charging requested by the controller |
 | `number.r1s_schedule_control_solar_current` | Requested current. Accepts 0–80 and applies even 8–48 A. |
 | `sensor.r1s_schedule_control_charger_status` | Charger status: `a` (not known to be plugged in at home, known absent from the Wall Connector, or the override names another car), `b` (connected) or `c` (charging, from the charger state entity) |
-| `sensor.r1s_schedule_control_control_state` | One of the control states below. Its attributes show the lease (`lease_amps` is the current Rivian holds), last write, fingerprints (prefixes only), errors, observation, `start_blocked_by`, `request_held`, `request_unconfirmed` and the dry-run target. |
+| `sensor.r1s_schedule_control_control_state` | One of the control states below. Its attributes show the lease (`lease_amps` is the current Rivian holds, `lease_expires_at` its end, `lease_fixed` true for a fixed window), last write, fingerprints (prefixes only), errors, observation, `start_blocked_by`, `request_held`, `request_unconfirmed` and the dry-run target. |
 | `switch.r1s_schedule_control_lease_renewal` | Turn off to let an active lease lapse (trial T4). The setting persists. |
 | `button.r1s_schedule_control_restore_owner_schedule` | Restore the owner's schedule and hand control back until unplug |
 | `button.r1s_schedule_control_clear_fault` | Resume after a fault, if Rivian holds a state the schedule control knows |
 | `button.r1s_schedule_control_read_schedules` | Read Rivian's schedule list: days, times, amps, enabled. It also shows whether the list is one the schedule control wrote; never coordinates. |
 
-Control states: `idle`, `waiting_for_vehicle`, `handed_back`, `lease_active`, `lease_lapsed`, `paused`, `writing`, `fault`, `dry_run`.
+Control states: `idle`, `waiting_for_vehicle`, `handed_back`, `lease_active`, `lease_lapsed`, `paused`, `writing`, `fault`, `dry_run`. A fixed window that has ended shows `paused`; `lease_lapsed` is a lease that ended for want of renewal.
 
 Services:
 
@@ -118,13 +121,14 @@ The planner ([PLANNER.md](PLANNER.md)) drives Rivian schedule control through Ho
 | --- | --- | --- |
 | Starts or pauses charging | `switch.r1s_schedule_control_solar_charging`: turn on, turn off | Records the request at once; the switch shows it. The schedule write follows in the background. |
 | Sets the current | `number.r1s_schedule_control_solar_current`: set value, 0–80 A | Records it at once; the number shows it. It applies the request rounded down to an even 8–48 A. |
-| Reads what happens | `sensor.r1s_schedule_control_control_state` and its attributes | `lease_amps` is the current Rivian holds; `start_blocked_by` says why charging cannot start or continue |
+| Reads what happens | `sensor.r1s_schedule_control_control_state` and its attributes | `lease_amps` is the current Rivian holds; `lease_fixed` is true for a fixed window, and `lease_expires_at` is its end; `start_blocked_by` says why charging cannot start or continue |
 | Reads whether the Rivian is the car on the charger | `sensor.r1s_schedule_control_charger_status` | `b` or `c` only while it is known plugged in at home and not known absent from the Wall Connector |
 
 **What the planner provides**, mapped in the schedule control's options:
 
 - **A heartbeat** (`controller_liveness_entity`): the planner's `sensor.solar_ev_planner_heartbeat`. Any domain works. Its state must be known (not `unknown` or `unavailable`) while the planner runs, and unavailable or unknown while it does not. Use a dedicated entity: one that is unknown in normal use, such as "next change" with nothing planned, would read as the planner being down. The schedule control does not check how recent the value is, so a planner that runs but has stopped deciding should make its heartbeat unavailable itself. Never map one of the schedule control's own entities: they stay available.
 - **Wants charging** (`controller_charging_entity`): the planner's `binary_sensor.r1s_planner_charging_wanted`. It must be a binary sensor, on while the planner wants this car charging, off while it wants it paused, unknown while it has no decision. It is not a command. The schedule control reads it only to settle a request from before a Home Assistant restart or a planner outage; the planner still commands the switch. While the planner sends nothing (shadow mode), keep it unknown, so it neither confirms nor drops requests the planner did not make.
+- **Charging until** (`controller_until_entity`): the planner's `sensor.r1s_planner_charging_until`. A timestamp sensor: the end of the free hours the car's standing request belongs to. The planner sets it before it sends the command it belongs to, so that command is written as one fixed window to that time, and it keeps the time, even once past, until a daytime command has replaced the request, so an ended window is not started again on the night's request. It is unknown before the first free-hours charge of a plug-in, after unplug, and while Planning is off. A live fixed window keeps its end whatever the entity shows later. Unknown, or a time already past, gives the usual leases.
 
 **Rules for the requests:**
 
@@ -138,10 +142,11 @@ The planner ([PLANNER.md](PLANNER.md)) drives Rivian schedule control through Ho
 8. **Some states ignore requests.** `handed_back` (the owner pressed Restore owner schedule) ignores them until the car is unplugged; `fault` writes nothing until the owner clears it; `dry_run` writes nothing. The planner reports these and does not retry harder.
 9. **The schedule control cannot tell which car the Wall Connector sees.** It acts whenever the Rivian is plugged in at home and the Wall Connector is not known to be empty; the vehicle override changes only the charger status. Command the Rivian only once the planner has decided that the Rivian is the car on the Wall Connector. Any first command, a switch off too, takes over the owner's schedule: a pause is a parked window, not the owner's own schedule. To leave the owner's schedule in charge, send nothing.
 10. **The schedule control renews the lease on its own** while the car is plugged in at home and the heartbeat is up; the planner does not repeat itself to keep charging. While the heartbeat looks down, nothing is started or renewed, and after 3 minutes (10 until it has been seen up since Home Assistant started) the window is parked, so charging stops. With Home Assistant itself down, the window ends on its own within `lease_minutes` + clock skew (25 minutes by default).
+11. **The free hours get one write.** With the until entity mapped, the planner's command at the start of the free hours (or at a plug-in during them) is written once, as a fixed window at full current to their end. It is not renewed, and it is not parked while the heartbeat looks down: Planning off, or the planner down, leaves the car charging on free power until the window ends. Only a pause, an unplug, leaving home, a restore or dry run ends it sooner. A current change, or the night the clocks change, rewrites it with the same end. At its end the car stops by itself and nothing is written; the control state shows `paused` until the planner's next command.
 
 ## Attended trial
 
-Rivian schedule control is also the safest tool for the attended Gen 2 trial ([plan phase 5](PLAN.md#phases)). Every step is journaled and restorable, unlike editing schedule entities by hand. Keep the planner in shadow mode during the trial, so that you are the only writer; its heartbeat stays up in shadow mode, so the schedule control is not blocked. `python -m tools.attended_test rivian --i-am-at-the-car` walks through the steps below and logs them ([TESTING.md, stage 5](TESTING.md#5-the-attended-rivian-trial)).
+Rivian schedule control is also the safest tool for the attended Gen 2 trial ([plan phase 5](PLAN.md#phases)). Every step is journaled and restorable, unlike editing schedule entities by hand. Keep the planner in shadow mode during the trial, so that you are the only writer; its heartbeat stays up in shadow mode, so the schedule control is not blocked. Its charging-until sensor stays unknown in shadow mode, so every trial write is a lease. `python -m tools.attended_test rivian --i-am-at-the-car` walks through the steps below and logs them ([TESTING.md, stage 5](TESTING.md#5-the-attended-rivian-trial)).
 
 **Prerequisites:**
 
@@ -164,13 +169,13 @@ Rivian schedule control is also the safest tool for the attended Gen 2 trial ([p
 | T5 Window back on now | Turn **Lease renewal** back on. **Solar charging** is still on, so the schedule control writes a new lease covering now. | Charging resumes. Record latency. |
 | T6 Plug in while parked | With the window parked, unplug and replug within the release delay. Then try "charge now" in the Rivian app. | Car waits after replugging. Record what "charge now" does, and whether it changes the schedule, which would make the schedule control fault with `external_edit`. |
 | T7 Exact restore | **Restore owner schedule** (or unplug for the release delay). | **Read schedules** matches the inventory |
-| T8 Midnight | Optional, if convenient: keep a lease active across local midnight. | Charging continues past midnight until the lease ends |
+| T8 Midnight | Optional, if convenient: keep a lease active across local midnight. Under the planner each free night's fixed window crosses midnight too; the first night of [TESTING.md, stage 6](TESTING.md#6-the-rivian-under-the-planner) checks it. | Charging continues past midnight until the lease ends |
 
 If T1–T5 and T7 pass with acceptable latency, continue with [plan phase 6](PLAN.md#phases). If the car does not follow schedule changes reliably, the plan's phase 5 says what to decide.
 
 ## Faults and recovery
 
-Entering a fault posts a Home Assistant notification. While faulted, the schedule control writes nothing on its own, and any active lease lapses. **A parked or lapsed window recurs once a week until the owner's schedule is restored**, so clear faults promptly.
+Entering a fault posts a Home Assistant notification. While faulted, the schedule control writes nothing on its own, and any active lease lapses. **A parked, lapsed or ended window recurs once a week until the owner's schedule is restored** (an ended fixed window as the same night's window), so clear faults promptly.
 
 | Fault code | Meaning | What to do |
 | --- | --- | --- |
@@ -188,14 +193,14 @@ Entering a fault posts a Home Assistant notification. While faulted, the schedul
 - **Rate limits** pause writes for 5 minutes, and an account lock for 30.
 - **Other errors** back off from 15 seconds up to 15 minutes.
 - **An expired login** starts Home Assistant's re-authentication flow.
-- **A missing mapped entity** for more than 5 minutes raises a repair issue. A missing liveness entity counts as the controller being down.
-- **Controller down** blocks starts and renewals at once; `start_blocked_by` shows `controller_unavailable`. The `request_held` and `request_unconfirmed` attributes show where the controller's request stands. See [How it works](#how-it-works).
+- **A missing mapped entity** for more than 5 minutes raises a repair issue. A missing liveness entity counts as the controller being down. A missing until entity gives leases instead of fixed windows.
+- **Controller down** blocks starts and renewals at once; `start_blocked_by` shows `controller_unavailable`. A live fixed window runs on to its end. The `request_held` and `request_unconfirmed` attributes show where the controller's request stands. See [How it works](#how-it-works).
 
 ## Known limits
 
 - **Vehicle behavior is unproven on a Gen 2.** The technique is in use: two open-source projects ([`rchav/rivian_solar_charge_ha`](https://github.com/rchav/rivian_solar_charge_ha), [`ostap-korkuna/rivian-charging-automation`](https://github.com/ostap-korkuna/rivian-charging-automation), "tested on R1S") modulate charging through the schedule amperage, and an owner reports the app's schedule amperage changing the rate mid-charge ([upstream issue #244](https://github.com/bretterer/home-assistant-rivian/issues/244)). None of them states a Gen 2 vehicle or documents how reliably a moved or lapsed window stops a session. The trial establishes that for this car.
-- **Owner schedules are suspended while owned.** While owned, the owner's schedules are replaced by a single lease or parked window. A parked window recurs weekly while the schedule control cannot write.
-- **Lease lapse is the only cloud-free stop.** A cloud or network outage cannot stop a lease that is already active; it lapses on its own after at most `lease_minutes` + clock skew. The trial (T4) must show that a lapsing window stops a session.
+- **Owner schedules are suspended while owned.** While owned, the owner's schedules are replaced by a single lease, fixed window or parked window. A parked or ended window recurs weekly while the schedule control cannot write.
+- **Lease lapse is the only cloud-free stop.** A cloud or network outage cannot stop a lease that is already active; it lapses on its own after at most `lease_minutes` + clock skew. A fixed window runs to its end, the end of the free hours. The trial (T4) must show that a lapsing window stops a session.
 - **The vehicle's time zone must match Home Assistant's.** Windows are built in Home Assistant's local time, and the setup warns if that is UTC.
 - **Currents are even, from 8 to 48 A.** A request is rounded down to an even value; below 8 A the car charges at 8 A. Only the switch pauses.
 - **Liveness sees a stopped controller, not a stuck one.** A controller that runs but stops deciding goes unnoticed unless its liveness entity reflects that.

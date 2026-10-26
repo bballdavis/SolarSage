@@ -450,11 +450,13 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         return rt.commanded_a > 0
 
     def charging_until(self, car_id: str) -> datetime | None:
-        """The end of the free hours while the planner charges this car through them, so
-        Rivian schedule control writes one window to it; None otherwise, and while the
-        planner sends nothing."""
+        """The end of the free hours the car's standing request belongs to, so Rivian
+        schedule control writes one window to it. It stays, even once past, until a
+        paid-hours command replaces the request, so an ended window is not started again
+        on the night's request (also in shadow mode, where the last command stands).
+        None while the planner is off, with no session, or by day."""
         rt = self.runtime.get(car_id)
-        if not self.active or rt is None or rt.plugged_since is None:
+        if not self.enabled or rt is None or rt.plugged_since is None:
             return None
         return rt.until
 
@@ -865,21 +867,32 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             return
         command = decision.command_for(car_id)
         car, rt = self.cars[car_id], self.runtime[car_id]
-        # The end of the free hours goes out before the command it belongs to, so the
-        # Rivian's schedule gets one window to it rather than a short renewed one.
+        # In free hours, their end goes out before the command it belongs to, so the
+        # Rivian's schedule gets one window to it rather than a short renewed one. The end
+        # stays with the standing request (a full or stale car gets no command) until a
+        # paid-hours command has replaced it.
         amps = command.amps if command is not None else None
-        charging = amps > 0 if amps is not None else bool(rt.commanded_a)
-        until = decision.free_until if decision.mode == "night" and charging else None
-        stale = [r for cid, r in self.runtime.items() if cid != car_id and r.until is not None]
-        if until != rt.until or stale:
-            rt.until = until
-            for r in stale:
-                r.until = None
+        standing = amps if amps is not None else (rt.commanded_a or 0)
+        if decision.free_until is not None:
+            until = decision.free_until if standing > 0 else None
+        elif amps is not None:
+            until = None
+        else:
+            until = rt.until
+        others = [r for cid, r in self.runtime.items() if cid != car_id and r.until is not None]
+        for r in others:
+            r.until = None
+        if (until is not None and until != rt.until) or others:
+            if until is not None:
+                rt.until = until
             self.async_update_listeners()
-        if command is not None and command.amps is not None:
-            await self.executor.async_apply(car, rt, command.amps, now)
+        if amps is not None:
+            await self.executor.async_apply(car, rt, amps, now)
         elif decision.mode in ("day", "night"):
             await self.executor.async_reconcile(car, rt, now)
+        if until is None and rt.until is not None and rt.retry_a is None:
+            rt.until = None  # the car holds the command that replaced the request
+            self.async_update_listeners()
 
     async def _async_restore_at_unplug(self) -> None:
         """The Tesla keeps the last current it was given; when it unplugs at home after the

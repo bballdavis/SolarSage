@@ -67,6 +67,7 @@ from .types import (
 
 STEP = timedelta(minutes=15)  # forward-model step and the planning cadence
 FIVE = timedelta(minutes=5)
+FREE_END_SEARCH = timedelta(days=8)  # how far the end of the free hours is looked for
 
 
 @dataclass(frozen=True)
@@ -245,9 +246,18 @@ class Planner:
         return min(car.spec.max_a, snap.charger_max_a)
 
     def _free_end(self, snap: Snapshot) -> datetime:
-        lim = timedelta(hours=self.params.horizon_h)
-        end = next_flip(snap.now, snap.tariff.is_free, lim)
-        return end or snap.now + lim
+        """When the free hours that include now end, to the minute. Past a week of free
+        hours, the start of the eighth day, so the time stays put."""
+        now, is_free = snap.now, snap.tariff.is_free
+        end = next_flip(now, is_free, FREE_END_SEARCH)
+        if end is None:
+            return now.replace(hour=0, minute=0, second=0, microsecond=0) + FREE_END_SEARCH
+        # next_flip scans a 5-minute grid; Schedule blocks end on whole minutes
+        for m in range(4, 0, -1):
+            t = end - timedelta(minutes=m)
+            if t > now and not is_free(t):
+                return t
+        return end
 
     def _night(self, snap: Snapshot, car: CarState) -> tuple[int, str, dict]:
         """Free hours: the car charges at its full current to its limit; the Sol-Ark's own
@@ -807,7 +817,7 @@ class Planner:
             nxt,
             safety,
             d,
-            self._free_end(snap) if mode == "night" else None,
+            self._free_end(snap) if car is not None and snap.tariff.is_free(snap.now) else None,
         )
 
     def _trajectory(

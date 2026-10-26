@@ -1,13 +1,16 @@
 """Commanding the car on the charger: nothing in shadow mode, the right service calls with
 the rate limits once shadow mode is off, the requests Rivian schedule control dropped, the
-Tesla restore at unplug, and failures."""
+Tesla restore at unplug, failures, and the free hours' end published before the commands it
+belongs to."""
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+import json
 
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.core import HomeAssistant
+from homeassistant.const import STATE_UNKNOWN
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.util import dt as dt_util
 import pytest
 
@@ -36,6 +39,9 @@ from .conftest import (
 
 SHADOW = "switch.solar_ev_planner_shadow_mode"
 PLANNING = "switch.solar_ev_planner_planning"
+UNTIL = "sensor.r1s_planner_charging_until"
+# 06:00 on Tuesday 16 June (UTC-7): the end of Monday night's free hours (20:00-06:00)
+MONDAY_NIGHT_END = datetime(2026, 6, 16, 13, 0, tzinfo=dt_util.UTC)
 
 
 @pytest.fixture(autouse=True)
@@ -323,3 +329,138 @@ def test_runtime_round_trip() -> None:
     assert back.failures == 2
     back.end_session()
     assert back.plugged_since is None and back.commanded_a is None
+
+
+# --------------------------------------------------------------------------- the free hours' end
+
+
+class WatchedCars(FakeCars):
+    """The fake cars, noting what the R1S's until sensor showed as each call for the R1S
+    arrived: Rivian schedule control reads it when the request changes, so the free hours'
+    end must already be there."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        super().__init__(hass)
+        self.until_at_call: list[tuple[str, datetime | None]] = []
+
+    def clear(self) -> None:
+        super().clear()
+        self.until_at_call.clear()
+
+    async def _handle(self, call: ServiceCall) -> None:
+        if call.data["entity_id"] in (RIV["switch"], RIV["current"]):
+            state = self.hass.states.get(UNTIL)
+            assert state is not None
+            until = None if state.state == STATE_UNKNOWN else dt_util.parse_datetime(state.state)
+            self.until_at_call.append((call.service, until))
+        await super()._handle(call)
+
+
+@pytest.fixture
+def watched(site: HomeAssistant) -> WatchedCars:
+    return WatchedCars(site)
+
+
+async def test_the_free_end_goes_out_before_the_command(
+    site: HomeAssistant, watched: WatchedCars, freezer: FrozenDateTimeFactory
+) -> None:
+    """Plugged in during the free hours: their end is published, then the current and the
+    switch are sent."""
+    hass = site
+    set_rivian(hass, plugged="off")
+    coordinator = await setup_entry(hass, make_entry(RIVIAN), watched)
+    await turn(hass, SHADOW, False)
+    set_site(hass, pv_w=0, grid_w=900, battery_w=0, soc=60)
+    await cycle(hass, coordinator, freezer, minutes=8 * 60 + 30)  # 20:30, the charger empty
+    assert watched.calls == []
+    set_rivian(hass, soc=70)
+    await cycle(hass, coordinator, freezer)
+    assert coordinator.data.mode == "night"
+    assert watched.calls == [("number", "set_value", 48), ("switch", "turn_on", RIV["switch"])]
+    assert watched.until_at_call == [
+        ("set_value", MONDAY_NIGHT_END),
+        ("turn_on", MONDAY_NIGHT_END),
+    ]
+
+
+async def test_the_free_end_goes_out_before_the_full_current(
+    site: HomeAssistant, watched: WatchedCars, freezer: FrozenDateTimeFactory
+) -> None:
+    """Charging from the sun with no end; at 20:00 the end, then 48 A."""
+    hass = site
+    coordinator = await setup_entry(hass, make_entry(RIVIAN), watched)
+    await turn(hass, SHADOW, False)
+    day = coordinator.runtime["rivian"].commanded_a
+    assert day is not None and 0 < day < 48
+    assert watched.until_at_call == [("set_value", None), ("turn_on", None)]
+    watched.clear()
+    set_site(hass, pv_w=0, grid_w=900, battery_w=0, soc=60)
+    await cycle(hass, coordinator, freezer, minutes=8 * 60)  # 20:00
+    assert coordinator.data.mode == "night"
+    assert watched.calls == [("number", "set_value", 48)]  # the switch is already on
+    assert watched.until_at_call == [("set_value", MONDAY_NIGHT_END)]
+
+
+async def test_leaving_shadow_mode_in_the_free_hours_sends_the_end_first(
+    site: HomeAssistant, watched: WatchedCars, freezer: FrozenDateTimeFactory
+) -> None:
+    hass = site
+    coordinator = await setup_entry(hass, make_entry(RIVIAN), watched)
+    set_site(hass, pv_w=0, grid_w=900, battery_w=0, soc=60)
+    await cycle(hass, coordinator, freezer, minutes=9 * 60)  # 21:00, in shadow mode
+    assert coordinator.data.mode == "night" and watched.calls == []
+    await turn(hass, SHADOW, False)
+    assert watched.until_at_call == [
+        ("set_value", MONDAY_NIGHT_END),
+        ("turn_on", MONDAY_NIGHT_END),
+    ]
+
+
+async def test_commands_sent_again_in_the_free_hours_follow_the_end(
+    site: HomeAssistant, watched: WatchedCars, freezer: FrozenDateTimeFactory
+) -> None:
+    """A command retried after a failure, and a request the schedule control dropped, go out
+    with the end already published."""
+    hass = site
+    set_rivian(hass, plugged="off")
+    coordinator = await setup_entry(hass, make_entry(RIVIAN), watched)
+    await turn(hass, SHADOW, False)
+    set_site(hass, pv_w=0, grid_w=900, battery_w=0, soc=60)
+    await cycle(hass, coordinator, freezer, minutes=8 * 60 + 30)  # 20:30
+    watched.fail = "the cloud is down"
+    set_rivian(hass, soc=70)
+    await cycle(hass, coordinator, freezer)
+    rt = coordinator.runtime["rivian"]
+    assert rt.commanded_a is None and rt.retry_a == 48
+    assert watched.until_at_call == [("set_value", MONDAY_NIGHT_END)]
+    watched.fail = None
+    watched.clear()
+    await cycle(hass, coordinator, freezer, minutes=1.5)  # after the back-off
+    assert rt.commanded_a == 48
+    assert watched.until_at_call == [
+        ("set_value", MONDAY_NIGHT_END),
+        ("turn_on", MONDAY_NIGHT_END),
+    ]
+    # the schedule control dropped the request (a restart it could not confirm)
+    watched.clear()
+    set_rivian(hass, soc=70, desired=None, requested=48, schedule_control_state="idle")
+    await cycle(hass, coordinator, freezer, minutes=10)
+    assert watched.until_at_call == [("turn_on", MONDAY_NIGHT_END)]
+
+
+def test_runtime_round_trip_keeps_the_free_end() -> None:
+    """The free hours' end survives a restart (the store is JSON); a store from before it
+    existed, or a value that is not a time, loads as none; the end of a session clears it."""
+    now = dt_util.now()
+    end = now.replace(hour=6, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    rt = CarRuntime(plugged_since=now, commanded_a=48, touched=True, until=end)
+    back = CarRuntime.from_dict(json.loads(json.dumps(rt.to_dict())))
+    assert back.until == end and back.until.utcoffset() == end.utcoffset()
+    assert back.commanded_a == 48 and back.plugged_since == now
+    assert CarRuntime.from_dict(CarRuntime(plugged_since=now).to_dict()).until is None
+    older = {k: v for k, v in rt.to_dict().items() if k != "until"}
+    assert CarRuntime.from_dict(older).until is None
+    assert CarRuntime.from_dict(older).commanded_a == 48
+    assert CarRuntime.from_dict(rt.to_dict() | {"until": "06:00 tomorrow"}).until is None
+    back.end_session()
+    assert back.until is None and back.plugged_since is None

@@ -142,7 +142,7 @@ These are the owner's settings, all on the dashboard. They map to `planner_core.
 
 | Setting | Default | Meaning | Field |
 | --- | --- | --- | --- |
-| Planner | on | Off: nothing is sent to either car. The heartbeat then goes down, so Rivian schedule control parks the Rivian's charging window ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)). | `enabled` |
+| Planner | on | Off: nothing is sent to either car. The heartbeat then goes down, so by day Rivian schedule control parks the Rivian's charging window; in the free hours the night's one window runs on to their end ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)). | `enabled` |
 | Shadow mode | on | Plan and explain, send nothing (phase 3) | `shadow` |
 | Free hours | 8 PM–6 AM daily | Schedule helper | `Tariff` window at $0 |
 | Price outside free hours | $0.32/kWh | Normal import price | `Tariff.price` |
@@ -208,11 +208,11 @@ These are checked on every call, and they override the plan:
 | Battery at the floor and discharging into the car in paid hours | Cut the car by the discharge; no increase for 30 min |
 | Battery at 97% or more, or charging at full rate, and exporting more than 0.4 kW for 10 min | An increase may skip the 15-min interval |
 | Car unplugged, at its limit, or its data stale | Send nothing |
-| Planner off | Send nothing to either car (Rivian schedule control then parks the Rivian's charging window) |
+| Planner off | Send nothing to either car (by day Rivian schedule control then parks the Rivian's charging window; the free night's one window runs on to its end) |
 
 Safety rules do not act within 10 minutes of a change, while a command is in flight, or while a plan is being pushed.
 
-When the planner stops (Planning off, or it cannot plan), its heartbeat goes unavailable and Rivian schedule control parks the Rivian's charging window after 3 minutes. When Home Assistant itself is down, the schedule control's window lapses on its own within about 25 minutes. The Tesla keeps its last current up to its own limit in both cases.
+When the planner stops (Planning off, or it cannot plan), its heartbeat goes unavailable and, by day, Rivian schedule control parks the Rivian's charging window after 3 minutes. When Home Assistant itself is down, a daytime window lapses on its own within about 25 minutes. In the free hours the Rivian has one window to their end, written once, which runs on to that end either way. The Tesla keeps its last current up to its own limit in both cases.
 
 ## 9. Seasonal behaviour
 

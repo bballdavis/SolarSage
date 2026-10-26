@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from custom_components.rivian_schedule_control.controller import (
     ControlState,
     Journal,
     JournalSaveError,
+    Lease,
     Observation,
     Phase,
     ReleaseResult,
@@ -1416,3 +1418,388 @@ async def test_snapshot_has_no_coordinates_or_full_fingerprints():
     text = repr(snapshot)
     assert "latitude" not in text and "30.0" not in text and "97" not in text
     assert len(snapshot["owned_fingerprint"]) == 12
+
+
+# Free hours: one fixed window per night ---------------------------------------------------
+
+LA = ZoneInfo("America/Los_Angeles")
+# The free hours, 20:00-06:00 local time; the planner gives their end as its until time.
+DUSK = datetime(2026, 10, 23, 20, 0, tzinfo=LA)  # Friday
+DAWN = datetime(2026, 10, 24, 6, 0, tzinfo=LA)  # Saturday
+NIGHT_MINUTES = 10 * 60
+
+
+def night(until: datetime | None = DAWN, **facts: Any) -> Observation:
+    """The planner up and wanting charging, its until entity at ``until`` (read in UTC)."""
+    values: dict[str, Any] = {
+        "plugged": True,
+        "home": True,
+        "charging": True,
+        "controller_alive": True,
+        "controller_charging": True,
+        "controller_until": until.astimezone(UTC) if until is not None else None,
+    }
+    return Observation(**(values | facts))
+
+
+NIGHT = night()
+# The planner looks down: its heartbeat and charging entity unavailable, its until unknown.
+PLANNER_DOWN = night(None, controller_alive=False, controller_charging=None)
+# After the free hours, no sun yet: the planner has cleared its until and paused the car.
+MORNING = night(None, charging=False, controller_charging=False)
+
+
+def ends_at(window: dict[str, Any]) -> int:
+    """Where a window ends on the vehicle's clock, in minutes after midnight."""
+    return (window["startTime"] + window["duration"]) % (24 * 60)
+
+
+async def start_night(
+    **config: Any,
+) -> tuple[RivianScheduleController, FakeProvider, FakeStore]:
+    """20:00: the planner asks for 48 A through the free hours."""
+    controller, provider, store = make(time_zone=LA, **config)
+    await start(controller, amps=48, obs=NIGHT, now=DUSK)
+    return controller, provider, store
+
+
+async def test_free_hours_get_one_full_current_window_to_their_end():
+    controller, provider, _ = await start_night()
+    assert len(provider.sets) == 1
+    [window] = provider.sets[0]
+    assert window == {
+        "weekDays": ["Friday"],
+        "startTime": 19 * 60 + 55,  # the clock skew before now
+        "duration": 10 * 60 + 5,  # across midnight to 06:00 sharp, no padding at the end
+        "location": {"latitude": 30.00001, "longitude": -97.00001},
+        "amperage": 48,
+        "enabled": True,
+    }
+    lease = controller.journal.lease
+    assert lease.fixed is True and lease.amps == 48
+    assert lease.expires_at == DAWN.astimezone(UTC)
+    assert controller.state(DUSK) is ControlState.LEASE_ACTIVE
+    assert controller.snapshot(DUSK)["lease_fixed"] is True
+
+
+async def test_fixed_window_is_never_renewed_through_the_night():
+    controller, provider, _ = await start_night()
+    for minute in range(1, NIGHT_MINUTES):  # every minute to 05:59
+        if minute % 10 == 0:  # the planner repeats its unchanged request
+            await controller.async_request_amps(48)
+            await controller.async_request_charge(True)
+        await controller.async_tick(at(minutes=minute, base=DUSK), NIGHT)
+    assert len(provider.sets) == 1
+    assert controller.state(at(minutes=NIGHT_MINUTES - 1, base=DUSK)) is ControlState.LEASE_ACTIVE
+
+
+async def test_planner_down_at_night_neither_parks_the_window_nor_writes_when_back():
+    controller, provider, _ = await start_night()
+    # 02:40-03:00: Planning turned off, far longer than the liveness grace.
+    for minute in range(400, 420):
+        await controller.async_tick(at(minutes=minute, base=DUSK), PLANNER_DOWN)
+    snapshot = controller.snapshot(at(minutes=419, base=DUSK))
+    assert snapshot["request_held"] is True
+    assert snapshot["start_blocked_by"] == ["controller_unavailable"]
+    assert controller.state(at(minutes=419, base=DUSK)) is ControlState.LEASE_ACTIVE
+    # Back on, then on through 06:00.
+    for minute in range(420, NIGHT_MINUTES + 10):
+        await controller.async_tick(at(minutes=minute, base=DUSK), NIGHT)
+    assert len(provider.sets) == 1
+
+
+async def test_fixed_window_ending_while_the_planner_looks_down_writes_nothing():
+    controller, provider, _ = await start_night()
+    for minute in range(9 * 60 + 30, 11 * 60):  # 05:30-06:59, the planner down
+        await controller.async_tick(at(minutes=minute, base=DUSK), PLANNER_DOWN)
+    assert len(provider.sets) == 1
+    assert controller.state(at(minutes=11 * 60, base=DUSK)) is ControlState.PAUSED
+    # Back up by day, not wanting charging: its old request is dropped, nothing is parked.
+    await controller.async_tick(at(minutes=11 * 60, base=DUSK), MORNING)
+    assert controller.journal.command_received is False
+    assert len(provider.sets) == 1
+
+
+async def test_turning_charging_off_parks_the_fixed_window():
+    controller, provider, _ = await start_night()
+    await controller.async_request_charge(False)
+    await controller.async_tick(at(minutes=3 * 60, base=DUSK), NIGHT)  # 23:00
+    assert len(provider.sets) == 2
+    [parked] = provider.sets[-1]
+    assert parked["amperage"] == 8
+    assert parked["startTime"] + parked["duration"] == 22 * 60 + 55  # ended before now
+    lease = controller.journal.lease
+    assert lease.active is False and lease.fixed is False
+    assert controller.state(at(minutes=3 * 60, base=DUSK)) is ControlState.PAUSED
+
+
+async def test_unplugging_at_night_parks_the_fixed_window_and_restores_the_owner_list():
+    controller, provider, _ = await start_night()
+    unplugged = night(plugged=False, charging=False)
+    await controller.async_tick(at(minutes=60, base=DUSK), unplugged)
+    assert len(provider.sets) == 2 and provider.sets[-1][0]["amperage"] == 8  # parked at once
+    await controller.async_tick(at(minutes=61, base=DUSK), unplugged)
+    assert provider.schedules == OWNER
+    assert controller.journal.phase is Phase.IDLE
+
+
+async def test_ended_fixed_window_writes_nothing_nor_restarts_on_the_same_request():
+    controller, provider, _ = await start_night()
+    # 05:59-06:15 every 15 s, past where a lapsed lease would be parked: the planner's
+    # 06:00 cycle has not run, so it still asks for charging until 06:00.
+    for second in range((NIGHT_MINUTES - 1) * 60, (NIGHT_MINUTES + 15) * 60, 15):
+        await controller.async_tick(at(seconds=second, base=DUSK), NIGHT)
+    assert len(provider.sets) == 1
+    lease = controller.journal.lease
+    assert lease.active is True and lease.fixed is True
+    assert lease.expires_at == DAWN.astimezone(UTC)
+
+
+async def test_ended_fixed_window_shows_paused_not_lapsed():
+    controller, _, _ = await start_night()
+    assert controller.state(DAWN - timedelta(seconds=1)) is ControlState.LEASE_ACTIVE
+    assert controller.state(DAWN) is ControlState.PAUSED
+    assert controller.state(DAWN + timedelta(hours=3)) is ControlState.PAUSED
+    assert controller.snapshot(DAWN)["lease_fixed"] is True
+    # A lease that was not renewed, by contrast, lapsed.
+    leased, _, _ = make(time_zone=LA)
+    await start(leased, amps=48, obs=night(None), now=DUSK)
+    assert leased.state(at(minutes=20, base=DUSK)) is ControlState.LEASE_LAPSED
+
+
+async def test_new_request_after_the_free_hours_starts_a_normal_lease():
+    controller, provider, _ = await start_night()
+    await controller.async_request_charge(False)  # the planner's 06:00 cycle
+    for minute in range(NIGHT_MINUTES, NIGHT_MINUTES + 3 * 60, 5):  # 06:00-08:55
+        await controller.async_tick(at(minutes=minute, base=DUSK), MORNING)
+    assert len(provider.sets) == 1  # the ended window needs no park
+    # 09:00: sunshine; the planner asks for 16 A, with no until.
+    nine = at(minutes=13 * 60, base=DUSK)
+    await controller.async_request_amps(16)
+    await controller.async_request_charge(True)
+    await controller.async_tick(nine, night(None))
+    assert len(provider.sets) == 2
+    [window] = provider.sets[-1]
+    assert (window["weekDays"], window["startTime"], window["duration"]) == (
+        ["Saturday"],
+        8 * 60 + 55,
+        30,
+    )
+    assert window["amperage"] == 16
+    lease = controller.journal.lease
+    assert lease.fixed is False
+    assert lease.expires_at == nine.astimezone(UTC) + timedelta(minutes=20)
+    await controller.async_tick(nine + timedelta(minutes=12), night(None))
+    assert len(provider.sets) == 3  # and renewed like any lease
+
+
+async def test_ended_fixed_window_is_reparked_before_it_recurs():
+    controller, provider, _ = await start_night()
+    await controller.async_request_charge(False)  # the planner's 06:00 cycle
+    six_days = 6 * 24 * 60
+    for minute in [*range(NIGHT_MINUTES, six_days, 60), six_days - 1]:
+        await controller.async_tick(at(minutes=minute, base=DUSK), MORNING)
+    assert len(provider.sets) == 1
+    # Thursday 20:00, six days after it was written; it would recur on Friday at 19:55.
+    await controller.async_tick(at(minutes=six_days, base=DUSK), MORNING)
+    assert len(provider.sets) == 2
+    [parked] = provider.sets[-1]
+    assert parked["weekDays"] == ["Thursday"] and parked["amperage"] == 8
+    assert parked["startTime"] + parked["duration"] == 19 * 60 + 55
+    assert controller.journal.lease.active is False
+
+
+async def test_running_lease_becomes_fixed_on_an_increase_when_the_free_hours_begin():
+    controller, provider, _ = make(time_zone=LA)
+    await start(controller, amps=16, obs=night(None), now=at(minutes=-10, base=DUSK))  # 19:50
+    assert controller.journal.lease.fixed is False
+    # 20:00: the planner gives the end of the free hours, then asks for 48 A.
+    await controller.async_request_amps(48)
+    await controller.async_tick(DUSK, NIGHT)
+    assert len(provider.sets) == 2
+    [window] = provider.sets[-1]
+    assert (window["startTime"], window["duration"], window["amperage"]) == (
+        19 * 60 + 55,
+        10 * 60 + 5,
+        48,
+    )
+    lease = controller.journal.lease
+    assert lease.fixed is True and lease.expires_at == DAWN.astimezone(UTC)
+    for minute in range(1, NIGHT_MINUTES + 10):
+        await controller.async_tick(at(minutes=minute, base=DUSK), NIGHT)
+    assert len(provider.sets) == 2
+
+
+async def test_running_lease_becomes_fixed_on_its_renewal_when_the_free_hours_begin():
+    controller, provider, _ = make(time_zone=LA)
+    # 19:50: already at 48 A, a lease to 20:10.
+    await start(controller, amps=48, obs=night(None), now=at(minutes=-10, base=DUSK))
+    await controller.async_tick(DUSK, NIGHT)
+    await controller.async_tick(at(minutes=1, base=DUSK), NIGHT)
+    assert len(provider.sets) == 1  # nothing to change until the lease is due for renewal
+    await controller.async_tick(at(minutes=2, base=DUSK), NIGHT)  # 8 minutes left
+    assert len(provider.sets) == 2
+    [window] = provider.sets[-1]
+    assert (window["startTime"], window["duration"]) == (19 * 60 + 57, 10 * 60 + 3)
+    assert ends_at(window) == 6 * 60 and window["amperage"] == 48
+    assert controller.journal.lease.fixed is True
+    for minute in range(3, NIGHT_MINUTES + 10):
+        await controller.async_tick(at(minutes=minute, base=DUSK), NIGHT)
+    assert len(provider.sets) == 2
+
+
+# While the window runs, the planner may still give its end, or (the free hours edited) a
+# later one; either way a rewrite keeps the end the window was written with.
+UNTIL_KEPT_OR_MOVED = pytest.mark.parametrize(
+    "later", [timedelta(0), timedelta(hours=1)], ids=["until_kept", "until_moved"]
+)
+
+
+@UNTIL_KEPT_OR_MOVED
+async def test_current_changes_keep_the_fixed_end(later):
+    controller, provider, _ = await start_night()
+    obs = night(DAWN + later)
+    await controller.async_request_amps(32)
+    await controller.async_tick(at(minutes=3 * 60, base=DUSK), obs)  # 23:00
+    [lower] = provider.sets[-1]
+    assert lower["amperage"] == 32
+    assert (lower["startTime"], ends_at(lower)) == (22 * 60 + 55, 6 * 60)
+    await controller.async_request_amps(48)
+    await controller.async_tick(at(minutes=3 * 60 + 5, base=DUSK), obs)
+    [higher] = provider.sets[-1]
+    assert higher["amperage"] == 48
+    assert (higher["startTime"], ends_at(higher)) == (23 * 60, 6 * 60)
+    lease = controller.journal.lease
+    assert lease.fixed is True and lease.expires_at == DAWN.astimezone(UTC)
+    for minute in range(3 * 60 + 6, NIGHT_MINUTES):
+        await controller.async_tick(at(minutes=minute, base=DUSK), obs)
+    assert len(provider.sets) == 3
+
+
+async def test_free_hours_moved_later_get_a_window_of_their_own_when_the_first_ends():
+    controller, provider, _ = await start_night()
+    later = night(DAWN + timedelta(hours=1))  # 23:00: the free hours now end at 07:00
+    for minute in range(3 * 60, NIGHT_MINUTES):
+        await controller.async_tick(at(minutes=minute, base=DUSK), later)
+    assert len(provider.sets) == 1  # the running window is left alone
+    await controller.async_tick(DAWN, later)
+    assert len(provider.sets) == 2
+    [window] = provider.sets[-1]
+    assert (window["startTime"], ends_at(window)) == (5 * 60 + 55, 7 * 60)
+    lease = controller.journal.lease
+    assert lease.fixed is True
+    assert lease.expires_at == (DAWN + timedelta(hours=1)).astimezone(UTC)
+
+
+@UNTIL_KEPT_OR_MOVED
+@pytest.mark.parametrize(
+    ("dusk", "dawn", "rewrite_start"),
+    [
+        # Fall back: rewritten at the second 01:00 (PST), from 00:55.
+        (datetime(2026, 10, 31, 20, 0, tzinfo=LA), datetime(2026, 11, 1, 6, 0, tzinfo=LA), 55),
+        # Spring forward: rewritten at 03:00 (PDT), from 02:55 on the wall clock.
+        (
+            datetime(2027, 3, 13, 20, 0, tzinfo=LA),
+            datetime(2027, 3, 14, 6, 0, tzinfo=LA),
+            2 * 60 + 55,
+        ),
+    ],
+    ids=["fall_back", "spring_forward"],
+)
+async def test_clock_change_rewrite_keeps_the_fixed_end(dusk, dawn, rewrite_start, later):
+    controller, provider, _ = make(time_zone=LA)
+    await start(controller, amps=48, obs=night(dawn), now=dusk)
+    offset = controller.journal.lease.utc_offset_minutes
+    obs = night(dawn + later)
+    begin, end = dusk.astimezone(UTC), dawn.astimezone(UTC)
+    for minute in range(1, (end - begin) // timedelta(minutes=1)):  # every real minute to 05:59
+        await controller.async_tick(begin + timedelta(minutes=minute), obs)
+    assert len(provider.sets) == 2  # the window, then one rewrite when the clocks change
+    [first], [second] = provider.sets
+    assert ends_at(first) == ends_at(second) == 6 * 60
+    assert second["startTime"] == rewrite_start and second["amperage"] == 48
+    lease = controller.journal.lease
+    assert lease.fixed is True and lease.expires_at == end
+    assert lease.utc_offset_minutes != offset
+
+
+@pytest.mark.parametrize(
+    "until",
+    [DUSK - timedelta(hours=1), DUSK, DUSK + timedelta(seconds=30)],
+    ids=["past", "now", "within_the_minute"],
+)
+async def test_until_not_after_now_starts_a_normal_lease(until):
+    controller, provider, _ = make(time_zone=LA)
+    await start(controller, amps=48, obs=night(until), now=DUSK)
+    [window] = provider.sets[0]
+    assert (window["startTime"], window["duration"]) == (19 * 60 + 55, 30)
+    lease = controller.journal.lease
+    assert lease.fixed is False
+    assert lease.expires_at == DUSK.astimezone(UTC) + timedelta(minutes=20)
+    assert controller.snapshot(DUSK)["lease_fixed"] is False
+
+
+async def test_free_hours_over_a_day_are_cut_to_a_day_and_the_rest_written_after():
+    controller, provider, _ = make(time_zone=LA)
+    until = DUSK + timedelta(days=2)  # Sunday 20:00
+    await start(controller, amps=48, obs=night(until), now=DUSK)
+    [window] = provider.sets[0]
+    assert (window["weekDays"], window["startTime"], window["duration"]) == (
+        ["Friday"],
+        19 * 60 + 55,
+        24 * 60,
+    )
+    cut = DUSK.astimezone(UTC) + timedelta(minutes=24 * 60 - 5)  # Saturday 19:55
+    assert controller.journal.lease.expires_at == cut
+    for minute in range(10, 24 * 60 - 5, 10):
+        await controller.async_tick(at(minutes=minute, base=DUSK), night(until))
+    assert len(provider.sets) == 1
+    # At the cut the free hours go on: the next start writes the rest, again at most a day.
+    await controller.async_tick(cut, night(until))
+    assert len(provider.sets) == 2
+    [rest] = provider.sets[-1]
+    assert (rest["weekDays"], rest["startTime"], rest["duration"]) == (
+        ["Saturday"],
+        19 * 60 + 50,
+        24 * 60,
+    )
+    assert controller.journal.lease.fixed is True
+
+
+@pytest.mark.parametrize("hours", [48, 23.9], ids=["cut_to_a_day", "under_a_day"])
+async def test_long_free_hours_across_spring_forward_get_a_window(hours):
+    dusk = datetime(2027, 3, 13, 20, 0, tzinfo=LA)  # Saturday, PST
+    controller, provider, _ = make(time_zone=LA)
+    until = dusk.astimezone(UTC) + timedelta(hours=hours)
+    await start(controller, amps=48, obs=night(until), now=dusk)
+    assert len(provider.sets) == 1
+    assert provider.sets[0][0]["duration"] <= 24 * 60
+    assert controller.journal.lease.fixed is True
+
+
+def test_lease_dict_keeps_fixed_and_an_older_lease_loads_as_not_fixed():
+    lease = Lease(True, 48, DUSK.astimezone(UTC), DAWN.astimezone(UTC), -420, fixed=True)
+    assert lease.to_dict()["fixed"] is True
+    assert Lease.from_dict(lease.to_dict()) == lease
+    older = lease.to_dict()
+    del older["fixed"]  # saved before fixed windows existed
+    assert Lease.from_dict(older) == replace(lease, fixed=False)
+
+
+async def test_restart_at_night_keeps_the_fixed_window_unrenewed():
+    controller, provider, store = await start_night()
+    assert store.data["lease"]["fixed"] is True
+    restarted = await restarted_after(controller, provider, store, 3 * 60, NIGHT, base=DUSK)
+    assert restarted.journal.lease.fixed is True
+    for minute in range(3 * 60 + 1, NIGHT_MINUTES + 10):
+        await restarted.async_tick(at(minutes=minute, base=DUSK), NIGHT)
+    assert len(provider.sets) == 1
+
+
+async def test_journal_saved_before_fixed_windows_keeps_renewing_its_lease():
+    controller, provider, store = make()
+    await start(controller, amps=48, obs=ALIVE)
+    del store.data["lease"]["fixed"]
+    restarted = await restarted_after(controller, provider, store, 12, ALIVE)
+    assert restarted.journal.lease.fixed is False
+    assert len(provider.sets) == 2  # renewed, as before

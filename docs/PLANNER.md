@@ -8,7 +8,7 @@
 
 - **Every minute** it reads the Sol-Ark, the Wall Connector, Solcast, the free-hours schedule and both cars. House use is `solar + grid − battery − Wall Connector` (there is no house sensor).
 - **Every 15 minutes** (and at once on a plug-in, a new forecast or a mode change) it plans one steady current for the car on the charger: excess solar first, then the home battery within the floor rule (with free hours ahead, what it would still hold above the wanted level when they begin), then free hours, and paid grid power only when a plan cannot be met otherwise.
-- **In free hours** the car on the charger charges at its full current (the car's maximum, capped by the Wall Connector) from the moment they begin until its charge limit. The planner counts on the Sol-Ark's own settings to charge the home battery from the grid meanwhile, and predicts it charging to full.
+- **In free hours** the car on the charger charges at its full current (the car's maximum, capped by the Wall Connector) from the moment they begin until its charge limit. The Rivian gets this as one charging-schedule window to the end of the free hours, written once. The planner counts on the Sol-Ark's own settings to charge the home battery from the grid meanwhile, and predicts it charging to full.
 - **Every minute** its safety rules check for paid import and the battery at the floor.
 - **It commands only the car it sees on the charger**, and only what differs from what the car already holds. A pause is the charge switch, never 0 A.
 - **It explains itself**: a mode, a one-sentence reason, the next planned change, the predicted battery path and each car's outlook.
@@ -116,18 +116,20 @@ The free hours are the main entry's Schedule helper, at $0. In them, by night or
 
 ## Pointing Rivian schedule control at the planner
 
-Rivian schedule control parks the Rivian's charging window if the planner stops, and settles the planner's requests after a restart, through two entities the planner provides. In the schedule control's **Configure**:
+Through three entities the planner provides, Rivian schedule control parks the Rivian's charging window by day if the planner stops, settles the planner's requests after a restart, and writes the free hours as one window. In the schedule control's **Configure**:
 
 | Schedule control option | Set it to | What the planner's entity does |
 | --- | --- | --- |
 | Controller liveness (`controller_liveness_entity`) | `sensor.solar_ev_planner_heartbeat` | `shadow` or `active` while the planner is on and has decided within the last 3 minutes; unavailable while Planning is off, while it cannot plan (missing site readings, an unreadable schedule, an error) or once it has stopped deciding. It re-checks itself every 30 seconds. |
 | Controller wants charging (`controller_charging_entity`) | `binary_sensor.r1s_planner_charging_wanted` | On while the last command the car accepted was a current, off while it was a pause; unknown in shadow mode, while Planning is off, and before the first command of a plug-in. It survives restarts. |
+| Controller charging until (`controller_until_entity`) | `sensor.r1s_planner_charging_until` | The end of the free hours (06:00 on today's plan) while the planner charges the Rivian through them. It is set before the command it belongs to, so the schedule control writes that command once, as one window at full current to that time, and does not renew it. Unknown otherwise: by day, in shadow mode, while Planning is off, while the car is unplugged or at its limit. It survives restarts. |
 | Wall Connector vehicle override (`vehicle_override_entity`) | `select.solar_ev_planner_charger_car_override` | `auto`, `rivian` or `tesla`; the schedule control treats `auto` and `rivian` as no override |
 | Wall Connector vehicle connected (`wall_connector_entity`) | `binary_sensor.tesla_wall_connector_vehicle_connected` | The same sensor the planner reads |
 
 - **Leave the increase margin and the ceiling hold at 0**, their defaults; the planner asks for exact currents and paces itself.
 - **The heartbeat stays up in shadow mode,** so mapping it does not block the attended Rivian trial.
-- **To check the mapping,** run `python -m tools.check` ([TESTING.md](TESTING.md)): the rows "rivian controller liveness" and "rivian controller charging" read what the schedule control itself sees.
+- **To check the mapping,** run `python -m tools.check` ([TESTING.md](TESTING.md)): the rows "rivian controller liveness" and "rivian controller charging" read what the schedule control itself sees. The check has no row for the until option, which is unknown until the planner first charges the Rivian through free hours; then `controller_until` under the control state's `observation` attribute shows what the schedule control reads.
+- **One window per free night.** The window is not parked while the heartbeat is down, so turning Planning off in the free hours leaves the Rivian charging on free power until they end. When they end, the car stops by itself and nothing is written at 06:00. By day the schedule control still uses short leases, renewed while the heartbeat is up.
 
 What the planner sends the schedule control, and the schedule control's rules for requests, are in [Driving schedule control from the planner](RIVIAN_SCHEDULE_CONTROL.md#driving-schedule-control-from-the-planner).
 
@@ -151,6 +153,7 @@ What the planner sends the schedule control, and the schedule control's rules fo
 | Entity | What it shows or sets |
 | --- | --- |
 | `binary_sensor.r1s_planner_charging_wanted` | Rivian schedule control's controller charging entity (above) |
+| `sensor.r1s_planner_charging_until` | Rivian only: Rivian schedule control's controller until entity (above). The end of the free hours the Rivian's standing request belongs to. It is set when the planner charges the Rivian in free hours, also for a car already at its limit, and it keeps that time, even once it has passed, until a daytime command has replaced the night's request, so the ended window is not started again on it (a full car gets no command). Unknown before the first free-hours charge of a plug-in, after unplug, and while Planning is off. |
 | `sensor.r1s_planner_planned_current` | The current the plan has the car at now (in shadow mode, the virtual car's); 0 off the charger. Attributes: the wanted and commanded current, what the car or Rivian schedule control holds, the schedule control state, why a command waits, the last error. |
 | `sensor.r1s_planner_outlook` | Where the car's energy will come from, in words ("covered by sun", "about 7 kWh in free hours", "about 3 kWh paid") |
 | `sensor.r1s_planner_energy_from_sun`, `_energy_in_free_hours`, `_energy_paid` | The same in kWh |
@@ -192,7 +195,7 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 
 1. The planner starts a fresh session and sends its first decision at once to the car on the charger, and only to that car.
 2. **Tesla:** the charge current, then the charge switch. Every command is billed by Tesla's API, so a command is never repeated on the planner's own initiative.
-3. **Rivian:** Rivian schedule control's current, then its switch. If the schedule control drops the request (after a restart, an outage or a replug), the planner sends it again, except while the schedule control is handed back, faulted or waiting for the vehicle. With the schedule control still in dry run, the requests are recorded but nothing is written to Rivian.
+3. **Rivian:** Rivian schedule control's current, then its switch. In the free hours the charging-until sensor is set first, so the schedule control writes one window to their end. If the schedule control drops the request (after a restart, an outage or a replug), the planner sends it again, except while the schedule control is handed back, faulted or waiting for the vehicle. With the schedule control still in dry run, the requests are recorded but nothing is written to Rivian.
 4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure.
 5. **At unplug** the Tesla's current is set back to its restore current, if the planner changed it during that plug-in.
 
@@ -203,10 +206,11 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 | Commands | none | to the car on the charger | none |
 | Heartbeat | `shadow` | `active` | unavailable |
 | Charging wanted | unknown | on or off | unknown |
+| Charging until | unknown, or the end kept from the last command | the end of the free hours the Rivian's request belongs to | unknown |
 | Tesla | as you left it | follows the plan | keeps its last current, up to its own limit |
-| Rivian (schedule control pointed at the planner) | as you left it | follows the plan | the schedule control stops renewing at once and parks its window after 3 minutes, so charging stops; the owner's schedule comes back at unplug or with **Restore owner schedule** |
+| Rivian (schedule control pointed at the planner) | as you left it | follows the plan | by day the schedule control stops renewing at once and parks its window after 3 minutes, so charging stops; in the free hours the night's one window is not parked, so the car charges on free power until they end. The owner's schedule comes back at unplug or with **Restore owner schedule** |
 
-- **Going back to shadow mode** sends nothing, so each car keeps its last command: the Tesla its current, and the Rivian its request, which Rivian schedule control keeps renewing while the heartbeat is up. To stop a car as well, pause it first (in its app, or for the Rivian with the schedule control's **Restore owner schedule**), or turn Planning off.
+- **Going back to shadow mode** sends nothing, so each car keeps its last command: the Tesla its current, and the Rivian its request, which Rivian schedule control keeps renewing while the heartbeat is up. In the free hours the Rivian's window runs to their end; after it the schedule control starts short leases for the same request, so the car charges on at full current into paid hours. To stop a car as well, pause it first (in its app, or for the Rivian with the schedule control's **Restore owner schedule**), or turn Planning off.
 - **When the planner cannot plan** (mode `no_data`: a site reading missing, the free-hours schedule unreadable, an error), the heartbeat goes unavailable just as with Planning off. The reason sensor says why. A stale car (its own data unavailable) is not commanded, but the heartbeat stays up, so the Rivian keeps its last current until its data returns.
 
 ### Which car is on the charger
@@ -249,6 +253,7 @@ views:
         title: R1S
         entities:
           - sensor.r1s_planner_planned_current
+          - sensor.r1s_planner_charging_until
           - sensor.r1s_planner_outlook
           - sensor.r1s_battery_state_of_charge
           - number.r1s_planner_charge_limit

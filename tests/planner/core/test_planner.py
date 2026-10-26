@@ -4,7 +4,7 @@ outputs, persistence and determinism."""
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import json
 from zoneinfo import ZoneInfo
 
@@ -352,3 +352,132 @@ def test_charging_when_free_hours_begin_carries_on(settings):
     d = p.decide(snapshot(t + timedelta(minutes=5), soc=80.0, cars=[car]))
     assert d.mode == "night" and d.amps == 48
     assert d.reason.startswith("Free hours: charging at 48 A")
+
+
+# --------------------------------------------------------------------------- the free hours' end
+# Rivian schedule control writes one window to it for the whole night, so a night decision
+# carries when the free hours end, the same on every cycle; no other decision carries one.
+
+MONDAY_NIGHT_END = datetime(2026, 6, 16, 6, 0)
+
+
+def test_night_decisions_carry_the_end_of_the_free_hours(settings):
+    for now in (
+        datetime(2026, 6, 15, 20, 0),  # their first minute
+        datetime(2026, 6, 15, 23, 37, 20),
+        datetime(2026, 6, 16, 0, 0),  # past midnight: the same night
+        datetime(2026, 6, 16, 5, 59, 30),  # their last minute
+    ):
+        car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+        d = _plan(settings).decide(snapshot(now, soc=50.0, cars=[car]))
+        assert d.mode == "night" and d.amps == 48, now
+        assert d.free_until == MONDAY_NIGHT_END, now
+    # the car was charging when they began: the same end
+    p = _plan(settings)
+    t = datetime(2026, 6, 15, 19, 55)
+    car = rivian(soc=40.0, since=t - timedelta(hours=3), commanded_a=16)
+    assert p.decide(snapshot(t, soc=80.0, cars=[car])).free_until is None
+    d = p.decide(snapshot(t + timedelta(minutes=5), soc=80.0, cars=[car]))
+    assert (d.mode, d.amps, d.free_until) == ("night", 48, MONDAY_NIGHT_END)
+    # other free hours: their own end
+    now = datetime(2026, 6, 15, 23, 0)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    snap = snapshot(now, soc=50.0, cars=[car], tariff=Tariff.free_nights("22:00", "07:30"))
+    assert _plan(settings).decide(snap).free_until == datetime(2026, 6, 16, 7, 30)
+
+
+def test_a_held_night_keeps_the_same_end(settings):
+    """Nothing to send while the car holds 48 A, and the end stays where it was."""
+    p = _plan(settings)
+    now = datetime(2026, 6, 15, 21, 0)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    assert p.decide(snapshot(now, soc=50.0, cars=[car])).free_until == MONDAY_NIGHT_END
+    car = replace(car, commanded_a=48)
+    for minutes in (1, 7, 95, 8 * 60 + 55):  # 21:01 ... 05:55
+        d = p.decide(snapshot(now + timedelta(minutes=minutes), soc=50.0, cars=[car]))
+        assert d.mode == "night" and d.amps is None, minutes
+        assert d.free_until == MONDAY_NIGHT_END, minutes
+
+
+def test_shadow_night_decisions_carry_the_end_too():
+    """The core always says it; the integration publishes it only while it commands."""
+    now = datetime(2026, 6, 15, 21, 0)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    d = Planner(Settings(shadow=True)).decide(snapshot(now, soc=50.0, cars=[car]))
+    assert d.shadow and d.mode == "night" and d.free_until == MONDAY_NIGHT_END
+
+
+def test_the_free_end_is_set_in_free_hours_with_a_car_in_any_mode(settings):
+    assert _plan(settings).decide(snapshot(NOON, soc=90.0)).free_until is None
+    for now in (datetime(2026, 6, 15, 19, 55), datetime(2026, 6, 16, 6, 0)):
+        car = rivian(soc=60.0, since=now - timedelta(hours=1))
+        d = _plan(settings).decide(snapshot(now, soc=50.0, cars=[car]))
+        assert d.mode == "day" and d.free_until is None, now
+    # a pause by day (the battery low on a poor day): no end either
+    snap = snapshot(NOON, soc=25.0, actual_ratio=0.3, fc_ratio=0.3, house_scale=1.5)
+    d = _plan(settings).decide(snap)
+    assert (d.mode, d.amps, d.free_until) == ("day", 0, None)
+    # in the free hours: a full or stale car keeps its standing request, so the end goes
+    # with it; without a car (or with the planner off) there is none
+    night = datetime(2026, 6, 15, 22, 0)
+    end = datetime(2026, 6, 16, 6, 0)
+    since = night - timedelta(hours=1)
+    decisions = [
+        _plan(settings).decide(snapshot(night, cars=[rivian(plugged=False), tesla()])),
+        _plan(settings).decide(snapshot(night, cars=[replace(rivian(since=since), soc_pct=85.0)])),
+        _plan(settings).decide(snapshot(night, cars=[rivian(since=since, stale=True)])),
+        _plan(replace(settings, enabled=False)).decide(snapshot(night)),
+    ]
+    assert [(d.mode, d.free_until) for d in decisions] == [
+        ("empty", None),
+        ("full", end),
+        ("stale", end),
+        ("off", None),
+    ]
+    # no free hours on the plan: no night, no end
+    flat = _plan(settings).decide(snapshot(night, soc=50.0, tariff=Tariff(0.32, 0.0)))
+    assert flat.mode == "day" and flat.free_until is None
+
+
+def test_the_free_end_when_the_clocks_change(settings):
+    """The free hours end at 06:00 local time on the nights the clocks change, which is an
+    hour more or less after the evening's offset."""
+    tz = ZoneInfo("America/Los_Angeles")
+    for evening, end_utc in (
+        (datetime(2026, 3, 7, 23, 0), datetime(2026, 3, 8, 13, 0, tzinfo=UTC)),  # PST to PDT
+        (datetime(2026, 10, 31, 23, 0), datetime(2026, 11, 1, 14, 0, tzinfo=UTC)),  # PDT to PST
+    ):
+        now = evening.replace(tzinfo=tz)
+        snap = snapshot(evening, soc=50.0)
+        snap = replace(
+            snap,
+            now=now,
+            forecast=[replace(s, start=s.start.replace(tzinfo=tz)) for s in snap.forecast],
+            house_recent=[replace(s, start=s.start.replace(tzinfo=tz)) for s in snap.house_recent],
+            cars=(rivian(soc=60.0, since=now - timedelta(minutes=5)),),
+            forecast_issued_at=now - timedelta(hours=1),
+        )
+        d = _plan(settings).decide(snap)
+        assert d.mode == "night" and d.free_until is not None, evening
+        assert d.free_until.astimezone(UTC) == end_utc, evening
+        assert (d.free_until.hour, d.free_until.minute) == (6, 0)
+
+
+def test_the_free_end_to_the_minute(settings):
+    now = datetime(2026, 6, 16, 1, 0)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    snap = snapshot(now, soc=50.0, cars=[car], tariff=Tariff.free_nights("20:00", "05:58"))
+    d = _plan(settings).decide(snap)
+    assert d.mode == "night" and d.free_until == datetime(2026, 6, 16, 5, 58)
+
+
+def test_free_hours_past_the_horizon_give_one_end(settings):
+    weekend = Tariff(0.32, 0.0, (PriceWindow(WeeklySchedule.days("00:00", "24:00", (5, 6)), 0.0),))
+    p = _plan(settings)
+    saturday = datetime(2026, 6, 20, 1, 0)  # free until Monday 00:00, 47 h ahead
+    car = rivian(soc=60.0, since=saturday - timedelta(minutes=5))
+    a = p.decide(snapshot(saturday, soc=50.0, cars=[car], tariff=weekend))
+    car = replace(car, commanded_a=48)
+    b = p.decide(snapshot(saturday + timedelta(minutes=1), soc=50.0, cars=[car], tariff=weekend))
+    assert a.mode == b.mode == "night"
+    assert a.free_until is not None and a.free_until == b.free_until

@@ -32,7 +32,7 @@ Tools for testing the planner with your real Home Assistant data and connections
    | --- | --- |
    | `site` | The Sol-Ark, Wall Connector, Solcast and free-hours entities |
    | `units` | The unit of each power sensor (`W` or `kW`). The Sol-Ark powers are W and the Wall Connector's total power is kW. |
-   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the entities of [Rivian schedule control](../docs/RIVIAN_SCHEDULE_CONTROL.md) (the control state, charger status, lease renewal switch and buttons) and the car's own charger state sensor, `sensor.r1s_charger_state`, which the schedule control's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car. |
+   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the entities of [Rivian schedule control](../docs/RIVIAN_SCHEDULE_CONTROL.md) (the control state, charger status, lease renewal switch and buttons) and the car's own charger state sensor, `sensor.r1s_charger_state`, which the schedule control's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car, and for the Rivian `charging_until` (`sensor.r1s_planner_charging_until`) its timestamp sensor for the end of the free hours. |
    | `planner` | The planner integration's heartbeat, Planning and Shadow mode switches, and its mode, reason and car-on-charger sensors. Until the planner is installed the check only notes that it is missing. |
    | `tariff` | `price`, `buyback`, and `free_hours_fallback`, used when no Schedule helper is readable |
    | `battery` | Home battery limits for replays (capacity, 9 kW each way, 92% efficiency, 10% reserve) |
@@ -66,7 +66,7 @@ It checks:
 - **Rivian schedule control.** Its entities exist. It shows the control state, the dry-run flag, the standing request (`desired_charge`, `requested_amps`, `lease_amps`) and why a start is blocked. A fault is a FAIL and handed-back is a WARN.
 - **Which car the Wall Connector sees.** The Wall Connector sees a vehicle, and exactly one car reports its cable in while at home, as the planner decides it. Both cars or neither is a WARN. So is a Rivian on the charger while the schedule control's charger status says `a`.
 - **The planner** ([docs/PLANNER.md](../docs/PLANNER.md)), once installed: its heartbeat (`shadow` is OK; unavailable is a WARN: Planning is off or it cannot plan), Planning, Shadow mode, and its mode, car on the charger and reason.
-- **The schedule control's controller options,** as it reads them itself (the control state's `observation`): `controller_liveness_entity` must follow the planner's heartbeat and `controller_charging_entity` the car's charging-wanted sensor. Unmapped, or mapped to something else, is a WARN.
+- **The schedule control's controller options,** as it reads them itself (the control state's `observation`): `controller_liveness_entity` must follow the planner's heartbeat and `controller_charging_entity` the car's charging-wanted sensor. Unmapped, or mapped to something else, is a WARN. `controller_until_entity` has no row: the planner's charging-until sensor is unknown until the planner first charges the Rivian through free hours.
 
 ## snapshot.py: real days as a file
 
