@@ -174,10 +174,10 @@ def _car_input(result: dict[str, Any]) -> dict[str, Any]:
 async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) -> None:
     hass = planner_hass
     set_rivian(hass)
-    # the Tesla still on tesla_custom: its switch and current have the older names
+    # the Tesla on Tesla Fleet, with its charging sensor; leftover tesla_custom entities are
+    # never suggested
     set_tesla(hass)
-    hass.states.async_remove("switch.roxxo_charge")
-    hass.states.async_remove("number.roxxo_charge_current")
+    hass.states.async_set("sensor.roxxo_charging", "stopped")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["switch"], "off")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["current"], "32")
     entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
@@ -191,15 +191,17 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     assert data["control_state"] == "sensor.r1s_schedule_control_control_state"
     assert data["plugged"] == "binary_sensor.r1s_charger_connection"
     assert data["location"] == "device_tracker.r1s_location"
+    assert "charging_state" not in data  # a Tesla's only
     assert (data["min_a"], data["max_a"], data["step_a"]) == (8, 48, 2)
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     result = await _add_car(hass, entry, "tesla")
     data = _car_input(result)
-    assert data["switch"] == "switch.roxxo_charger"
-    assert data["current"] == "number.roxxo_charging_amps"
+    assert data["switch"] == "switch.roxxo_charge"
+    assert data["current"] == "number.roxxo_charge_current"
     assert data["limit"] == "number.roxxo_charge_limit"
+    assert data["charging_state"] == "sensor.roxxo_charging"
     assert data["soc"] == "sensor.roxxo_battery_level"
     assert "control_state" not in data
     assert (data["min_a"], data["step_a"]) == (6, 1)
@@ -210,6 +212,7 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     assert set(cars) == {"rivian", "tesla"}
     assert cars["rivian"].title == "R1S" and cars["tesla"].title == "Roxxo"
     assert cars["tesla"].data["kind"] == "tesla"
+    assert cars["tesla"].data["charging_state"] == "sensor.roxxo_charging"
 
     # a second Rivian gets its own id
     result = await _add_car(hass, entry, "rivian")
@@ -222,6 +225,45 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
         "tesla",
         "rivian_2",
     }
+
+
+async def test_tesla_custom_is_never_suggested(planner_hass: HomeAssistant) -> None:
+    """A Tesla only on tesla_custom gets no switch or current suggested: the owner maps
+    Tesla Fleet's (tesla_custom cannot command the car without its proxy)."""
+    hass = planner_hass
+    set_tesla(hass)
+    hass.states.async_remove("switch.roxxo_charge")
+    hass.states.async_remove("number.roxxo_charge_current")
+    hass.states.async_set(TESLA_CUSTOM_ENTITIES["switch"], "off")
+    hass.states.async_set(TESLA_CUSTOM_ENTITIES["current"], "32")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
+    entry.add_to_hass(hass)
+    data = _car_input(await _add_car(hass, entry, "tesla"))
+    assert "switch" not in data and "current" not in data
+    assert "charging_state" not in data  # optional, and absent here
+    assert data["limit"] == "number.roxxo_charge_limit"
+
+
+@pytest.mark.parametrize(
+    ("present", "expected"),
+    [
+        (("device_tracker.r1s",), "device_tracker.r1s"),  # a fresh upstream 2.0.0 install
+        (("device_tracker.r1s", "device_tracker.r1s_location"), "device_tracker.r1s_location"),
+        ((), None),
+    ],
+)
+async def test_rivian_location_suggests_whichever_tracker_exists(
+    planner_hass: HomeAssistant, present: tuple[str, ...], expected: str | None
+) -> None:
+    hass = planner_hass
+    set_rivian(hass)
+    hass.states.async_remove(RIV["location"])
+    for eid in present:
+        hass.states.async_set(eid, "home")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
+    entry.add_to_hass(hass)
+    data = _car_input(await _add_car(hass, entry, "rivian"))
+    assert data.get("location") == expected
 
 
 async def test_car_errors_and_reconfigure(planner_hass: HomeAssistant) -> None:

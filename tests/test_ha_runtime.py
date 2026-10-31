@@ -217,3 +217,18 @@ def test_translations_cover_issues_and_errors(name: str) -> None:
     assert "starts and renewals are blocked" in liveness_issue
     for key in ("force_restore_unverified", "force_restore_archive_unsafe"):
         assert strings["exceptions"][key]["message"]
+
+
+@pytest.mark.parametrize("name", ["strings.json", "translations/en.json"])
+def test_translations_cover_the_overlap_issues(name: str) -> None:
+    """Both overlap issues name the entry and the shared weekdays."""
+    strings = json.loads((COMPONENT / name).read_text())
+    for key in ("overlapping_owner_schedules", "overlapping_owner_schedules_fallback"):
+        issue = strings["issues"][key]
+        assert issue["title"]
+        assert "{title}" in issue["description"]
+        assert "{days}" in issue["description"]
+    assert (
+        "Restore enabled schedules only"
+        in (strings["issues"]["overlapping_owner_schedules"]["description"])
+    )

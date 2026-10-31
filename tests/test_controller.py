@@ -1803,3 +1803,465 @@ async def test_journal_saved_before_fixed_windows_keeps_renewing_its_lease():
     restarted = await restarted_after(controller, provider, store, 12, ALIVE)
     assert restarted.journal.lease.fixed is False
     assert len(provider.sets) == 2  # renewed, as before
+
+
+# Window location ---------------------------------------------------------------------
+
+# About 80 m north of HOME, and the vehicle's GPS fix in the driveway, about 11 m away.
+NEAR_HOME = {"latitude": 30.00072, "longitude": -97.0}
+DRIVEWAY = {"latitude": 30.0001, "longitude": -97.0}
+
+
+def located(location: dict[str, float] | None = DRIVEWAY, **facts: Any) -> Observation:
+    """Plugged in at home, with the vehicle's tracker at ``location``."""
+    return Observation(
+        **({"plugged": True, "home": True, "charging": False} | facts), location=location
+    )
+
+
+async def test_window_is_written_at_the_vehicles_position_while_plugged_in_at_home():
+    controller, provider, store = make()
+    await start(controller, obs=located())
+    assert provider.sets[0][0]["location"] == DRIVEWAY
+    snapshot = controller.snapshot(T0)
+    assert snapshot["window_location_source"] == "vehicle"
+    assert snapshot["window_location_distance_m"] == 0
+    # The vehicle's coordinates are reported only as that distance.
+    assert snapshot["observation"]["location"] is None
+    assert "30.0001" not in repr(snapshot)
+    assert store.data["window_location_source"] == "vehicle"
+
+
+async def test_owner_schedule_beyond_150_m_is_not_taken_as_home():
+    far = deepcopy(OWNER)
+    far[0]["location"] = {"latitude": 30.002, "longitude": -97.0}  # about 220 m
+    controller, provider, _ = make(far)
+    await start(controller)
+    assert provider.sets[0][0]["location"] == HOME
+    assert controller.snapshot(T0)["window_location_source"] == "home"
+
+
+async def test_nearest_owner_schedule_within_150_m_is_used_without_a_vehicle_position():
+    owner = deepcopy(OWNER)
+    owner[1]["location"] = dict(NEAR_HOME)
+    owner[0], owner[1] = owner[1], owner[0]
+    controller, provider, _ = make(owner)
+    await start(controller)
+    assert provider.sets[0][0]["location"] == {"latitude": 30.00001, "longitude": -97.00001}
+    assert controller.snapshot(T0)["window_location_source"] == "owner_schedule"
+
+
+@pytest.mark.parametrize(
+    "position",
+    [
+        {"latitude": float("nan"), "longitude": -97.0},
+        {"latitude": 91.0, "longitude": -97.0},
+        {"latitude": True, "longitude": -97.0},
+        {"latitude": 30.0},
+    ],
+)
+async def test_an_invalid_vehicle_position_is_never_written(position):
+    controller, provider, _ = make([OWNER[1]])
+    await start(controller, obs=located(position))
+    assert provider.sets[0][0]["location"] == HOME
+
+
+async def test_vehicle_position_away_from_home_is_not_used():
+    controller, provider, _ = make()
+    await controller.async_request_charge(False)
+    await controller.async_tick(T0, PLUGGED)
+    # Unplugged and parked elsewhere: the parked window stays at the home location.
+    await controller.async_request_charge(True)
+    await controller.async_tick(
+        at(seconds=6), located({"latitude": 31.0, "longitude": -96.0}, plugged=False)
+    )
+    assert all(
+        window["location"] == {"latitude": 30.00001, "longitude": -97.00001}
+        for windows in provider.sets
+        for window in windows
+    )
+
+
+async def test_window_moves_to_the_vehicle_once_its_position_is_known_and_warns_once(caplog):
+    controller, provider, _ = make()
+    await start(controller, amps=16)
+    assert controller.snapshot(T0)["window_location_distance_m"] is None
+    far_fix = {"latitude": 30.0009, "longitude": -97.0}  # about 100 m from the owner's pin
+    with caplog.at_level("WARNING"):
+        await controller.async_tick(at(seconds=20), located(far_fix, charging=True))
+        await controller.async_tick(at(seconds=25), located(far_fix, charging=True))
+    warnings = [
+        r for r in caplog.records if "from the location of the charging windows" in r.message
+    ]
+    assert len(warnings) == 1
+    assert "30.0009" not in caplog.text
+    assert controller.snapshot(at(seconds=25))["window_location_distance_m"] == 99
+    # The next write is at the vehicle's position.
+    await controller.async_request_amps(10)
+    await controller.async_tick(at(seconds=40), located(far_fix, charging=True))
+    assert provider.sets[-1][0]["location"] == far_fix
+    snapshot = controller.snapshot(at(seconds=40))
+    assert snapshot["window_location_source"] == "vehicle"
+    assert snapshot["window_location_distance_m"] == 0
+
+
+async def test_window_location_is_kept_across_a_restart_and_cleared_on_release():
+    controller, provider, store = make()
+    await start(controller, obs=located())
+    restarted, _, _ = make(store=store)
+    restarted._api = provider
+    assert await restarted.async_load()
+    assert restarted.journal.window_location == DRIVEWAY
+    await restarted.async_request_release("manual")
+    await restarted.async_tick(at(seconds=10), PLUGGED)
+    assert provider.schedules == OWNER
+    assert store.data["window_location"] is None
+    assert store.data["window_location_source"] is None
+
+
+# Overlapping owner schedules ---------------------------------------------------------
+
+OVERLAPPING = [
+    OWNER[0],
+    {
+        "weekDays": ["Friday", "Saturday", "Sunday"],
+        "startTime": 1320,
+        "duration": 480,
+        "location": {"latitude": 30.00001, "longitude": -97.00001},
+        "amperage": 40,
+        "enabled": False,
+    },
+]
+
+
+async def test_overlapping_owner_schedules_are_reported_before_the_first_write(caplog):
+    controller, provider, store = make(OVERLAPPING)
+    with caplog.at_level("WARNING"):
+        await start(controller)
+    assert provider.sets == []
+    assert store.data["phase"] == "owned"  # the snapshot is saved
+    assert controller.owner_overlap_days == ["Friday"]
+    assert controller.snapshot(T0)["owner_schedules_overlap_days"] == ["Friday"]
+    assert "share weekdays (Friday)" in caplog.text
+    # The next tick writes the window.
+    await controller.async_tick(at(seconds=15), PLUGGED)
+    assert len(provider.sets) == 1
+    assert controller.state(at(seconds=15)) is ControlState.LEASE_ACTIVE
+
+
+async def test_owner_schedules_without_shared_weekdays_are_written_at_once():
+    controller, provider, _ = make()
+    await start(controller)
+    assert controller.owner_overlap_days == []
+    assert len(provider.sets) == 1
+
+
+async def test_overlap_is_known_again_after_a_restart():
+    controller, provider, store = make(OVERLAPPING)
+    await start(controller)
+    restarted, _, _ = make(store=store)
+    assert await restarted.async_load()
+    assert restarted.owner_overlap_days == ["Friday"]
+
+
+async def rejected_restore(**config: Any):
+    """Own an overlapping list, then let Rivian refuse its full list on the release."""
+    controller, provider, store = make(OVERLAPPING, **config)
+    await start(controller)
+    await controller.async_tick(at(seconds=15), PLUGGED)
+    full = deepcopy(OVERLAPPING)
+
+    async def refuse_full_list():
+        if provider.sets[-1] == full:
+            provider.apply_set = False
+            provider.set_error = WriteRejectedError("bad", invalid_input=True)
+        else:
+            provider.apply_set = True
+            provider.set_error = None
+
+    provider.on_set = refuse_full_list
+    await controller.async_request_release("manual")
+    await controller.async_tick(at(minutes=1), PLUGGED)
+    return controller, provider, store
+
+
+async def test_restore_rejected_without_the_option_faults():
+    controller, provider, _ = await rejected_restore()
+    assert controller.journal.fault.code == "restore_rejected"
+    assert controller.journal.original == OVERLAPPING
+
+
+async def test_rejected_restore_writes_the_enabled_schedules_when_opted_in():
+    controller, provider, store = await rejected_restore(restore_enabled_only=True)
+    assert controller.journal.phase is Phase.OWNED
+    assert controller.journal.restore_enabled_only_active is True
+    assert controller.snapshot(at(minutes=1))["restore_enabled_only_active"] is True
+    # After the error backoff, the release writes the enabled entries only.
+    await controller.async_tick(at(minutes=2), PLUGGED)
+    assert provider.sets[-1] == [OVERLAPPING[0]]
+    assert provider.schedules == [OVERLAPPING[0]]
+    assert controller.journal.phase is Phase.IDLE
+    # The full list stays archived.
+    assert store.data["archived_original"] == OVERLAPPING
+    assert store.data["restore_enabled_only_active"] is False
+
+
+async def test_enabled_only_restore_rejected_too_faults():
+    controller, provider, _ = await rejected_restore(restore_enabled_only=True)
+    provider.on_set = None
+    provider.apply_set = False
+    provider.set_error = WriteRejectedError("bad", invalid_input=True)
+    await controller.async_tick(at(minutes=2), PLUGGED)
+    assert controller.journal.fault.code == "restore_rejected"
+
+
+async def test_enabled_only_fallback_needs_disabled_entries():
+    owner = deepcopy(OVERLAPPING)
+    owner[1]["enabled"] = True
+    controller, provider, _ = make(owner, restore_enabled_only=True)
+    await start(controller)
+    await controller.async_tick(at(seconds=15), PLUGGED)
+    provider.set_error = WriteRejectedError("bad", invalid_input=True)
+    provider.apply_set = False
+    await controller.async_request_release("manual")
+    await controller.async_tick(at(minutes=1), PLUGGED)
+    assert controller.journal.fault.code == "restore_rejected"
+
+
+# Read cadence ------------------------------------------------------------------------
+
+
+async def test_a_settling_write_is_read_again_only_once_settled():
+    controller, provider, _ = make()
+    await start(controller, amps=20)
+    provider.apply_set = False
+    gets = provider.gets
+    await controller.async_request_amps(10)
+    await controller.async_tick(at(seconds=31), CHARGING)
+    assert provider.gets - gets == 2  # the guard read, and right after sending
+    assert controller.journal.phase is Phase.WRITING
+    await controller.async_tick(at(seconds=46), CHARGING)
+    await controller.async_tick(at(seconds=60), CHARGING)
+    assert provider.gets - gets == 2  # no reads while it settles
+    await controller.async_request_amps(20)  # so the settled tick writes nothing new
+    await controller.async_tick(at(seconds=61), CHARGING)
+    assert provider.gets - gets == 3
+    assert controller.journal.phase is Phase.OWNED
+    assert controller.journal.unapplied_writes == 1
+
+
+async def test_reads_and_writes_are_counted_per_hour():
+    controller, provider, _ = make()
+    await start(controller)
+    snapshot = controller.snapshot(T0)
+    # The takeover read, the guard read and the readback; one write.
+    assert snapshot["reads_last_hour"] == 3
+    assert snapshot["writes_last_hour"] == 1
+    await controller.async_request_charge(False)
+    await controller.async_tick(at(seconds=6), PLUGGED)
+    snapshot = controller.snapshot(at(seconds=6))
+    assert (snapshot["reads_last_hour"], snapshot["writes_last_hour"]) == (5, 2)
+    later = controller.snapshot(at(minutes=60, seconds=1))
+    assert (later["reads_last_hour"], later["writes_last_hour"]) == (2, 1)
+    assert controller.snapshot(at(minutes=61))["reads_last_hour"] == 0
+
+
+async def test_operator_reads_are_counted():
+    controller, provider, _ = make()
+    await controller.async_read_provider()
+    assert controller.snapshot(datetime.now(UTC))["reads_last_hour"] == 1
+
+
+# Community pattern ---------------------------------------------------------------------
+
+
+def community(**config: Any):
+    return make(community_pattern=True, **config)
+
+
+async def test_community_pattern_charges_on_one_all_week_window():
+    controller, provider, _ = community()
+    await start(controller, amps=17)
+    assert provider.sets == [
+        [
+            {
+                "weekDays": [
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                    "Sunday",
+                ],
+                "startTime": 0,
+                "duration": 1440,
+                "location": {"latitude": 30.00001, "longitude": -97.00001},
+                "amperage": 16,
+                "enabled": True,
+            }
+        ]
+    ]
+    assert controller.state(T0) is ControlState.LEASE_ACTIVE
+    assert controller.snapshot(T0)["lease_all_week"] is True
+    # Never renewed: nothing is written while the current stays.
+    for minutes in range(1, 120, 5):
+        await controller.async_tick(at(minutes=minutes), CHARGING)
+    assert len(provider.sets) == 1
+    assert controller.state(at(minutes=120)) is ControlState.LEASE_ACTIVE
+
+
+async def test_community_pattern_rewrites_only_when_the_current_changes():
+    controller, provider, _ = community()
+    await start(controller, amps=32)
+    await controller.async_request_amps(20)
+    await controller.async_tick(at(seconds=31), CHARGING)
+    assert provider.sets[-1][0]["amperage"] == 20
+    assert provider.sets[-1][0]["duration"] == 1440
+    await controller.async_request_amps(40)
+    await controller.async_tick(at(seconds=70), CHARGING)
+    assert len(provider.sets) == 2  # an increase waits for the increase interval
+    await controller.async_tick(at(seconds=160), CHARGING)
+    assert provider.sets[-1][0]["amperage"] == 40
+    assert len(provider.sets) == 3
+
+
+async def test_community_pattern_parks_an_enabled_window_12_hours_away():
+    controller, provider, _ = community()
+    await start(controller, amps=32)
+    await controller.async_request_charge(False)
+    await controller.async_tick(at(seconds=6), PLUGGED)
+    [parked] = provider.sets[-1]
+    # 12:00 Saturday now: the window starts at 00:00 Sunday and lasts an hour.
+    assert parked["weekDays"] == ["Sunday"]
+    assert parked["startTime"] == 0
+    assert parked["duration"] == 60
+    assert parked["enabled"] is True
+    assert parked["amperage"] == 8
+    assert controller.state(at(seconds=6)) is ControlState.PAUSED
+    # Pushed away again once its start comes within 2 hours, not before.
+    await controller.async_tick(at(minutes=9 * 60 + 59), PLUGGED)
+    assert len(provider.sets) == 2
+    await controller.async_tick(at(minutes=10 * 60), PLUGGED)
+    assert len(provider.sets) == 3
+    [again] = provider.sets[-1]
+    assert again["weekDays"] == ["Sunday"]
+    assert again["startTime"] == 10 * 60
+    assert again["enabled"] is True
+
+
+async def test_community_pattern_stop_request_at_takeover_parks_ahead():
+    controller, provider, _ = community()
+    await controller.async_request_charge(False)
+    await controller.async_tick(T0, PLUGGED)
+    [parked] = provider.sets[-1]
+    assert parked["duration"] == 60 and parked["startTime"] == 0
+
+
+async def test_community_pattern_unknown_vehicle_state_parks_after_a_lease_length():
+    controller, provider, _ = community()
+    await start(controller, amps=32)
+    await controller.async_tick(at(minutes=19), UNKNOWN)
+    assert len(provider.sets) == 1
+    await controller.async_tick(at(minutes=20), UNKNOWN)
+    assert len(provider.sets) == 2
+    assert provider.sets[-1][0]["duration"] == 60
+    assert controller.state(at(minutes=20)) is ControlState.PAUSED
+
+
+async def test_community_pattern_held_request_parks():
+    controller, provider, _ = community()
+    alive = replace(PLUGGED, controller_alive=True)
+    down = replace(PLUGGED, controller_alive=False)
+    await start(controller, amps=32, obs=alive)
+    await controller.async_tick(at(minutes=1), down)
+    assert len(provider.sets) == 1  # within the grace
+    await controller.async_tick(at(minutes=11), down)
+    assert provider.sets[-1][0]["duration"] == 60
+
+
+async def test_community_pattern_keeps_one_fixed_window_for_the_free_hours():
+    controller, provider, _ = await start_night(community_pattern=True)
+    [window] = provider.sets[0]
+    assert ends_at(window) == 6 * 60
+    assert window["weekDays"] == ["Friday"]
+    # Not parked while the planner looks down at night.
+    await controller.async_tick(DUSK + timedelta(hours=2), PLANNER_DOWN)
+    await controller.async_tick(DUSK + timedelta(hours=3), PLANNER_DOWN)
+    assert len(provider.sets) == 1
+    # After the free hours, with the planner no longer charging: parked ahead.
+    await controller.async_tick(DAWN + timedelta(minutes=10), MORNING)
+    [parked] = provider.sets[-1]
+    assert parked["duration"] == 60 and parked["enabled"] is True
+
+
+async def test_community_pattern_daytime_charging_after_the_free_hours_is_all_week():
+    controller, provider, _ = await start_night(community_pattern=True)
+    await controller.async_tick(DAWN + timedelta(minutes=10), night(None))
+    assert provider.sets[-1][0]["duration"] == 1440
+
+
+async def test_community_window_is_replaced_once_the_pattern_is_turned_off():
+    controller, provider, store = community()
+    await start(controller, amps=32)
+    restarted, _, _ = make(store=store)
+    restarted._api = provider
+    await restarted.async_load()
+    assert restarted.journal.lease.all_week is True
+    await restarted.async_request_amps(32)
+    await restarted.async_request_charge(True)
+    await restarted.async_tick(at(seconds=10), CHARGING)
+    [lease] = provider.sets[-1]
+    assert lease["duration"] == 30
+    assert restarted.journal.lease.all_week is False
+
+
+async def test_community_parked_window_is_parked_normally_once_the_pattern_is_off():
+    controller, provider, store = community()
+    await controller.async_request_charge(False)
+    await controller.async_tick(T0, PLUGGED)
+    restarted, _, _ = make(store=store)
+    restarted._api = provider
+    await restarted.async_load()
+    assert restarted.journal.lease.window_start is not None
+    await restarted.async_tick(at(seconds=10), PLUGGED)
+    [parked] = provider.sets[-1]
+    assert parked["duration"] == 20
+    assert restarted.journal.lease.window_start is None
+
+
+async def test_community_windows_are_recognized_as_our_own_after_an_abandon():
+    for charge in (True, False):
+        controller, provider, _ = community()
+        await start(controller, amps=32)
+        if not charge:
+            await controller.async_request_charge(False)
+            await controller.async_tick(at(seconds=6), PLUGGED)
+        provider.schedules[0]["amperage"] = 30  # the owner edits schedule control's window
+        await controller.async_request_charge(not charge)  # the next write sees the edit
+        await controller.async_tick(at(minutes=1), CHARGING)
+        assert controller.journal.fault.code == "external_edit"
+        assert await controller.async_abandon()
+        await controller.async_request_charge(True)
+        await controller.async_tick(at(minutes=2), CHARGING)
+        assert controller.journal.fault.code == "own_window_present"
+
+
+async def test_community_dry_run_target():
+    controller, provider, _ = community(dry_run=True)
+    await controller.async_request_amps(20)
+    await controller.async_tick(T0, PLUGGED)
+    target = controller.snapshot(T0)["dry_run_target"]
+    assert target["duration"] == 1440 and target["amperage"] == 20
+    assert "location" not in target
+    await controller.async_request_charge(False)
+    await controller.async_tick(at(seconds=5), PLUGGED)
+    assert controller.snapshot(T0)["dry_run_target"]["duration"] == 60
+    assert provider.sets == []
+
+
+def test_community_leases_round_trip():
+    lease = Lease(False, 8, T0.astimezone(UTC), None, -300, window_start=at(minutes=720))
+    assert Lease.from_dict(lease.to_dict()) == lease
+    on = Lease(True, 32, T0.astimezone(UTC), None, -300, all_week=True)
+    assert Lease.from_dict(on.to_dict()) == on

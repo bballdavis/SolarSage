@@ -31,6 +31,7 @@ class FakeCars:
         self.lease_t: float | None = None  # fake time of the last lease write
         self.lapsed_t: float | None = None
         self.read_count = 0
+        self.owner_fp = "a1b2c3d4e5f6"  # the owner's list as a read shows it
         fake.on_service = self.on_service
         fake.on_poll = self.on_poll
 
@@ -108,11 +109,16 @@ class FakeCars:
             self.wall(0)
         elif eid == E["r_read"]:
             self.read_count += 1
+            owner = self.st("r_state") in ("idle", "handed_back")  # the owner's list is back
             self.control(
                 self.st("r_state"),
                 last_provider_read_at=f"read-{self.read_count}",
                 provider_schedule_count=2,
-                last_provider_read={"count": 2, "written_by_schedule_control": self.read_count > 1},
+                last_provider_read={
+                    "count": 2,
+                    "fingerprint": self.owner_fp if owner else "0123456789ab",
+                    "written_by_schedule_control": self.read_count > 1,
+                },
             )
 
     def on_poll(self) -> None:

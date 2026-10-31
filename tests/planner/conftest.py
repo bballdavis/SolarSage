@@ -273,6 +273,7 @@ class FakeCars:
         self.hass = hass
         self.calls: list[tuple[str, str, Any]] = []
         self.fail: str | None = None
+        self.refuse: dict[str, Exception] = {}  # per service, e.g. Tesla Fleet's "complete"
 
     def install(self) -> None:
         for domain, service in (("switch", "turn_on"), ("switch", "turn_off")):
@@ -298,6 +299,8 @@ class FakeCars:
         self.calls.append((call.domain, call.service, value if value is not None else entity_id))
         if self.fail:
             raise HomeAssistantError(self.fail)
+        if err := self.refuse.get(call.service):
+            raise err
         state = self.hass.states.get(entity_id)
         attrs = dict(state.attributes) if state else {}
         if call.domain == "switch":

@@ -1,8 +1,8 @@
 # Working plan: smart solar charging for the Tesla and the Rivian
 
-Last updated: October 26, 2026. This is the plan we work from. Earlier designs and research notes are in git history.
+Last updated: October 31, 2026. This is the plan we work from. Earlier designs and research notes are in git history.
 
-**Where things stand:** Rivian schedule control, the planner integration and the real-data test tools are built and tested against fakes only. Nothing has run against the real cars, charger or Home Assistant yet. The next step is the owner's: [TESTING.md](TESTING.md) walks through phases 1 to 6, and [Open items](#open-items) lists what remains.
+**Where things stand:** Rivian schedule control, the planner integration and the real-data test tools are built and tested against fakes only. Nothing has run against the real cars, charger or Home Assistant yet. The next step is the owner's: the [phase 0 checklists](#phase-0-the-tesla-checklist) and the [decisions](#information-needed) come first, then [TESTING.md](TESTING.md) walks through phases 1 to 6. [Open items](#open-items) lists what remains.
 
 ## Goal
 
@@ -27,8 +27,12 @@ Only one car can be on the Wall Connector at a time, so only one car charges at 
 Made:
 
 1. **No new hardware.** Everything goes through the existing stack and the cars' and charger's APIs.
-2. **Tesla through Tesla's API.** HA core Tesla Fleet, with the owner's own Tesla developer account. No Teslemetry, no Bluetooth hardware.
-3. **Rivian through Rivian's API.** A Gen 2 has no remote start/stop or set-current command (those need a phone key that Gen 2 does not support yet). Its charging schedule is the only lever, and this repository's Rivian schedule control (software in Home Assistant, no extra hardware) writes it. Other owners already solar-charge an R1S this way ([`rchav/rivian_solar_charge_ha`](https://github.com/rchav/rivian_solar_charge_ha)); nobody has published that it works on a Gen 2, so an attended trial confirms it for this car.
+2. **Tesla through Tesla's API.** HA core Tesla Fleet, with the owner's own Tesla developer account. Tesla Fleet signs commands itself, so no tesla-http-proxy add-on and no Docker are needed. No Bluetooth hardware. HA core Teslemetry is the fallback if Tesla's partner registration fails ([phase 0](#phase-0-the-tesla-checklist)). tesla_custom is removed once Tesla Fleet works.
+3. **Rivian through Rivian's API.** As of October 31, 2026, the charging schedule's amperage is the only way to set a Rivian's current, on any generation and any path. No API command sets the current. This repository's Rivian schedule control (software in Home Assistant, no extra hardware) writes the schedule.
+   - **Start/stop and the charge limit** need a phone key. On a Gen 2 a key can be paired only from a Mac, through an unofficial proof of concept ([upstream issue #181](https://github.com/bretterer/home-assistant-rivian/issues/181)). It gives no current control and is outside the Home-Assistant-only setup, so it is out of scope.
+   - **Rivian's newer Parallax channel** has no proven charging write, so it is not used.
+   - **Prior art:** other owners solar-charge a Rivian through the schedule: [`rchav/rivian_solar_charge_ha`](https://github.com/rchav/rivian_solar_charge_ha), [`ostap-korkuna/rivian-charging-automation`](https://github.com/ostap-korkuna/rivian-charging-automation), [`peterchester/rivian-tesla-solar-charging`](https://github.com/peterchester/rivian-tesla-solar-charging) and [`rjpease/RivianEVCC`](https://github.com/rjpease/RivianEVCC). RivianEVCC runs the same setup as here: an R1S on a Wall Connector Gen 3, with the Wall Connector as the ground truth.
+   - **Nobody has published that it works on a Gen 2,** so the attended trial (phase 5) is the gate. If the car does not follow short windows, the fallback is [community-pattern mode](#if-the-rivian-trial-fails).
 4. **The Wall Connector measures, the cars act.** Its readings are the ground truth for what the car really draws.
 5. **A forecast-predictive planner decides the current**, not a reactive surplus follower (see [The planner](#the-planner)). It plans smooth currents from the forecast and recent usage, and lets the home battery absorb short-term swings.
 6. **Electricity plans are configurable.** Today's plan has free hours from 8 PM to 6 AM, and that will change; time of use, flat and buyback plans must also work by changing settings, not code.
@@ -88,7 +92,7 @@ Daytime solar charging works like this:
 - battery full and exporting for a while: allow an early increase;
 - car unplugged, away, at its limit, or its data stale: stop commanding it;
 - planner off or unable to plan: its heartbeat goes unavailable, and by day Rivian schedule control parks the Rivian's charging window after 3 minutes; in the free hours the Rivian's window runs on to their end; the Tesla keeps its last current up to its own charge limit;
-- Home Assistant down: the Rivian's charging window ends on its own, by day within about 25 minutes (schedule control behaviour), in the free hours when they end; the Tesla keeps its last current up to its own charge limit.
+- Home Assistant down: the Rivian's charging window ends on its own, by day within about 25 minutes (schedule control behaviour; not in the community-pattern fallback), in the free hours when they end; the Tesla keeps its last current up to its own charge limit.
 
 **Settings** (entities of the planner, listed in [PLANNER.md](PLANNER.md#settings); the defaults held up in the simulation, apart from the battery level wanted when free hours start, which it ran at 40%):
 
@@ -140,14 +144,65 @@ Each phase ends with a check that must pass before the next. [TESTING.md](TESTIN
 
 | Phase | Work | Done when | Status |
 | --- | --- | --- | --- |
-| 0. Prerequisites | Owner provides the [missing details](#information-needed). Register a Tesla developer app; host Tesla's public key on a domain you control (a free static site works). | All details recorded in this plan. | Open (owner) |
-| 1. Read everything | Add Tesla Fleet (approve the virtual key in the car). Install Rivian schedule control in dry run. Confirm Wall Connector, Sol-Ark, Solcast and both cars read correctly for a week, including which car is on the charger. | Every planner input is present and fresh; no control yet. | Ready: `tools/check.py` and `tools/snapshot.py` are built |
+| 0. Prerequisites | Owner makes the [decisions](#information-needed). Sets up Tesla Fleet ([Tesla checklist](#phase-0-the-tesla-checklist)) and prepares the Rivian app ([Rivian checklist](#phase-0-the-rivian-app)). | All details recorded in this plan; Tesla Fleet reads the car; tesla_custom removed; one Rivian home schedule with Smart Charging off. | Open (owner) |
+| 1. Read everything | Tesla Fleet from phase 0. Install upstream Rivian with its schedule entities disabled, and Rivian schedule control in dry run. Confirm Wall Connector, Sol-Ark, Solcast and both cars read correctly for a week, including which car is on the charger. | Every planner input is present and fresh; no control yet. | Ready: `tools/check.py` and `tools/snapshot.py` are built |
 | 2. Planner design | Finish the simulation, pick the design, write `PLANNER_DESIGN.md`. | Owner agrees with the behaviour on the simulated days. | Design **done** ([PLANNER_DESIGN.md](PLANNER_DESIGN.md)); the owner's agreement is open, and `tools/replay.py` shows the behaviour on real days |
 | 3. Build the planner | HA integration with tests: night charging first, then daytime solar charging; tariff schedules; dashboard. Runs in **shadow mode**: it plans and explains, but sends nothing. | A week of shadow plans that the owner finds sensible. | **Built** and tested against fakes; starting dashboard only. Owner's shadow week to do. |
-| 4. Tesla under the planner | Let the planner command the Tesla. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. | Ready: `tools/attended_test.py tesla` first |
-| 5. Rivian trial | Attended trial with Rivian schedule control ([steps](RIVIAN_SCHEDULE_CONTROL.md#attended-trial)): current changes, pause, lapse, exact restore of the owner's schedule. | The car follows schedule changes reliably. If it does not, decide between Rivian on a fixed schedule only or a controllable charger. | Ready: `tools/attended_test.py rivian` |
-| 6. Rivian under the planner | Let the planner command the Rivian through Rivian schedule control. | Same checks as phase 4, plus one schedule write per free night and the owner's own Rivian schedule restored on unplug. | Ready after phase 5 |
+| 4. Tesla under the planner | Let the planner command the Tesla. Its [Tesla guard](PLANNER.md#the-tesla-guard) keeps billed commands and wakes down. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. Billing on Tesla's developer dashboard inside the monthly credit. | Ready: `tools/attended_test.py tesla` first |
+| 5. Rivian trial | Attended trial T0–T8 with Rivian schedule control ([steps](RIVIAN_SCHEDULE_CONTROL.md#attended-trial)): a start on an idle car, current changes from 8 to 48 A, pause, lapse, Charge now, exact restore of the owner's schedule, and midnight. | Every step passes. If T0, T3, T4 or T5 fail, turn on [community-pattern mode](#if-the-rivian-trial-fails) and repeat T0–T8. If that fails too, the Rivian charges in the free hours only. | Ready: `tools/attended_test.py rivian` |
+| 6. Rivian under the planner | Let the planner command the Rivian through Rivian schedule control. | Same checks as phase 4, plus one schedule write per free night and the owner's own Rivian schedule restored on unplug. Each week, no faults and Rivian reads and writes at about 1 a minute or less. | Ready after phase 5 |
 | 7. Unattended | Notifications for faults and safety-rule trips; review a month of results. | A month without manual intervention. | Not started |
+
+### Phase 0: the Tesla checklist
+
+HA core Tesla Fleet with your own Tesla developer app. It signs commands itself (a 2020 Model Y needs signed commands), so no tesla-http-proxy add-on, no Docker and no telemetry server are needed. Do the steps in this order.
+
+1. **Create the developer app** at [developer.tesla.com](https://developer.tesla.com):
+   - **OAuth grant type:** "Authorization Code and Machine-to-Machine".
+   - **Allowed origin:** the key host: `https://fleetkey.net` with FleetKey.net, or `https://<sub>.<your-domain>` with your own subdomain (step 3).
+   - **Redirect URI:** `https://my.home-assistant.io/redirect/oauth`.
+   - **Scopes:** Vehicle Information, Vehicle Location, Vehicle Commands and Vehicle Charging Management.
+   - **Billing:** add a payment method and set a billing limit of about $5. Sources disagree on whether an app without a payment method is disabled; the limit caps any surprise.
+   - Note the **Client ID** and **Client Secret**.
+2. **Add the credentials to Home Assistant.** Settings → Devices & services → ⋮ → Application credentials → Add: Tesla Fleet, with the Client ID and Secret. Then add the **Tesla Fleet** integration, region North America, and give it the key host's domain. If an earlier attempt exists, delete its `/config/tesla_fleet.key` and the old credentials first: reusing them can make Tesla reject the registration ([HA issue #170342](https://github.com/home-assistant/core/issues/170342)).
+3. **Host the public key.** Home Assistant shows the public key (a PEM) and the address it must be at: `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`. Pick one host:
+   - **FleetKey.net** (free, run by Teslemetry, listed in the HA docs, no domain to buy): paste the PEM and you get a `<id>.fleetkey.net` domain.
+   - **Your own subdomain** on GitHub Pages or Cloudflare Pages: publish the file at that path. On GitHub Pages also add an empty `.nojekyll` file, or the `.well-known` folder is not served.
+
+   Check it from any computer:
+
+   ```sh
+   curl -sSI https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem   # HTTP 200, no redirect
+   curl -sS  https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem   # the PEM itself
+   ```
+
+   It must answer 200 directly, with no redirect, challenge or login page. Keep the file there for good. Then let Home Assistant finish the partner registration.
+4. **Pair the virtual key.** Scan the QR code Home Assistant shows (`https://www.tesla.com/_ak/<domain>`) on the phone with the Tesla app, and approve the key in the car.
+5. **Remove tesla_custom.** Once the Tesla Fleet entities work, remove the tesla_custom integration and its tesla-http-proxy add-on. tesla_custom holds some of the same entity IDs (`number.roxxo_charge_limit`), so Tesla Fleet's may have a `_2` suffix: rename them to `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable` and `device_tracker.roxxo_location`. Also keep Tesla Fleet's `sensor.roxxo_charging`: the planner's [Tesla guard](PLANNER.md#the-tesla-guard) reads it. `tools/check.py` fails while a tesla_custom entity sits under one of these IDs.
+6. **Turn Sentry Mode off at home.** A car kept awake is polled and billed all day.
+
+**Expected cost: $0 a month.** Usage should be about $3–6 a month, inside Tesla's $10 monthly credit: about $3.60 of polling, $0.15–0.50 of commands and $0.60–1.80 of wakes. Sentry Mode at home would add about $8.60 a month of polling. A command retried every 15 minutes with a wake would cost about $2 a day; the Tesla guard prevents that. The prices are from secondary sources, so check the developer dashboard weekly in phase 4.
+
+**Fallback: Teslemetry** (HA core), if partner registration keeps failing or you want no developer account. It takes 10–15 minutes, nothing is self-hosted, and the entity IDs are the same. It costs about $30 a year, and up to about $90 a year if wakes use up the smaller plan's credits (prices from search snippets, so uncertain). `tools/check.py` accepts Tesla Fleet, Teslemetry and Tessie.
+
+### Phase 0: the Rivian app
+
+1. **Turn off Smart Charging** and its schedule recommendation in the Rivian app (added in software 2025.34). It creates its own weekday and weekend schedules. Those can overlap and be refused when written back, and it can change the list while Rivian schedule control owns it, which faults it with `external_edit`.
+2. **Keep one home schedule,** with no two entries sharing a weekday, ideally covering the free hours. It is what the car follows whenever Rivian schedule control does not own the schedule. An empty list would let the car charge at full power at every plug-in.
+3. **Check the schedule's pin in the car.** Rivian applies a schedule only near its pin (about 300 ft). If the pin is off the house, the car ignores the schedule and charges at once at full power. Rivian schedule control takes its window's location from the car itself, and warns when the car is more than 50 m from it.
+4. **Note the car's software version.** The trial holds for the version it ran on. Re-run trial steps T0 and T2 after every Rivian update: software 2025.46 capped Gen 2 AC charging at 8 A.
+5. **In upstream Rivian** (phase 1), disable its four schedule entities: `number.r1s_charging_schedule_amperage`, `switch.r1s_charging_schedule_enabled`, `time.r1s_charging_schedule_start` and `time.r1s_charging_schedule_end`. Any change to them rewrites the car's schedule list under Rivian schedule control. Set the `rivian` logger to `error`, so the Rivian client does not log responses with coordinates ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)).
+
+### If the Rivian trial fails
+
+The trial shows whether the car starts on a short window that began a few minutes ago, follows a current change, and stops when a window ends. In order:
+
+1. **Community-pattern mode.** An option of Rivian schedule control, off by default ([how it works](RIVIAN_SCHEDULE_CONTROL.md#community-pattern-fallback-mode)). Charging on is one all-week window at the current; off is a 60-minute window parked about 12 hours away. This is what the community projects above run. The free hours keep their one window. Trade-off: it has no cloud-free stop, so if Home Assistant goes down the car keeps charging at the last current until Home Assistant is back and parks the window. Repeat T0–T8 with it.
+2. **The same, more slowly,** if Rivian rate-limits the account: raise the schedule control's minimum write interval and increase interval, and keep reads and writes at about 1 a minute or less.
+3. **Free hours only.** The Rivian charges only in the free hours, one window to 06:00 at 48 A, or on the owner's own schedule. The Tesla takes the daytime solar.
+4. **A manual backstop:** a Wall Connector charging schedule in the Tesla app that blocks the paid hours. It is coarse and applies to both cars.
+
+A charger that can be controlled is ruled out: it is new hardware (decision 1). So is RS-485 control of the Wall Connector. The Gen 2 phone key gives no current control (decision 3).
 
 ## Repository changes
 
@@ -164,6 +219,14 @@ Done:
 - [x] **Tariff helpers:** the free hours and every price level are Schedule helpers; prices are entities.
 - [x] **Added `PLANNER_DESIGN.md`**, and [TESTING.md](TESTING.md) for the real-data path.
 - [x] **Added real-data tools** (`tools/`): a read-only check, sanitized snapshots and a forecast recorder, a replay of the planner over real days, and the attended Tesla test and Rivian trial ([tools guide](../tools/README.md)).
+- [x] **Hardened Rivian schedule control** after the October 31 review ([guide](RIVIAN_SCHEDULE_CONTROL.md)):
+  - its window's location comes from the car's own position while it is plugged in at home, else from an owner schedule within 150 m, else Home Assistant's home; it warns when the car is more than 50 m away;
+  - owner schedules that share weekdays raise a repair issue before the first write;
+  - an option, off by default, restores only the enabled schedules if Rivian refuses the full list;
+  - a write costs at most 3 reads, and the reads and writes of the last hour are shown;
+  - the community-pattern option, the fallback if the trial fails.
+- [x] **The Tesla guard** in the planner ([PLANNER.md](PLANNER.md#the-tesla-guard)): no billed start while the car cannot start, an "already done" answer counts as done, retries stop after 3 failures, and the hourly command count survives restarts.
+- [x] **Tools for the new setup** ([tools guide](../tools/README.md)): the check accepts Tesla Fleet, Teslemetry and Tessie and fails on tesla_custom entities, finds either Rivian tracker ID and warns on upstream's schedule entities; the Rivian trial adds T0, the 8 and 48 A steps, Charge now, the fingerprint restore check, the mandatory midnight step and the software version.
 - [x] **Tests:** Rivian schedule control, the planner (including both integrations running together) and the tools, against fakes only.
 
 Retired:
@@ -180,30 +243,54 @@ Retired:
 - [ ] **Confirm what Planning off should mean.** Today it sends nothing: the Tesla keeps its last current. By day Rivian schedule control, seeing the heartbeat down, parks the Rivian's charging window within minutes; in the free hours the Rivian's one window runs on to their end, which the owner accepted (decision 9). Going back to shadow mode also sends nothing, so both cars keep their last command until they are paused or unplugged ([PLANNER.md](PLANNER.md#planning-off-and-shadow-mode)).
 - [ ] **Phase 7:** notifications for Rivian schedule control faults, safety-rule trips and the planner not planning.
 - [ ] **Installing through HACS** gives only Rivian schedule control. Moving the planner into its own repository would make it installable through HACS too; until then it is copied by hand.
-- [ ] **Small known limits:** the executor's hourly command count resets on restart; the planner needs the Wall Connector power sensor to plan; real Tesla Fleet timing, Solcast attribute types and the Sol-Ark's reporting cadence are unchecked until phases 1 and 3.
+- [ ] **A vehicle-side check of each write** (optional, read-only). A readback shows only that Rivian's cloud stored the window, not that the car got it. Rivian's Parallax feed reports the car's own current window (`charging.schedule.time_window`); a read-only sensor of it would also measure how long a write takes to reach the car. Not built. It would never write.
+- [ ] **Watch upstream:** rivian-python-client PRs [#229](https://github.com/bretterer/rivian-python-client/pull/229) and [#235](https://github.com/bretterer/rivian-python-client/pull/235) (signed charging commands) and home-assistant-rivian [#290](https://github.com/bretterer/home-assistant-rivian/pull/290) and #326. Reconsider decision 3 only if a released client adds charging commands that work on a 2025 Gen 2.
+- [ ] **Small known limits:** the planner needs the Wall Connector power sensor to plan; real Tesla Fleet timing, Solcast attribute types and the Sol-Ark's reporting cadence are unchecked until phases 1 and 3.
 
 ## Information needed
 
-1. **A domain you control,** for Tesla's public key (the owner is getting it). Tesla Fleet needs it before the Tesla can be read or commanded (phase 0).
-2. **The Rivian charger state sensor's entity ID,** for Rivian schedule control's optional `charger_state_entity`. The upstream Rivian integration names it "Charger state", so with the car named R1S it should be `sensor.r1s_charger_state`; `tools/check.py` looks for it in phase 1. Its states include `charging_active`, which the schedule control reads as charging. Without it the schedule control's charger status never shows charging.
-3. **The Sol-Ark's battery limits:** its maximum charge and discharge power, its grid-charge rate in the free hours, and the level where it stops discharging. The planner assumes 9 kW each way, refills at the same 9 kW, and a 10% reserve; the charge, discharge and reserve values are options.
-4. **When each car usually needs to be charged by.** These become the per-car plans; without one, a car charges from the sun by day and in the free hours at night.
-5. **An always-on machine for the forecast recorder** (any computer that reaches Home Assistant; [tools guide](../tools/README.md#snapshotpy-real-days-as-a-file)).
+Decisions for the owner, the first one blocking phase 0:
+
+1. **Where Tesla's public key is hosted:** FleetKey.net (free, run by Teslemetry, no domain needed) or a subdomain of your own domain on GitHub Pages or Cloudflare Pages ([Tesla checklist](#phase-0-the-tesla-checklist), step 3). Tesla Fleet needs it before the Tesla can be read or commanded.
+2. **Tesla Fleet or Teslemetry.** Tesla Fleet with your own developer app is recommended: $0 a month expected, after adding a payment method and a $5 billing limit. Teslemetry costs about $30–90 a year and needs no developer account.
+3. **Rivian Smart Charging off,** and the schedules reduced to one home schedule with its pin on the house ([Rivian checklist](#phase-0-the-rivian-app)).
+4. **Which Rivian login** schedule control uses: a second login with your own account (a second one-time code at setup and at each re-authentication), or an invited-driver account. Whether an invited driver can write schedules is not known; test it if you choose it.
+5. **The enabled-only restore:** allow Rivian schedule control to write back only your enabled schedules if Rivian refuses the full list (the `restore_enabled_only` option, off by default). The full list stays archived.
+6. **When you can be at the car for the trial,** T0–T8: about half an hour of idle time for T0, a "Charge now" press in the Rivian app for T6, and 23:30 to 00:15 one night for T8.
+7. **If short windows fail in the trial:** community-pattern mode (it charges on at the last current if Home Assistant stops), or free-hours-only charging for the Rivian ([If the Rivian trial fails](#if-the-rivian-trial-fails)).
+8. **Sentry Mode off at home.** It saves about $8.60 a month of Tesla polling.
+9. **Later, optional:** a Wall Connector schedule in the Tesla app as a manual backstop for paid hours (it affects both cars), and the unofficial Gen 2 phone key (start/stop and the charge limit, no current; outside the Home-Assistant-only setup).
+
+Details:
+
+1. **The Rivian charger state sensor's entity ID,** for Rivian schedule control's optional `charger_state_entity`. The upstream Rivian integration names it "Charger state", so with the car named R1S it should be `sensor.r1s_charger_state`; `tools/check.py` looks for it in phase 1. Its states include `charging_active`, which the schedule control reads as charging. Without it the schedule control's charger status never shows charging.
+2. **The Sol-Ark's battery limits:** its maximum charge and discharge power, its grid-charge rate in the free hours, and the level where it stops discharging. The planner assumes 9 kW each way, refills at the same 9 kW, and a 10% reserve; the charge, discharge and reserve values are options.
+3. **When each car usually needs to be charged by.** These become the per-car plans; without one, a car charges from the sun by day and in the free hours at night.
+4. **An always-on machine for the forecast recorder** (any computer that reaches Home Assistant; [tools guide](../tools/README.md#snapshotpy-real-days-as-a-file)).
 
 Answered:
 
 - **Tariff:** free hours are 8 PM–6 AM for now; the price outside them is $0.32/kWh; solar buyback is $0.00/kWh. All of them are settings. In the free hours the car on the charger charges at its full current, and the Rivian gets one schedule write per night (decision 9).
 - **The home battery in free hours:** the Sol-Ark's own settings charge it to 100% from the grid, so every paid day starts full (decision 14).
-- **The Tesla:** a 2020 Model Y, which takes 48 A (11.5 kW) on the Wall Connector, as the planner's Tesla preset assumes (about 75 kWh usable). The planner also reads the car's own maximum from Tesla Fleet's current number.
+- **The Tesla:** a 2020 Model Y, which takes 48 A (11.5 kW) on the Wall Connector, as the planner's Tesla preset assumes (about 75 kWh usable). The planner also reads the car's own maximum from Tesla Fleet's current number. It needs signed commands (`command_signing` required), which Tesla Fleet does itself.
 - **Which car charges:** the cars swap; whichever is plugged in is the one charged (decision 15).
 - **Purpose:** plugging in by day starts solar charging, the app's main purpose. evcc is removed (decision 8).
-- **Entities:** the owner's entity IDs for the Sol-Ark, the Wall Connector, Solcast, the Rivian and Rivian schedule control are known; the Tesla's Tesla Fleet IDs are expected as `switch.roxxo_charge`, `number.roxxo_charge_current` and so on, and `tools/check.py` confirms them in phase 1.
+- **Entities:** the owner's entity IDs for the Sol-Ark, the Wall Connector, Solcast, the Rivian and Rivian schedule control are known; the Tesla's Tesla Fleet IDs are expected as `switch.roxxo_charge`, `number.roxxo_charge_current` and so on, with `sensor.roxxo_charging` for the Tesla guard, and `tools/check.py` confirms them in phase 1. The Rivian's tracker is `device_tracker.r1s_location` on upstream installs made before October 12, 2026, and `device_tracker.r1s` on fresh 2.0.0 installs; the check finds either.
 
 ## Risks and unknowns
 
-- **Gen 2 Rivian behaviour** is unconfirmed until the phase 5 trial. The one window per free night runs past midnight; the first night of phase 6 confirms that the car follows it.
+- **Gen 2 Rivian behaviour** is unconfirmed until the phase 5 trial. Nobody has published that a 2025 Gen 2 follows schedule writes: a current change mid-session, a window that began 5 minutes ago starting a session, and a window ending stopping one. The trial checks each, T8 checks a window across midnight, and [community-pattern mode](#if-the-rivian-trial-fails) is the fallback. Whether a schedule write replaces the whole list is inferred, not shown; the readback would turn a merge into a fault, and T1 tests it.
+- **The Rivian schedule's location.** A window whose pin is not where the car is gets ignored, and the car charges at full power, also in paid hours. Owners report pins drifting. Rivian schedule control takes the location from the car and warns above 50 m; check the pin in the car in phase 0.
+- **Rivian Smart Charging or app edits** rewriting the list while Rivian schedule control owns it: an `external_edit` fault, entries Rivian refuses to take back (`restore_rejected`), and schedule control's window left on the car. Smart Charging off, one schedule, the overlap repair issue and the opt-in enabled-only restore cover it.
+- **Rivian rate limits.** Rivian publishes none. RivianEVCC was rate-limited at about 2 reads a minute. Rivian schedule control stays near 1 a minute or less and shows its reads and writes of the last hour. Repeated password logins can send MFA codes, so it never retries a login in a loop.
+- **A second Rivian login** (schedule control's, beside upstream's): no one reports one ending the other, but it is untested.
+- **Gen 2 software updates** have changed AC charging before (2025.46 capped it at 8 A). Re-run T0 and T2 after each update.
+- **Community-pattern mode** has no cloud-free stop: if Home Assistant goes down, the car charges on at the last current until Home Assistant is back and parks the window. The normal leases end within 25 minutes.
+- **An empty owner list** would be restored as an empty list, and the car would then charge at full power at the next plug-in. Keep one home schedule.
+- **Leftover tesla_custom entities** would point the planner at the wrong integration. Remove tesla_custom; `tools/check.py` fails on them.
+- **The Rivian client logs** whole error responses, with coordinates, at warning level. Set the `rivian` logger to `error`. The client's private login attributes, which the config flow reads, could change in a 2.x release; a test checks them against the installed version.
 - **Forecast quality** on fast-changing days: the planner leans on the battery and the safety rules there.
-- **Tesla API cost and limits:** a few commands an hour stays within Tesla's monthly credit; verify on Tesla's developer dashboard in phase 4.
+- **Tesla API cost and limits:** about $3–6 a month stays within Tesla's $10 monthly credit; verify on Tesla's developer dashboard in phase 4. A refused start retried every 15 minutes with a wake would cost about $2 a day; the [Tesla guard](PLANNER.md#the-tesla-guard) prevents it. Tesla's partner registration can fail ([HA issue #170342](https://github.com/home-assistant/core/issues/170342)); Teslemetry is the fallback.
 - **Internet down:** both cars' APIs are cloud services, so neither can be commanded. The Rivian's window ends on its own (in the free hours, when they end); the Tesla keeps charging at its last current up to its limit.
 - **The free-hours refill is assumed to reach 100%.** The daytime plan counts on it and leaves the refill to the Sol-Ark's own settings. If its time-of-use slot or grid-charge rate changes so that the battery is no longer full when the free hours end, the assumption breaks: a day planned down to the floor can leave the next morning short, and the house imports paid power until the sun covers it. Phase 1 checks the refill in the Sol-Ark's history.
 - **The caution level is optimistic** until it is recalibrated from shadow-mode data; the safety rules and re-planning every 15 minutes cover the gap in simulation.

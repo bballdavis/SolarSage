@@ -125,6 +125,108 @@ async def test_tesla_custom_only(client: HassClient, fake: FakeHass) -> None:
     assert row.status == check.FAIL and "switch.roxxo_charger" in row.detail
 
 
+@pytest.mark.parametrize(
+    ("platform", "note"),
+    [
+        ("tesla_fleet", "billed by Tesla's Fleet API"),
+        ("teslemetry", "Teslemetry credits"),
+        ("tessie", "Tessie subscription"),
+    ],
+)
+async def test_tesla_platforms_and_their_billing(
+    client: HassClient, fake: FakeHass, platform: str, note: str
+) -> None:
+    build_site(fake, NOW)
+    for key in ("t_soc", "t_limit", "t_plugged", "t_switch", "t_current", "t_charging"):
+        fake.register(E[key], platform)
+    fake.register(E["t_location"], platform)
+    by = await run(client)
+    row = by["tesla on Tesla Fleet"]
+    assert (row.status, row.value) == (check.OK, platform)
+    assert note in row.detail
+    assert by["tesla.charging_state"].status == check.OK
+
+
+@pytest.mark.parametrize("key", ["t_limit", "t_location"])
+async def test_a_leftover_tesla_custom_limit_or_location_fails(
+    client: HassClient, fake: FakeHass, key: str
+) -> None:
+    """tesla_custom holds number.roxxo_charge_limit (and the tracker) under Fleet's IDs."""
+    build_site(fake, NOW)
+    fake.register(E[key], "tesla_custom")
+    by = await run(client)
+    row = by["tesla on Tesla Fleet"]
+    assert row.status == check.FAIL and row.entity == E[key]
+    assert "remove tesla_custom" in row.detail
+
+
+async def test_tesla_entities_from_two_integrations_warn(
+    client: HassClient, fake: FakeHass
+) -> None:
+    build_site(fake, NOW)
+    fake.register(E["t_soc"], "teslemetry")
+    by = await run(client)
+    row = by["tesla on Tesla Fleet"]
+    assert row.status == check.WARN and row.value == "tesla_fleet, teslemetry"
+
+
+async def test_tesla_custom_leftovers_beside_tesla_fleet_warn(
+    client: HassClient, fake: FakeHass
+) -> None:
+    build_site(fake, NOW)
+    fake.set_state("number.roxxo_charging_amps", 32, {"unit_of_measurement": "A"})
+    by = await run(client)
+    assert by["tesla on Tesla Fleet"].status == check.OK
+    row = by["tesla tesla_custom leftovers"]
+    assert row.status == check.WARN and row.entity == "number.roxxo_charging_amps"
+
+
+async def test_the_rivian_tracker_under_its_newer_id(client: HassClient, fake: FakeHass) -> None:
+    """Fresh upstream 2.0.0 installs name the tracker after the car: device_tracker.r1s."""
+    build_site(fake, NOW)
+    state = fake.states[E["r_location"]]
+    fake.remove(E["r_location"])
+    fake.set_state("device_tracker.r1s", "home", state["attributes"])
+    by = await run(client)
+    row = by["rivian.location id"]
+    assert row.status == check.WARN and row.entity == "device_tracker.r1s"
+    assert "set cars.rivian.location" in row.detail
+    assert by["rivian.location"].status == check.OK
+    assert by["rivian.location"].entity == "device_tracker.r1s"
+    assert by["car on the charger"].value == "rivian"
+
+
+async def test_the_rivian_tracker_under_its_older_id(client: HassClient, fake: FakeHass) -> None:
+    build_site(fake, NOW)
+    fake.set_state("device_tracker.r1s", "home", {})
+    rows = await check.run_checks(client, load_config(), NOW)
+    assert "rivian.location id" not in rows_by_check(rows)  # the mapped one exists: no warning
+
+
+async def test_upstream_rivian_schedule_entities_must_be_disabled(
+    client: HassClient, fake: FakeHass
+) -> None:
+    build_site(fake, NOW)
+    by = await run(client)
+    assert by["rivian upstream schedule entities"].status == check.OK  # none at all
+    # enabled: present (with or without a registry entry)
+    fake.set_state("number.r1s_charging_schedule_amperage", 48, {"unit_of_measurement": "A"})
+    fake.set_state("time.r1s_charging_schedule_start", "00:00:00", {})
+    fake.register("time.r1s_charging_schedule_start", "rivian")
+    by = await run(client)
+    row = by["rivian upstream schedule entities"]
+    assert row.status == check.WARN
+    assert row.entity == "number.r1s_charging_schedule_amperage, time.r1s_charging_schedule_start"
+    assert check.exit_code(list(by.values()), strict=True) == 1
+    # disabled in the registry: no state, and fine
+    for eid in ("number.r1s_charging_schedule_amperage", "time.r1s_charging_schedule_start"):
+        fake.remove(eid)
+        fake.register(eid, "rivian")
+        fake.registry[eid]["disabled_by"] = "user"
+    by = await run(client)
+    assert by["rivian upstream schedule entities"].status == check.OK
+
+
 async def test_schedule_control_fault_and_handed_back(client: HassClient, fake: FakeHass) -> None:
     build_site(fake, NOW, schedule_control_dry_run=False)
     fake.set_state(

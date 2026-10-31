@@ -2,14 +2,18 @@
 
 The state machine turns two requests from the charging controller (the solar
 planner), "charging allowed" and "current", into writes of the vehicle's
-charging schedule. A Gen 2 vehicle has no usable start/stop command, so the
-schedule is the only lever:
+charging schedule. No Rivian API sets the charging current, and a Gen 2 has no
+start/stop command without a phone key, so the schedule's amperage is the
+only lever:
 
 - **Lease.** A short window covering now permits charging at the requested
   amperage. It is renewed only while the car is known to be plugged in at
   home and the controller is alive; otherwise it lapses on its own.
 - **Parked window.** A window that ended a few minutes ago makes the vehicle
   wait.
+- **Community pattern** (an option, the fallback if a Gen 2 does not follow
+  short windows): one all-week window at the current while charging, and an
+  enabled window parked about 12 hours away while not.
 
 Safety rules:
 
@@ -36,6 +40,7 @@ This module has no Home Assistant imports.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
 from enum import StrEnum
@@ -48,19 +53,37 @@ from .schedule import (
     AMPS_MAX,
     AMPS_MIN,
     MINUTES_PER_DAY,
+    WEEK_DAYS,
     Fingerprint,
+    all_week_window,
     applied_amps,
     fingerprint,
     lease_window,
     normalize_schedules,
+    overlapping_week_days,
+    parked_ahead_window,
     to_provider_input,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 JOURNAL_VERSION = 2
-# A provider schedule within this distance of home is treated as the home schedule.
-HOME_MATCH_KM = 2.0
+# An owner schedule within this distance of home is treated as the home schedule:
+# its pin is where the vehicle already expects home windows. A pin farther away
+# may be stale or another place, and a window the vehicle does not place at its
+# own position is ignored, so it charges at full current at once.
+HOME_MATCH_KM = 0.15
+# A window that schedule control wrote may lie anywhere in the home zone.
+OWN_WINDOW_MATCH_KM = 2.0
+# A window location farther than this from the vehicle is logged once.
+LOCATION_WARN_M = 50
+# Community pattern: the parked window starts this far ahead and lasts this long,
+# and is pushed away again once its start comes this close.
+COMMUNITY_PARK_AHEAD = timedelta(hours=12)
+COMMUNITY_PARK_MINUTES = 60
+COMMUNITY_REPARK_BEFORE = timedelta(hours=2)
+# Rivian reads and writes are counted over this window (for the attended trial).
+REQUEST_COUNT_WINDOW = timedelta(hours=1)
 # A lapsed lease is parked this long after its window has ended on the vehicle.
 LAPSE_PARK_MARGIN = timedelta(minutes=1)
 # The 48 A ceiling hold arms only for a decrease from 48 A to at least this much:
@@ -148,6 +171,9 @@ class Observation:
     # Until when the controller's request runs (its until entity, the end of the free
     # hours); None if unknown or not configured.
     controller_until: datetime | None = None
+    # The vehicle's own position (its tracker's latitude and longitude); None if
+    # unknown. It is never reported: reports give only its distance to the window.
+    location: dict[str, float] | None = None
 
     @property
     def eligible(self) -> bool:
@@ -197,6 +223,12 @@ class ScheduleControlConfig:
     attempt_history: int = 8
     written_history: int = 32
     dry_run: bool = True
+    # If Rivian refuses the owner's list as invalid when it is written back, write
+    # only its enabled entries (the full list stays archived) instead of faulting.
+    restore_enabled_only: bool = False
+    # One all-week window at the current while charging, one window parked about
+    # 12 hours away while not; the free hours still get one fixed window.
+    community_pattern: bool = False
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -214,6 +246,9 @@ class Lease:
     A fixed window runs to the controller's until time (the end of the free hours):
     it is written once and never renewed, it is not parked at its end or while the
     controller looks down, and it ends on the vehicle by itself.
+
+    The community pattern writes an all-week window (``all_week``, active, with no
+    end) and a parked window that starts at ``window_start``.
     """
 
     active: bool
@@ -222,6 +257,8 @@ class Lease:
     expires_at: datetime | None
     utc_offset_minutes: int
     fixed: bool = False
+    all_week: bool = False
+    window_start: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -231,6 +268,8 @@ class Lease:
             "expires_at": _iso(self.expires_at),
             "utc_offset_minutes": self.utc_offset_minutes,
             "fixed": self.fixed,
+            "all_week": self.all_week,
+            "window_start": _iso(self.window_start),
         }
 
     @classmethod
@@ -242,6 +281,8 @@ class Lease:
             expires_at=_from_iso(data["expires_at"]),
             utc_offset_minutes=data["utc_offset_minutes"],
             fixed=bool(data.get("fixed", False)),
+            all_week=bool(data.get("all_week", False)),
+            window_start=_from_iso(data.get("window_start")),
         )
 
 
@@ -322,6 +363,12 @@ class Journal:
     renewal_enabled: bool = True
     unapplied_writes: int = 0
     archived_original: list[dict[str, Any]] | None = None
+    # Where windows are written while owned, and where that came from: vehicle,
+    # owner_schedule or home.
+    window_location: dict[str, float] | None = None
+    window_location_source: str | None = None
+    # Rivian refused the full owner's list; the release writes its enabled entries.
+    restore_enabled_only_active: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -346,6 +393,9 @@ class Journal:
             "renewal_enabled": self.renewal_enabled,
             "unapplied_writes": self.unapplied_writes,
             "archived_original": self.archived_original,
+            "window_location": self.window_location,
+            "window_location_source": self.window_location_source,
+            "restore_enabled_only_active": self.restore_enabled_only_active,
         }
 
     @classmethod
@@ -391,6 +441,9 @@ class Journal:
             renewal_enabled=data["renewal_enabled"],
             unapplied_writes=data["unapplied_writes"],
             archived_original=data["archived_original"],
+            window_location=data.get("window_location"),
+            window_location_source=data.get("window_location_source"),
+            restore_enabled_only_active=bool(data.get("restore_enabled_only_active", False)),
         )
 
 
@@ -402,6 +455,21 @@ def _distance_km(a: dict[str, float], b: dict[str, float]) -> float:
         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
     )
     return 2 * 6371.0 * math.asin(math.sqrt(h))
+
+
+def _valid_location(location: Any) -> bool:
+    """A location with finite, in-range latitude and longitude."""
+    if not isinstance(location, dict):
+        return False
+    lat, lon = location.get("latitude"), location.get("longitude")
+    return all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        for value in (lat, lon)
+    ) and (-90 <= lat <= 90 and -180 <= lon <= 180)
+
+
+def _plain_location(location: dict[str, float]) -> dict[str, float]:
+    return {"latitude": float(location["latitude"]), "longitude": float(location["longitude"])}
 
 
 def _floor_minute(value: datetime) -> datetime:
@@ -457,6 +525,15 @@ class RivianScheduleController:
         self.last_observation = Observation()
         self.provider_schedule_count: int | None = None
         self.dry_run_target: dict[str, Any] | None = None
+        # Weekdays that several entries of the owner's snapshot name (Rivian may
+        # refuse such a list back, upstream PR #308); None until a snapshot is taken.
+        self.owner_overlap_days: list[str] | None = None
+        self._location_warned = False
+        # Last time a window could have been started or renewed (community pattern).
+        self._extendable_at: datetime | None = None
+        # When Rivian was read and written, for the per-hour counts.
+        self._reads: deque[datetime] = deque()
+        self._writes: deque[datetime] = deque()
 
     @property
     def journal(self) -> Journal:
@@ -480,6 +557,8 @@ class RivianScheduleController:
         if not data:
             return False
         self._journal = Journal.from_dict(data)
+        if self._journal.original is not None:
+            self.owner_overlap_days = overlapping_week_days(self._journal.original)
         # A request from before the restart may be from a controller that has
         # since restarted.
         self._epoch, self._epoch_calls, self._epoch_held = "startup", self._controller_calls, False
@@ -578,12 +657,14 @@ class RivianScheduleController:
             self._ended_since = (self._ended_since or now) if obs.session_ended else None
             self._away_since = (self._away_since or now) if obs.home is False else None
             self._track_liveness(now, obs)
+            if self._may_extend(obs) or self._extendable_at is None:
+                self._extendable_at = now
             if self._journal.phase is Phase.FAULT:
                 return
             if self._backoff_until and now < self._backoff_until and not force:
                 return
             try:
-                await self._step(now, obs)
+                await self._step(now, obs, force=force)
             except RateLimitedError as err:
                 self._backoff_until = now + (err.backoff or self.config.rate_limit_backoff)
                 self._record_error(now, err)
@@ -602,13 +683,14 @@ class RivianScheduleController:
                 self._failures = 0
                 self._backoff_until = None
 
-    async def _step(self, now: datetime, obs: Observation) -> None:
+    async def _step(self, now: datetime, obs: Observation, *, force: bool = False) -> None:
         journal = self._journal
         if obs.plugged is False and journal.handed_back:
             journal.handed_back = False
             await self._save()
         if journal.phase is Phase.WRITING:
-            await self._resolve_pending(now)
+            # A forced tick is an explicit, bounded attempt: it reads at once.
+            await self._resolve_pending(now, read_now=force)
             if journal.phase is not Phase.OWNED:
                 return
         # After resolving a write, so the lease is what Rivian holds.
@@ -657,7 +739,13 @@ class RivianScheduleController:
             self.dry_run_target = self._dry_run_target(now, obs)
             return
         await self._take_ownership(now, obs)
-        if journal.phase is Phase.OWNED and not journal.release_requested:
+        if (
+            journal.phase is Phase.OWNED
+            and not journal.release_requested
+            and not self.owner_overlap_days
+        ):
+            # A snapshot Rivian may refuse back is reported (a repair issue) before
+            # anything is written: the first window waits for the next tick.
             await self._drive(now, obs)
 
     # Ownership ------------------------------------------------------------
@@ -665,7 +753,7 @@ class RivianScheduleController:
     async def _take_ownership(self, now: datetime, obs: Observation) -> None:
         journal = self._journal
         seq = journal.request_seq
-        current = await self._api.get_schedules()
+        current = await self._get_schedules(now)
         if journal.request_seq != seq and not journal.command_received:
             return  # cancelled by a release while reading
         try:
@@ -699,49 +787,98 @@ class RivianScheduleController:
         journal.unapplied_writes = 0
         journal.release_requested = None
         journal.release_seq = None
+        journal.restore_enabled_only_active = False
+        journal.window_location, journal.window_location_source = self._choose_location(
+            obs, original
+        )
+        self._location_warned = False
         if journal.desired_charge is None:
             journal.desired_charge = obs.charging is True
+        self.owner_overlap_days = overlapping_week_days(original)
         await self._save()
-        _LOGGER.info("Took ownership of %d charging schedule(s)", len(original))
+        _LOGGER.info(
+            "Took ownership of %d charging schedule(s); windows are written at the %s location",
+            len(original),
+            journal.window_location_source,
+        )
+        if self.owner_overlap_days:
+            _LOGGER.warning(
+                "Several of the owner's charging schedules share weekdays (%s). Rivian may "
+                "refuse to accept that list back when it is restored (upstream PR #308)%s",
+                ", ".join(self.owner_overlap_days),
+                "; only its enabled entries are then written"
+                if self.config.restore_enabled_only
+                else "",
+            )
 
-    async def _drive(self, now: datetime, obs: Observation) -> None:
-        journal = self._journal
-        if journal.release_requested:
-            return  # the next tick restores; write no lease in between
-        lease = journal.lease
-        local_now = now.astimezone(self.config.time_zone)
-        offset = int(local_now.utcoffset().total_seconds() // 60)
-        may_extend = self._may_extend(obs)
-        requested = journal.requested_amps
-        amps_down = applied_amps(requested)
-        # An optional margin below the request for increases, off by default.
-        # evcc added up to 2 A for measured-current lag and truncated, so
-        # following it exactly made the two loops chase each other (it used
-        # 3 A). At the ceiling there is no lag to absorb, unless surplus just
-        # short of it made the request decrease from there (the ceiling hold).
+    def _amps_up(self, now: datetime, requested: float) -> int:
+        """The amperage an increase writes.
+
+        An optional margin below the request for increases, off by default.
+        evcc added up to 2 A for measured-current lag and truncated, so
+        following it exactly made the two loops chase each other (it used
+        3 A). At the ceiling there is no lag to absorb, unless surplus just
+        short of it made the request decrease from there (the ceiling hold).
+        """
         at_ceiling = requested >= AMPS_MAX and (
             self._ceiling_hold_until is None or now >= self._ceiling_hold_until
         )
-        amps_up = (
+        return (
             AMPS_MAX if at_ceiling else applied_amps(requested - self.config.increase_margin_amps)
         )
-        live = self._lease_live(now)
-        until = self._fixed_until(now, obs)
-        reason: str | None = None
-        active = False
-        amps = AMPS_MIN
-        extend = False
-        # A request held while the controller looks down allows no window over
-        # now, and an unconfirmed one may keep a live lease running but not
-        # start one. A fixed window that ended does not start again while the
-        # controller still gives its end: the request it was written for is over.
-        ended_fixed = lease is not None and lease.active and lease.fixed and not live
+
+    def _wants_charge(self, now: datetime, obs: Observation) -> bool:
+        """Whether the controller's request asks for a window over now.
+
+        A request held while the controller looks down allows no window over
+        now. A fixed window that ended does not start again while the
+        controller still gives its end: the request it was written for is over.
+        """
+        journal = self._journal
+        lease = journal.lease
+        ended_fixed = (
+            lease is not None and lease.active and lease.fixed and not self._lease_live(now)
+        )
         over = (
             ended_fixed
             and obs.controller_until is not None
             and _floor_minute(obs.controller_until.astimezone(UTC)) == lease.expires_at
         )
-        wants = journal.desired_charge is True and not self._request_held and not over
+        return journal.desired_charge is True and not self._request_held and not over
+
+    async def _drive(self, now: datetime, obs: Observation) -> None:
+        journal = self._journal
+        if journal.release_requested:
+            return  # the next tick restores; write no lease in between
+        self._check_location_distance(obs)
+        lease = journal.lease
+        wants = self._wants_charge(now, obs)
+        until = self._fixed_until(now, obs)
+        # The free hours keep their one fixed window in the community pattern too,
+        # also while the controller looks down, until charging is turned off.
+        free_hours = (wants and until is not None) or (
+            lease is not None
+            and lease.fixed
+            and self._lease_live(now)
+            and journal.desired_charge is True
+        )
+        if self.config.community_pattern and not free_hours:
+            await self._drive_community(now, obs, wants=wants)
+            return
+        local_now = now.astimezone(self.config.time_zone)
+        offset = int(local_now.utcoffset().total_seconds() // 60)
+        may_extend = self._may_extend(obs)
+        requested = journal.requested_amps
+        amps_down = applied_amps(requested)
+        amps_up = self._amps_up(now, requested)
+        # A community-pattern window is replaced by a lease or a parked window.
+        community = lease is not None and (lease.all_week or lease.window_start is not None)
+        live = self._lease_live(now) and not community
+        reason: str | None = None
+        active = False
+        amps = AMPS_MIN
+        extend = False
+        # An unconfirmed request may keep a live lease running but not start one.
         if wants and (live or (may_extend and not self._request_unconfirmed)):
             active = True
             # A fixed window keeps its end through any rewrite and is never renewed.
@@ -776,7 +913,7 @@ class RivianScheduleController:
             if live or now - lease.written_at < self.config.repark_after:
                 return
             reason = "repark"
-        elif lease is None or lease.active:
+        elif lease is None or lease.active or community:
             # Charging is not requested, or a lease can no longer be extended:
             # no window may cover now. A lapsed lease would recur in a week.
             lapsed = lease is not None and lease.active and not live
@@ -830,7 +967,7 @@ class RivianScheduleController:
             lease_minutes=lease_minutes,
             skew_minutes=self.config.clock_skew_minutes,
             amps=amps,
-            location=self._lease_location(),
+            location=self._lease_location(obs),
             end=expires_at.astimezone(self.config.time_zone) if fixed else None,
         )
         new_lease = Lease(active, amps, now, expires_at, offset, fixed)
@@ -846,6 +983,78 @@ class RivianScheduleController:
         _LOGGER.debug("Schedule write for %s at %d A", reason, amps)
         await self._write(now, [window], Purpose.LEASE, new_lease, strict=True)
 
+    async def _drive_community(self, now: datetime, obs: Observation, *, wants: bool) -> None:
+        """The community pattern: one all-week window while charging, else one parked ahead.
+
+        The all-week window is rewritten only when its current changes. Unlike a
+        lease it never ends on the vehicle, so there is no cloud-free stop: it is
+        replaced by the parked window once charging is not wanted, or once it
+        could not have been renewed for a lease length (vehicle state unknown,
+        controller down, renewal off). The parked window is enabled, never
+        ``enabled: false``, and is pushed away again before it comes close.
+        """
+        journal = self._journal
+        lease = journal.lease
+        local_now = now.astimezone(self.config.time_zone)
+        offset = int(local_now.utcoffset().total_seconds() // 60)
+        may_extend = self._may_extend(obs)
+        on = lease is not None and lease.active and lease.all_week
+        keep_on = may_extend or (
+            on
+            and self._extendable_at is not None
+            and now - self._extendable_at < timedelta(minutes=self.config.lease_minutes)
+        )
+        reason: str | None = None
+        if wants and (keep_on if on else may_extend and not self._request_unconfirmed):
+            requested = journal.requested_amps
+            amps_down = applied_amps(requested)
+            amps_up = self._amps_up(now, requested)
+            if not on:
+                reason, amps = "start", amps_down
+            elif amps_down < lease.amps:
+                reason, amps = "decrease", amps_down
+            elif (
+                may_extend
+                and amps_up > lease.amps
+                and self._since(self._last_amps_change_at, now) >= self.config.increase_interval
+            ):
+                reason, amps = "increase", amps_up
+            else:
+                return
+            window = all_week_window(amps=amps, location=self._lease_location(obs))
+            new_lease = Lease(True, amps, now, None, offset, all_week=True)
+        else:
+            parked = lease is not None and not lease.active and lease.window_start is not None
+            if parked and lease.window_start - now > COMMUNITY_REPARK_BEFORE:
+                return
+            reason, amps = ("repark" if parked else "pause"), AMPS_MIN
+            window, start = parked_ahead_window(
+                local_now,
+                ahead=COMMUNITY_PARK_AHEAD,
+                duration_minutes=COMMUNITY_PARK_MINUTES,
+                amps=AMPS_MIN,
+                location=self._lease_location(obs),
+            )
+            new_lease = Lease(False, amps, now, None, offset, window_start=start.astimezone(UTC))
+        spacing = (
+            self.config.transition_interval
+            if reason in ("start", "pause")
+            else self.config.min_write_interval
+        )
+        if self._since(self._last_write_at, now) < spacing:
+            return
+        if new_lease.active:
+            self._last_amps_change_at = now
+            if (
+                reason == "decrease"
+                and self.config.ceiling_hold > timedelta(0)
+                and lease.amps == AMPS_MAX
+                and amps >= CEILING_BAND_MIN_AMPS
+            ):
+                self._ceiling_hold_until = now + self.config.ceiling_hold
+        _LOGGER.debug("Community pattern schedule write for %s at %d A", reason, amps)
+        await self._write(now, [window], Purpose.LEASE, new_lease, strict=True)
+
     async def _release(self, now: datetime, reason: str) -> None:
         journal = self._journal
         _LOGGER.info("Restoring the owner's charging schedule (%s)", reason)
@@ -856,7 +1065,11 @@ class RivianScheduleController:
             self._clear_ownership()
             await self._save()
             return
-        await self._write(now, journal.original, Purpose.RESTORE, None, strict=False)
+        target = journal.original
+        if journal.restore_enabled_only_active:
+            # Rivian refused the full list; the full list is archived.
+            target = [schedule for schedule in target if schedule["enabled"]]
+        await self._write(now, target, Purpose.RESTORE, None, strict=False)
 
     def _clear_ownership(self) -> None:
         """Return to idle, keeping history, archive, renewal and newer requests.
@@ -886,6 +1099,9 @@ class RivianScheduleController:
         journal.release_requested = None
         journal.release_hand_back = False
         journal.release_seq = None
+        journal.window_location = None
+        journal.window_location_source = None
+        journal.restore_enabled_only_active = False
         if not newer_request:
             journal.command_received = False
             journal.desired_charge = None
@@ -963,7 +1179,7 @@ class RivianScheduleController:
         attempt.outcome = "sent"
         error: ScheduleApiError | None = None
         try:
-            await self._api.set_schedules(to_provider_input(normalized))
+            await self._set_schedules(now, to_provider_input(normalized))
         except AuthError, RateLimitedError:
             # Refused before it was processed: withdraw without counting it.
             attempt.outcome = "rejected"
@@ -980,16 +1196,29 @@ class RivianScheduleController:
             self._record_error(now, error)
         # Record that it was sent, so a restart before it settles still knows.
         await self._save()
-        await self._resolve_pending(now)
+        await self._resolve_pending(now, read_now=True)
         if error is not None and journal.phase is not Phase.FAULT:
             raise error  # back off before the next write
 
-    async def _resolve_pending(self, now: datetime) -> None:
+    async def _resolve_pending(self, now: datetime, *, read_now: bool = False) -> None:
+        """Decide a write from a fresh read.
+
+        Right after sending (``read_now``), the write is read back once. A write that did not
+        show is read again only once ``settle_delay`` has passed since it was
+        made, not on every tick meanwhile, so a write costs at most three reads
+        (the guard, right after sending, and once settled).
+        """
         journal = self._journal
         pending = journal.pending
         if pending is None:
             journal.phase = Phase.OWNED if journal.original is not None else Phase.IDLE
             await self._save()
+            return
+        if (
+            not read_now
+            and pending.outcome != "unsent"
+            and now - pending.created_at < self.config.settle_delay
+        ):
             return
         current = await self._read_fp(now)
         if current is None:
@@ -1019,7 +1248,7 @@ class RivianScheduleController:
             self._confirm(pending)
         elif current.matches(pending.target):
             if pending.outcome == "invalid":
-                self._restore_rejected(now)
+                self._restore_rejected(now, pending)
             elif pending.outcome != "sent":
                 self._withdraw(pending)  # the restore itself failed: send it again
             elif now - pending.created_at < self.config.settle_delay:
@@ -1031,7 +1260,7 @@ class RivianScheduleController:
         elif pending.previous is not None and current.matches(pending.previous):
             if pending.outcome in ("rejected", "invalid"):
                 if pending.purpose is Purpose.RESTORE and pending.outcome == "invalid":
-                    self._restore_rejected(now)
+                    self._restore_rejected(now, pending)
                 else:
                     self._count_unapplied(now, pending, "write_rejected")
             elif now - pending.created_at < self.config.settle_delay:
@@ -1069,7 +1298,27 @@ class RivianScheduleController:
                 else "Rivian repeatedly applied no schedule change.",
             )
 
-    def _restore_rejected(self, now: datetime) -> None:
+    def _restore_rejected(self, now: datetime, pending: Attempt) -> None:
+        journal = self._journal
+        original = journal.original or []
+        enabled = [schedule for schedule in original if schedule["enabled"]]
+        if (
+            self.config.restore_enabled_only
+            and not journal.restore_enabled_only_active
+            and len(enabled) < len(original)
+        ):
+            # The opt-in fallback (the upstream PR #308 approach): the release writes
+            # the enabled entries only. The full list stays archived.
+            _LOGGER.warning(
+                "Rivian refused the owner's %d charging schedules as one list; restoring "
+                "only the %d enabled ones and keeping the full list archived",
+                len(original),
+                len(enabled),
+            )
+            journal.archived_original = journal.original
+            journal.restore_enabled_only_active = True
+            self._withdraw(pending)
+            return
         self._fault(
             now,
             "restore_rejected",
@@ -1123,8 +1372,25 @@ class RivianScheduleController:
         journal.pending = None
         journal.attempts = [a for a in journal.attempts if a is not attempt]
 
+    async def _get_schedules(self, now: datetime) -> list[dict[str, Any]]:
+        """Read Rivian's list, counting the read."""
+        self._reads.append(now)
+        self._prune_counts(now)
+        return await self._api.get_schedules()
+
+    async def _set_schedules(self, now: datetime, schedules: list[dict[str, Any]]) -> None:
+        """Write Rivian's list, counting the write."""
+        self._writes.append(now)
+        self._prune_counts(now)
+        await self._api.set_schedules(schedules)
+
+    def _prune_counts(self, now: datetime) -> None:
+        for events in (self._reads, self._writes):
+            while events and now - events[0] >= REQUEST_COUNT_WINDOW:
+                events.popleft()
+
     async def _read_fp(self, now: datetime) -> Fingerprint | None:
-        current = await self._api.get_schedules()
+        current = await self._get_schedules(now)
         self.provider_schedule_count = len(current) if isinstance(current, list) else None
         try:
             return fingerprint(normalize_schedules(current, strict=False))
@@ -1147,7 +1413,7 @@ class RivianScheduleController:
                 journal.fault = None
                 await self._save()
                 return True
-            current = await self._api.get_schedules()
+            current = await self._get_schedules(now)
             try:
                 current_fp = fingerprint(normalize_schedules(current, strict=False))
             except TypeError, ValueError:
@@ -1190,7 +1456,7 @@ class RivianScheduleController:
                 target = journal.archived_original
                 if target is None:
                     return False
-                current = await self._api.get_schedules()
+                current = await self._get_schedules(now)
                 try:
                     current_list = normalize_schedules(current, strict=False)
                 except TypeError, ValueError:
@@ -1209,7 +1475,7 @@ class RivianScheduleController:
             await self._save()
             self._last_write_at = now
             try:
-                await self._api.set_schedules(to_provider_input(normalized))
+                await self._set_schedules(now, to_provider_input(normalized))
             except AuthError, RateLimitedError:
                 self._withdraw(attempt)
                 await self._save()
@@ -1217,7 +1483,7 @@ class RivianScheduleController:
             except ScheduleApiError as err:
                 self._record_error(now, err)
             try:
-                current = await self._api.get_schedules()
+                current = await self._get_schedules(now)
                 verified = fingerprint(normalize_schedules(current, strict=False)).matches(
                     target_fp
                 )
@@ -1263,7 +1529,7 @@ class RivianScheduleController:
     async def async_read_provider(self) -> dict[str, Any]:
         """Read the provider list for inventory and trial evidence, without coordinates."""
         async with self._lock:
-            current = await self._api.get_schedules()
+            current = await self._get_schedules(datetime.now(UTC))
             schedules = normalize_schedules(current, strict=False)
             current_fp = fingerprint(schedules)
             self.provider_schedule_count = len(schedules)
@@ -1318,6 +1584,9 @@ class RivianScheduleController:
             "lease_written_at": _iso(lease.written_at) if lease else None,
             "lease_expires_at": _iso(lease.expires_at) if lease else None,
             "lease_fixed": lease.fixed if lease else None,
+            "lease_all_week": lease.all_week if lease else None,
+            "lease_window_start": _iso(lease.window_start) if lease else None,
+            "community_pattern": self.config.community_pattern,
             "owner_schedule_count": len(journal.original) if journal.original is not None else None,
             "provider_schedule_count": self.provider_schedule_count,
             "owned_fingerprint": journal.owned_fp.key[:12] if journal.owned_fp else None,
@@ -1328,13 +1597,21 @@ class RivianScheduleController:
             "archived_owner_schedule_count": (
                 len(journal.archived_original) if journal.archived_original is not None else None
             ),
+            "owner_schedules_overlap_days": self.owner_overlap_days,
+            "restore_enabled_only": self.config.restore_enabled_only,
+            "restore_enabled_only_active": journal.restore_enabled_only_active,
+            "window_location_source": journal.window_location_source,
+            "window_location_distance_m": self.window_location_distance_m,
+            "reads_last_hour": self._count_since(self._reads, now),
+            "writes_last_hour": self._count_since(self._writes, now),
             "fault_code": journal.fault.code if journal.fault else None,
             "fault_message": journal.fault.message if journal.fault else None,
             "last_error": self.last_error,
             "last_error_at": _iso(self.last_error_at),
             "last_write_at": _iso(self._last_write_at),
             "backoff_until": _iso(self._backoff_until),
-            "observation": asdict(self.last_observation),
+            # The vehicle's position is reported only as its distance to the window.
+            "observation": asdict(self.last_observation) | {"location": None},
             "start_blocked_by": self._start_blocked_by(),
             "request_unconfirmed": self._request_unconfirmed,
             "request_held": self._request_held and journal.command_received,
@@ -1343,10 +1620,40 @@ class RivianScheduleController:
 
     # Helpers --------------------------------------------------------------
 
+    @staticmethod
+    def _count_since(events: deque[datetime], now: datetime) -> int:
+        """How many of ``events`` happened in the last ``REQUEST_COUNT_WINDOW``."""
+        return sum(1 for moment in events if now - moment < REQUEST_COUNT_WINDOW)
+
+    @property
+    def window_location_distance_m(self) -> int | None:
+        """Metres between the window location and the vehicle; None while unknown."""
+        location = self._journal.window_location
+        vehicle = self.last_observation.location
+        if location is None or not _valid_location(vehicle):
+            return None
+        return round(_distance_km(location, vehicle) * 1000)
+
     def _dry_run_target(self, now: datetime, obs: Observation) -> dict[str, Any]:
         journal = self._journal
         active = journal.desired_charge is True
         until = self._fixed_until(now, obs) if active else None
+        if self.config.community_pattern and until is None:
+            local_now = now.astimezone(self.config.time_zone)
+            if active:
+                window = all_week_window(
+                    amps=applied_amps(journal.requested_amps), location=self.config.home_location
+                )
+            else:
+                window, _ = parked_ahead_window(
+                    local_now,
+                    ahead=COMMUNITY_PARK_AHEAD,
+                    duration_minutes=COMMUNITY_PARK_MINUTES,
+                    amps=AMPS_MIN,
+                    location=self.config.home_location,
+                )
+            window.pop("location")
+            return window
         window = lease_window(
             now.astimezone(self.config.time_zone),
             active=active,
@@ -1359,15 +1666,66 @@ class RivianScheduleController:
         window.pop("location")
         return window
 
-    def _lease_location(self) -> dict[str, float]:
-        """Use the owner's home schedule location, else Home Assistant's home."""
+    def _choose_location(
+        self, obs: Observation, original: list[dict[str, Any]] | None
+    ) -> tuple[dict[str, float], str]:
+        """Where to write windows, and where that came from.
+
+        The vehicle applies a schedule only near its location, so the vehicle's
+        own position while it is plugged in at home comes first. Otherwise the
+        owner's home schedule (within ``HOME_MATCH_KM`` of home, the nearest),
+        where the vehicle already expects home windows; else Home Assistant's home.
+        """
+        if obs.eligible and _valid_location(obs.location):
+            return _plain_location(obs.location), "vehicle"
         home = self.config.home_location
-        candidates = [
-            schedule["location"]
-            for schedule in self._journal.original or []
-            if _distance_km(schedule["location"], home) <= HOME_MATCH_KM
-        ]
-        return candidates[0] if candidates else home
+        candidates = sorted(
+            (
+                schedule["location"]
+                for schedule in original or []
+                if _valid_location(schedule["location"])
+                and _distance_km(schedule["location"], home) <= HOME_MATCH_KM
+            ),
+            key=lambda location: _distance_km(location, home),
+        )
+        if candidates:
+            return _plain_location(candidates[0]), "owner_schedule"
+        return _plain_location(home), "home"
+
+    def _lease_location(self, obs: Observation) -> dict[str, float]:
+        """The location of the next window; never empty.
+
+        It is chosen at takeover. A location that was not the vehicle's own
+        moves to the vehicle's position once that is known while it is plugged in
+        at home.
+        """
+        journal = self._journal
+        if journal.window_location is None or (
+            journal.window_location_source != "vehicle"
+            and obs.eligible
+            and _valid_location(obs.location)
+        ):
+            journal.window_location, journal.window_location_source = self._choose_location(
+                obs, journal.original
+            )
+            self._location_warned = False
+        return journal.window_location
+
+    def _check_location_distance(self, obs: Observation) -> None:
+        """Warn once when the vehicle, plugged in at home, is far from the window location."""
+        distance = self.window_location_distance_m
+        if not obs.eligible or distance is None or distance <= LOCATION_WARN_M:
+            return
+        if not self._location_warned:
+            self._location_warned = True
+            _LOGGER.warning(
+                "The vehicle is %d m from the location of the charging windows (%s). The "
+                "vehicle may ignore a window it does not place at its own position, and "
+                "then charge at full current. Check that the Rivian app shows the window "
+                "at home, with its pin on the house",
+                distance,
+                self._journal.window_location_source,
+            )
 
     @staticmethod
     def _since(moment: datetime | None, now: datetime) -> timedelta:
@@ -1494,25 +1852,37 @@ class RivianScheduleController:
         await self._save()
 
     def _lease_live(self, now: datetime) -> bool:
+        """Whether a window written to charge covers now (an all-week window always does)."""
         lease = self._journal.lease
         return (
             lease is not None
             and lease.active
-            and lease.expires_at is not None
-            and lease.expires_at > now
+            and (lease.all_week or (lease.expires_at is not None and lease.expires_at > now))
         )
 
     def _looks_like_own_window(self, schedules: list[dict[str, Any]]) -> bool:
-        """A single short single-day window at home, as schedule control writes."""
+        """A single window at home shaped as schedule control writes it.
+
+        A short single-day window, or with the community pattern also its parked
+        window and its all-week window.
+        """
         if len(schedules) != 1:
             return False
         schedule = schedules[0]
         lease, skew = self.config.lease_minutes, self.config.clock_skew_minutes
+        durations = {lease, lease + 2 * skew}
+        if self.config.community_pattern:
+            durations.add(COMMUNITY_PARK_MINUTES)
+        shaped = (len(schedule["weekDays"]) == 1 and schedule["duration"] in durations) or (
+            self.config.community_pattern
+            and len(schedule["weekDays"]) == len(WEEK_DAYS)
+            and schedule["startTime"] == 0
+            and schedule["duration"] == MINUTES_PER_DAY
+        )
         return (
             schedule["enabled"] is True
-            and len(schedule["weekDays"]) == 1
-            and schedule["duration"] in (lease, lease + 2 * skew)
-            and _distance_km(schedule["location"], self.config.home_location) <= HOME_MATCH_KM
+            and shaped
+            and _distance_km(schedule["location"], self.config.home_location) <= OWN_WINDOW_MATCH_KM
         )
 
     def _fault(self, now: datetime, code: str, message: str) -> None:

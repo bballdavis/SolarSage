@@ -32,7 +32,7 @@ Tools for testing the planner with your real Home Assistant data and connections
    | --- | --- |
    | `site` | The Sol-Ark, Wall Connector, Solcast and free-hours entities |
    | `units` | The unit of each power sensor (`W` or `kW`). The Sol-Ark powers are W and the Wall Connector's total power is kW. |
-   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are today's tesla_custom names; the check tells you if those are all it finds. The Rivian also maps the entities of [Rivian schedule control](../docs/RIVIAN_SCHEDULE_CONTROL.md) (the control state, charger status, lease renewal switch and buttons) and the car's own charger state sensor, `sensor.r1s_charger_state`, which the schedule control's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car, and for the Rivian `charging_until` (`sensor.r1s_planner_charging_until`) its timestamp sensor for the end of the free hours. |
+   | `cars` | Per car: `kind` (`tesla` or `rivian`), `name`, and its entities. The Tesla's `legacy_*` keys are tesla_custom's names, never used for control: the check tells you while they still exist, so you remove tesla_custom. `charging_state` (`sensor.roxxo_charging`) is Tesla Fleet's charging sensor, the planner's optional start guard. The Rivian's `location` is `device_tracker.r1s_location` on upstream installs made before 2026-10-12 and `device_tracker.r1s` on fresh 2.0.0 installs; the check finds either. The Rivian also maps the entities of [Rivian schedule control](../docs/RIVIAN_SCHEDULE_CONTROL.md) (the control state, charger status, lease renewal switch and buttons) and the car's own charger state sensor, `sensor.r1s_charger_state`, which the schedule control's `charger_state_entity` option should name. `charging_wanted` is the planner's sensor for the car, and for the Rivian `charging_until` (`sensor.r1s_planner_charging_until`) its timestamp sensor for the end of the free hours. |
    | `planner` | The planner integration's heartbeat, Planning and Shadow mode switches, and its mode, reason and car-on-charger sensors. Until the planner is installed the check only notes that it is missing. |
    | `tariff` | `price`, `buyback`, and `free_hours_fallback`, used when no Schedule helper is readable |
    | `battery` | Home battery limits for replays (capacity, 9 kW each way, 92% efficiency, 10% reserve) |
@@ -62,7 +62,9 @@ It checks:
   - The age of the last poll.
   - The p10/p50/p90 of the energy remaining today.
 - **The free-hours Schedule helper** and its weekly blocks.
-- **Tesla Fleet.** The car's entities exist and come from the `tesla_fleet` integration, along with the current number's range. When only the tesla_custom names exist, the check fails and says so.
+- **The Tesla's integration.** The car's entities exist, and every mapped one (switch, current, SoC, plug, limit, location, charging state) comes from `tesla_fleet`, `teslemetry` or `tessie`, with what a command costs on that one and the current number's range. A tesla_custom entity under those IDs (it holds `number.roxxo_charge_limit` too) is a FAIL; entities from two Tesla integrations, or tesla_custom's own names still present, a WARN. When only the tesla_custom names exist, the check fails and says so.
+- **The Rivian tracker under either ID.** When the mapped tracker does not exist but the other ID does, the check uses it and WARNs you to map it.
+- **Upstream Rivian's schedule entities** (`number.r1s_charging_schedule_amperage`, `switch.r1s_charging_schedule_enabled`, `time.r1s_charging_schedule_start` / `_end`): enabled is a WARN. A change to any of them rewrites the car's schedule list under the schedule control, so disable them.
 - **Rivian schedule control.** Its entities exist. It shows the control state, the dry-run flag, the standing request (`desired_charge`, `requested_amps`, `lease_amps`) and why a start is blocked. A fault is a FAIL and handed-back is a WARN.
 - **Which car the Wall Connector sees.** The Wall Connector sees a vehicle, and exactly one car reports its cable in while at home, as the planner decides it. Both cars or neither is a WARN. So is a Rivian on the charger while the schedule control's charger status says `a`.
 - **The planner** ([docs/PLANNER.md](../docs/PLANNER.md)), once installed: its heartbeat (`shadow` is OK; unavailable is a WARN: Planning is off or it cannot plan), Planning, Shadow mode, and its mode, car on the charger and reason.
@@ -135,7 +137,7 @@ The house-load profile is rebuilt each replayed day from the 14 days before it. 
 
 ```sh
 python -m tools.attended_test tesla --i-am-at-the-car
-python -m tools.attended_test rivian --i-am-at-the-car [--only inventory,t1,t2,t3,t4,t5,t6,t7]
+python -m tools.attended_test rivian --i-am-at-the-car [--only inventory,t1,t0,t2,t2b,t3,t4,t5,t6,t7,t8]
 ```
 
 This is the only tool that sends commands.
@@ -144,7 +146,7 @@ This is the only tool that sends commands.
 - **Every command is shown and confirmed:** `y` sends it, `n` skips it, `q` stops.
 - **It refuses** unless the car is plugged in at home, the Wall Connector sees a vehicle and the other car is not also plugged in at home.
 - **The planner must not be commanding:** it refuses while the planner's heartbeat shows `active` (shadow mode off), so that you are the only writer. Shadow mode on is right.
-- **Everything is logged:** every reading, command and answer goes to `tools/out/attended_<car>_<time>.jsonl`.
+- **Everything is logged:** every reading, command and answer goes to `tools/out/attended_<car>_<time>.jsonl`, and for each command the seconds until the Wall Connector's current changed (`wall_change`).
 
 **Tesla** (Tesla Fleet entities; Tesla bills each command):
 
@@ -158,17 +160,21 @@ This is the only tool that sends commands.
 
 - **It refuses** while the schedule control is in dry run (turn dry run off in its options first), faulted, or handed back, and while it reads its controller as down: with the schedule control mapped to the planner, the heartbeat must show `shadow`.
 - **It guides the trial's steps,** watching `control_state`, `lease_amps` and the Wall Connector:
-  - **Inventory:** Read schedules.
+  - **Software version** first: read from upstream Rivian if it shows one (`cars.rivian.software` names the entity), else asked. Re-run T0 and T2 after every Rivian update.
+  - **Inventory:** Read schedules; the list's fingerprint is kept for T7.
   - **T1 write and readback:** with the charge limit set below the car's level, 16 A, on, off, then Restore owner schedule; then unplug and replug.
-  - **T2:** 16 → 10 → 20 A mid-session.
+  - **T0 idle start:** after the car has sat plugged in and idle for 30 minutes (it waits if you say no), 16 A and on; the time until the lease is written and until the car draws current.
+  - **T2:** 16 → 10 → 20 → 8 → 48 A mid-session.
   - **T2b continuity:** 26 minutes over two lease renewals.
   - **T3:** stop.
   - **T4 lease expiry:** lease renewal off, then wait for the window to end with no write.
   - **T5:** resume.
-  - **T6:** replug while parked, and "Charge now".
-  - **T7 exact restore:** the schedule count matches the inventory.
+  - **T6:** replug while parked, then "Charge now", with the Wall Connector's current during it.
+  - **T7 exact restore:** the schedule list's fingerprint matches the inventory's (the count only, without an inventory).
+  - **T8 midnight (mandatory):** start it between 23:30 and 23:59 (`--only t8`); a 16 A lease must keep charging, renewed, until 00:15. When the schedule control holds a free-hours window, it also watches that window end. Started at another time, it FAILs as not run.
 - **It asks for what only you can see,** such as what the Rivian app shows, and logs your answers.
 - **At the end** it offers to turn lease renewal back on, stop charging and restore your schedule.
+- **If T0, T3, T4 or T5 fail,** turn on the schedule control's [community pattern](../docs/RIVIAN_SCHEDULE_CONTROL.md#community-pattern-fallback-mode) and run the whole trial again ([TESTING.md, stage 5](../docs/TESTING.md#5-the-attended-rivian-trial)).
 
 ## Tests
 

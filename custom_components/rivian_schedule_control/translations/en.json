@@ -92,7 +92,9 @@
           "increase_margin_amps": "Increase margin",
           "ceiling_hold_minutes": "Ceiling hold after a decrease",
           "release_delay_s": "Release delay",
-          "dry_run": "Dry run"
+          "dry_run": "Dry run",
+          "restore_enabled_only": "Restore enabled schedules only if Rivian rejects the full list",
+          "community_pattern": "Community pattern"
         },
         "data_description": {
           "plugged_entity": "Binary sensor that is on while a charging cable is connected to the vehicle. Unknown or unavailable is never treated as unplugged or plugged in.",
@@ -111,7 +113,9 @@
           "increase_margin_amps": "Write a higher current this much below the request, rounded down to an even value; a request of 48 A or more is written as 48 A. 0, the default, writes the request exactly, as the solar planner needs. evcc needed 3 A, because it added up to 2 A to its requests.",
           "ceiling_hold_minutes": "Only with an increase margin: after the current drops from 48 A to 44 or 46 A, a request of 48 A also keeps the margin for this long, so a surplus just short of 48 A does not make the current cycle. 0, the default, is off; evcc used 30 minutes.",
           "release_delay_s": "How long the vehicle must be unplugged before the owner's schedules are restored.",
-          "dry_run": "Compute what would be written without writing it. Nothing is written to Rivian, except that the owner's schedules are restored if Rivian schedule control still owns the charging schedule."
+          "dry_run": "Compute what would be written without writing it. Nothing is written to Rivian, except that the owner's schedules are restored if Rivian schedule control still owns the charging schedule.",
+          "restore_enabled_only": "Off by default. Rivian can return schedule lists that it refuses to accept back as one list, such as entries that share weekdays (upstream PR #308). With this on, when Rivian refuses the owner's full list on a restore, schedule control writes only its enabled schedules instead of stopping with a fault, and keeps the full list archived (shown by abandon ownership and usable by force restore). The disabled schedules then have to be recreated in the Rivian app if they are wanted.",
+          "community_pattern": "Off by default. The fallback if the attended trial shows that the vehicle does not start charging on a short window that began a few minutes ago, or does not stop when one ends. While charging, one window covers every day all day at the requested current and is rewritten only when the current changes. While not charging, one 60-minute window is parked about 12 hours away and is moved again before it comes within 2 hours. The free hours still get one window to their end. Trade-off: the all-week window never ends by itself, so if Home Assistant goes down the vehicle keeps charging at the last current until schedule control parks it or restores the owner's schedules."
         }
       }
     },
@@ -300,6 +304,14 @@
     "restore_failed_disabled": {
       "title": "Rivian charging schedule was not restored",
       "description": "Rivian schedule control for {title} was disabled while it controlled the vehicle's charging schedule, and the owner's schedules could not be restored ({reason}). Until they are, the vehicle keeps the short charging window that schedule control wrote, which recurs weekly.\n\nEnable schedule control again to resume the restore; this issue then goes away. Or restore the schedules in the Rivian app by hand, then remove schedule control or delete its journal at {path}, and ignore this issue."
+    },
+    "overlapping_owner_schedules": {
+      "title": "Owner's Rivian schedules share weekdays",
+      "description": "Rivian schedule control for {title} saved the owner's charging schedules before writing its own window, and several of them name the same weekdays ({days}), disabled schedules included. Rivian can refuse to accept such a list back when it is restored (upstream PR #308). Schedule control then stops with the fault restore_rejected and its own window stays on the vehicle until the owner's schedules are recreated in the Rivian app.\n\nTo avoid that, reduce the owner's schedules in the Rivian app to one set whose entries do not share weekdays (turn off Rivian's Smart Charging schedule recommendation, which creates separate weekday and weekend schedules), or turn on \"Restore enabled schedules only if Rivian rejects the full list\" in the schedule control options. This issue goes away once schedule control takes the schedules over without shared weekdays."
+    },
+    "overlapping_owner_schedules_fallback": {
+      "title": "Owner's Rivian schedules share weekdays",
+      "description": "Rivian schedule control for {title} saved the owner's charging schedules before writing its own window, and several of them name the same weekdays ({days}), disabled schedules included. Rivian can refuse to accept such a list back when it is restored (upstream PR #308). \"Restore enabled schedules only if Rivian rejects the full list\" is on: if Rivian refuses the full list, only the enabled schedules are written back and the full list stays archived, so disabled schedules have to be recreated in the Rivian app if they are wanted.\n\nTo keep every schedule, reduce the owner's schedules in the Rivian app to one set whose entries do not share weekdays. This issue goes away once schedule control takes the schedules over without shared weekdays."
     }
   }
 }

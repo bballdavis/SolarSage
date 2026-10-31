@@ -45,6 +45,7 @@ from rivian.exceptions import (
 )
 
 from .const import (
+    BOOLEAN_OPTIONS,
     CONF_ACCESS_TOKEN,
     CONF_CHARGER_STATE_ENTITY,
     CONF_CHARGING_ENTITY,
@@ -137,6 +138,8 @@ def _options_schema() -> vol.Schema:
             )
         )
     schema[vol.Required(CONF_DRY_RUN, default=DEFAULT_OPTIONS[CONF_DRY_RUN])] = BooleanSelector()
+    for key in BOOLEAN_OPTIONS:
+        schema[vol.Required(key, default=DEFAULT_OPTIONS[key])] = BooleanSelector()
     return vol.Schema(schema)
 
 
@@ -150,7 +153,8 @@ def _clean_options(user_input: Mapping[str, Any]) -> dict[str, Any]:
     }
     for key in OPTION_RANGES:
         options[key] = int(user_input.get(key, DEFAULT_OPTIONS[key]))
-    options[CONF_DRY_RUN] = bool(user_input.get(CONF_DRY_RUN, DEFAULT_OPTIONS[CONF_DRY_RUN]))
+    for key in (CONF_DRY_RUN, *BOOLEAN_OPTIONS):
+        options[key] = bool(user_input.get(key, DEFAULT_OPTIONS[key]))
     return options
 
 

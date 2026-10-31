@@ -100,6 +100,14 @@ CONF_INCREASE_MARGIN: Final = "increase_margin_amps"
 CONF_CEILING_HOLD: Final = "ceiling_hold_minutes"
 CONF_RELEASE_DELAY: Final = "release_delay_s"
 CONF_DRY_RUN: Final = "dry_run"
+# Off by default. If Rivian refuses the owner's list when it is written back
+# (overlapping entries, upstream PR #308), write only its enabled entries; the
+# full list stays archived.
+CONF_RESTORE_ENABLED_ONLY: Final = "restore_enabled_only"
+# Off by default. The fallback if the attended trial shows that a Gen 2 does not
+# follow short windows: one all-week window at the current while charging, and
+# one window parked about 12 hours away while not. The free hours are unchanged.
+CONF_COMMUNITY_PATTERN: Final = "community_pattern"
 
 # Dry run is on by default: the owner must deliberately allow schedule writes.
 # The increase margin and the ceiling hold were tuned for evcc, which pads its
@@ -115,7 +123,11 @@ DEFAULT_OPTIONS: Final[dict[str, Any]] = {
     CONF_CEILING_HOLD: 0,
     CONF_RELEASE_DELAY: 60,
     CONF_DRY_RUN: True,
+    CONF_RESTORE_ENABLED_ONLY: False,
+    CONF_COMMUNITY_PATTERN: False,
 }
+# The on/off options besides dry run, shown after the numeric tuning.
+BOOLEAN_OPTIONS: Final = (CONF_RESTORE_ENABLED_ONLY, CONF_COMMUNITY_PATTERN)
 
 # Inclusive ranges and units of the numeric tuning options.
 OPTION_RANGES: Final[dict[str, tuple[int, int, str]]] = {

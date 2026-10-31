@@ -249,10 +249,10 @@ Config-flow suggestions are in [`core/entities.py`](../custom_components/solar_e
 | Forecast | `sensor.solcast_pv_forecast_forecast_today` / `_tomorrow` (`detailedForecast`) | kW per half hour |
 | Forecast age | `sensor.solcast_pv_forecast_api_last_polled` | time |
 | Free hours | the Schedule helper (weekly config via `schedule.get_schedule`) | |
-| Rivian | `sensor.r1s_battery_state_of_charge`, `sensor.r1s_battery_state_of_charge_limit`, `binary_sensor.r1s_charger_connection`, `device_tracker.r1s_location` | % |
+| Rivian | `sensor.r1s_battery_state_of_charge`, `sensor.r1s_battery_state_of_charge_limit`, `binary_sensor.r1s_charger_connection`, `device_tracker.r1s_location` (or `device_tracker.r1s` on a fresh upstream 2.0.0 install) | % |
 | Rivian control | `switch.r1s_schedule_control_solar_charging`, `number.r1s_schedule_control_solar_current`; the standing request from `sensor.r1s_schedule_control_control_state` | A, even 8–48 |
-| Tesla (Fleet, car "Roxxo") | `sensor.roxxo_battery_level`, `number.roxxo_charge_limit`, `binary_sensor.roxxo_charge_cable`, `device_tracker.roxxo_location` | % |
-| Tesla control | `switch.roxxo_charge`, `number.roxxo_charge_current` (today in tesla_custom: `switch.roxxo_charger`, `number.roxxo_charging_amps`) | A |
+| Tesla (Fleet, car "Roxxo") | `sensor.roxxo_battery_level`, `number.roxxo_charge_limit`, `binary_sensor.roxxo_charge_cable`, `device_tracker.roxxo_location`; `sensor.roxxo_charging` for the integration's start guard | % |
+| Tesla control | `switch.roxxo_charge`, `number.roxxo_charge_current` (Tesla Fleet; tesla_custom is removed, so its `switch.roxxo_charger` and `number.roxxo_charging_amps` are not used) | A |
 
 House load is not measured. It is `pv + grid − battery − wall connector` (`house_load_kw`).
 
@@ -333,7 +333,7 @@ In shadow mode the planner keeps its own virtual current, so the shadow plan evo
 - **History builds up.** The multi-day PV bias needs past days' solar against their forecast, which the integration keeps in its own store; until it has a few days, the planner uses priors. The house profile comes from the recorder's statistics, so a new installation starts with whatever history the recorder already has.
 - **Not measured here:**
   - the real Gen 2 Rivian schedule-write behaviour;
-  - Tesla Fleet costs;
+  - Tesla Fleet costs (the integration's [Tesla guard](PLANNER.md#the-tesla-guard) keeps refused starts from repeating);
   - the real Solcast error structure;
   - stale car data (handled as "send nothing").
   Shadow mode (phase 3) checks all of these.

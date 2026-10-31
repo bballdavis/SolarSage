@@ -1,5 +1,5 @@
 {
-  "_about": "Entity mapping for the tools, prefilled with the owner's entity ids. Copy to tools/config.json (git-ignored) and edit what differs; keys left out keep these values.",
+  "_about": "Entity mapping for the tools, prefilled with the owner's entity ids. Copy to tools/config.json (git-ignored) and edit what differs; keys left out keep these values. cars.rivian.location: device_tracker.r1s_location (upstream Rivian installs before 2026-10-12) or device_tracker.r1s (fresh 2.0.0 installs); tools/check.py says which exists. cars.tesla.legacy_*: tesla_custom names, never mapped for control; check.py warns while they still exist (remove tesla_custom).",
   "site": {
     "pv_power": "sensor.sol_ark_inverter_pv_power",
     "grid_power": "sensor.sol_ark_inverter_grid_power",
@@ -32,6 +32,7 @@
       "location": "device_tracker.roxxo_location",
       "switch": "switch.roxxo_charge",
       "current": "number.roxxo_charge_current",
+      "charging_state": "sensor.roxxo_charging",
       "charging_wanted": "binary_sensor.roxxo_planner_charging_wanted",
       "legacy_switch": "switch.roxxo_charger",
       "legacy_current": "number.roxxo_charging_amps"

@@ -15,12 +15,15 @@ charge switch as they were.
 
 **Rivian** (through this repo's Rivian schedule control; it never writes the Rivian itself):
 it guides the schedule control's attended trial (docs/RIVIAN_SCHEDULE_CONTROL.md): inventory,
-T1 write and readback, T2 current steps, T2b continuity, T3 stop, T4 lease expiry, T5 resume,
-T6 plug-in while parked, T7 exact restore. It uses the schedule control's switch, current
-number, lease-renewal switch and buttons, and refuses while the schedule control is in dry
-run.
+T1 write and readback, T0 a lease on a car idle for 30 min or more, T2 current steps (16, 10,
+20, 8 and 48 A), T2b continuity, T3 stop, T4 lease expiry, T5 resume, T6 plug-in while parked
+and Charge now, T7 exact restore (by the schedule list's fingerprint), and T8 across midnight
+(mandatory; it must start between 23:30 and 23:59). It uses the schedule control's switch,
+current number, lease-renewal switch and buttons, and refuses while the schedule control is
+in dry run. It records the Rivian's software version (read, or asked) first.
 
-Every observation and answer goes to ``tools/out/attended_<car>_<time>.jsonl``.
+Every observation and answer goes to ``tools/out/attended_<car>_<time>.jsonl``, and for each
+command the time until the Wall Connector's current changed (``wall_change`` events).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ import argparse
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time as dtime, timedelta
 import json
 from pathlib import Path
 import sys
@@ -45,7 +48,18 @@ from tools.hass_client import HassClient, HassError  # noqa: E402
 from tools.sanitize import scrub, tracker_state  # noqa: E402
 
 TESLA_STEPS = (16, 10, 6, 16)
-RIVIAN_STEPS = ("inventory", "t1", "t2", "t2b", "t3", "t4", "t5", "t6", "t7")
+RIVIAN_STEPS = ("inventory", "t1", "t0", "t2", "t2b", "t3", "t4", "t5", "t6", "t7", "t8")
+RIVIAN_AMPS = (16, 10, 20, 8, 48)  # T2; increases wait for the schedule control's interval
+IDLE_MIN = 30.0  # T0: the car sits plugged in, not charging, this long before the lease
+T8_START = (dtime(23, 30), dtime(23, 59, 59))  # local time T8 may start in
+T8_PAST_MIDNIGHT = timedelta(minutes=15)
+# Where upstream Rivian may show the software version (an update entity's installed_version,
+# or a sensor); cars.<id>.software in the config wins. Asked when none is found.
+SOFTWARE_ENTITIES = (
+    "update.{car}_software_update",
+    "update.{car}_software",
+    "sensor.{car}_software_version",
+)
 SCHEDULE_CONTROL_ATTRS = (
     "dry_run",
     "phase",
@@ -55,6 +69,7 @@ SCHEDULE_CONTROL_ATTRS = (
     "lease_amps",
     "lease_written_at",
     "lease_expires_at",
+    "lease_fixed",
     "last_write_at",
     "start_blocked_by",
     "request_held",
@@ -123,8 +138,11 @@ class Session:
     poll_s: float = 5.0
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     clock: Callable[[], float] = time.monotonic
+    now: Callable[[], datetime] = lambda: datetime.now().astimezone()  # local wall time
     results: list[dict[str, Any]] = field(default_factory=list)
     commands: int = 0
+    last_wall: float | None = None  # the Wall Connector's current at the last reading
+    pending: tuple[str, str, float, float | None] | None = None  # step, call, sent, wall A
 
     @property
     def car(self) -> Mapping[str, str]:
@@ -194,7 +212,24 @@ class Session:
             at_home = tracker_state((states.get(location) or {}).get("state")) == "home"
             here = (states.get(plugged) or {}).get("state") == "on" and at_home
             out[f"{other_id}_plugged"] = "on" if here else "off"
+        self._note_wall(out)
         return out
+
+    def _note_wall(self, obs: Mapping[str, Any]) -> None:
+        """Log how long after the last command the Wall Connector's current changed."""
+        a = _num(obs.get("wall_a"))
+        if self.pending is not None and a is not None:
+            step, call, sent, before = self.pending
+            if before is None:
+                self.pending = (step, call, sent, a)
+            elif abs(a - before) > 1.0:
+                lat = round(self.clock() - sent, 1)
+                self.record(
+                    step, "wall_change", call=call, before_a=before, after_a=a, latency_s=lat
+                )
+                self.console.say(f"  Wall Connector {before:g} -> {a:g} A, {lat:.0f} s after it")
+                self.pending = None
+        self.last_wall = a
 
     async def watch(
         self,
@@ -227,9 +262,12 @@ class Session:
         if ans != "y":
             self.record(step, "declined", call=shown)
             return False
+        if self.pending is not None:
+            self.record(self.pending[0], "wall_unchanged", call=self.pending[1])
         await self.client.call_service(domain, service, data, target={"entity_id": entity_id})
         self.commands += 1
-        self.record(step, "sent", call=shown)
+        self.pending = (step, shown, self.clock(), self.last_wall)
+        self.record(step, "sent", call=shown, wall_a=self.last_wall)
         return True
 
     def begin(self, step: str, text: str) -> bool:
@@ -437,6 +475,7 @@ async def rivian_trial(s: Session, only: Sequence[str] = RIVIAN_STEPS, settle_s:
         f"{obs.get('limit')}%). Schedule control state {_state(obs)}. Pause other schedule "
         "writers and do not edit the schedule in the Rivian app during the test."
     )
+    await rivian_software(s)
     ctx: dict[str, Any] = {"renewal_off": False}
     try:
         for step in RIVIAN_STEPS:
@@ -444,6 +483,38 @@ async def rivian_trial(s: Session, only: Sequence[str] = RIVIAN_STEPS, settle_s:
                 await RIVIAN_FUNCS[step](s, ctx, settle_s)
     finally:
         await rivian_cleanup(s, ctx)
+    if "t8" in only and not any(r["step"] == "T8 midnight" and r["ok"] for r in s.results):
+        s.console.say(
+            "  T8 (across midnight) is mandatory before Rivian live mode: run --only t8 "
+            "between 23:30 and 23:59."
+        )
+
+
+async def rivian_software(s: Session) -> None:
+    """Record the Rivian's software version: Gen 2 AC charging changed with OTA updates, so
+    the trial holds only for the version it ran on (re-run T0 and T2 after each update)."""
+    car = s.car
+    name = str(car.get("soc") or "").partition(".")[2].removesuffix("_battery_state_of_charge")
+    ids = [car["software"]] if car.get("software") else []
+    ids += [t.format(car=name or "r1s") for t in SOFTWARE_ENTITIES]
+    states = await s.client.states_of(ids)
+    version, source = None, None
+    for eid in ids:
+        st = states.get(eid)
+        if not st or st.get("state") in UNAVAILABLE:
+            continue
+        attrs = st.get("attributes") or {}
+        version = attrs.get("installed_version") if eid.startswith("update.") else st["state"]
+        if version:
+            source = eid
+            break
+    if not version:
+        version = s.console.text(
+            "  Rivian software version (in the car: Settings > Software; Enter to skip)?"
+        )
+        source = "owner" if version else None
+    s.record("software", "software_version", version=version or None, source=source)
+    s.console.say(f"  Rivian software version: {version or 'not recorded'}")
 
 
 async def _press(s: Session, step: str, key: str) -> bool:
@@ -472,9 +543,10 @@ async def r_inventory(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
         120,
     )
     count = _control(obs).get("provider_schedule_count")
-    ctx["inventory_count"] = count
-    s.record(step, "inventory", summary=obs.get("last_provider_read"), count=count)
-    s.result(step, ok, f"{count} schedule(s) on the vehicle", lat)
+    fp = (obs.get("last_provider_read") or {}).get("fingerprint")
+    ctx["inventory_count"], ctx["inventory_fp"] = count, fp
+    s.record(step, "inventory", summary=obs.get("last_provider_read"), count=count, fp=fp)
+    s.result(step, ok, f"{count} schedule(s) on the vehicle, fingerprint {fp or '?'}", lat)
 
 
 async def r_t1(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
@@ -524,18 +596,64 @@ async def r_t1(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     s.result("replug", ok, "control returned" if ok else "still handed_back", lat)
 
 
-async def r_t2(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
-    step = "T2 amps mid-session"
-    if not s.begin(step, "charge at 16 A, then 10 A, then 20 A (the increase waits 2 min)"):
+async def r_t0(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
+    step = "T0 idle start"
+    if not s.begin(
+        step, f"start a lease on a car that sat plugged in and idle for {IDLE_MIN:.0f} min"
+    ):
         return
     car = s.car
-    for amps in (16, 10, 20):
+    obs = await s.observe()
+    if obs.get("switch") == "on":
+        if not await s.act(step, "switch", "turn_off", car["switch"]):
+            return s.result(step, None, "command not sent")
+        await s.watch(step, "stopped", stopped, settle_s)
+    asked = f"  Has the car sat plugged in, not charging, for {IDLE_MIN:.0f} min or more? [y/N]"
+    if s.console.choose(asked, "n") != "y":
+        s.console.say(f"  waiting until the car has been idle for {IDLE_MIN:.0f} min")
+        since = s.clock()
+        while s.clock() - since < IDLE_MIN * 60:
+            obs = await s.observe()
+            s.record(step, "sample", what="idle", obs=obs)
+            if drawing(obs):
+                since = s.clock()  # it charged: the idle time starts again
+            await s.sleep(max(s.poll_s, 30.0))
+    s.record(step, "idle", minutes=IDLE_MIN)
+    if not await s.act(step, "number", "set_value", car["current"], value=16):
+        return s.result(step, None, "command not sent")
+    t0 = s.clock()
+    if not await s.act(step, "switch", "turn_on", car["switch"]):
+        return s.result(step, None, "command not sent")
+    ok1, lat1, _ = await s.watch(step, "lease_active at 16 A", _lease(16), settle_s)
+    ok2, _, obs = await s.watch(
+        step, "the car drawing current", drawing, max(settle_s, 900.0) - (s.clock() - t0)
+    )
+    total = s.clock() - t0
+    s.result(
+        step,
+        ok1 and ok2,
+        f"lease written {lat1:.0f} s, car {obs.get('wall_a')} A"
+        + ("" if ok2 else " (never drew current: see the community-pattern fallback)"),
+        total if ok2 else None,
+    )
+
+
+async def r_t2(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
+    step = "T2 amps mid-session"
+    shown = ", ".join(f"{a} A" for a in RIVIAN_AMPS)
+    if not s.begin(step, f"charge at {shown} (each increase waits 2 min)"):
+        return
+    car = s.car
+    last = 0
+    for amps in RIVIAN_AMPS:
         sub = f"T2 {amps} A"
         if not await s.act(sub, "number", "set_value", car["current"], value=amps):
             return s.result(step, None, "command not sent")
-        if amps == 16 and not await s.act(sub, "switch", "turn_on", car["switch"]):
+        if last == 0 and not await s.act(sub, "switch", "turn_on", car["switch"]):
             return s.result(step, None, "command not sent")
-        wait = settle_s + (150 if amps == 20 else 0)  # the schedule control's increase interval
+        # the schedule control's increase interval
+        wait = settle_s + (150 if last and amps > last else 0)
+        last = amps
         ok, lat, obs = await s.watch(
             sub,
             f"lease at {amps} A and the car near {amps} A",
@@ -663,7 +781,13 @@ async def r_t6(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     s.console.text("  Unplug and plug in again within 60 s. Press Enter when plugged in.")
     ok, _, obs = await s.watch(step, "the car waiting", stopped, 120)
     waited = s.console.choose("  Did the car wait after replugging? [y/n]", "n") == "y"
-    note = s.console.text("  Now try Charge now in the Rivian app. What happened?")
+    s.console.text("  Now press Charge now in the Rivian app, then Enter.")
+    _, lat_now, now_obs = await s.watch(step, "the car drawing after Charge now", drawing, 180)
+    charge_now_a = now_obs.get("wall_a")
+    s.record(step, "charge_now", wall_a=charge_now_a, drawing=drawing(now_obs), latency_s=lat_now)
+    note = s.console.text(
+        f"  The Wall Connector shows {charge_now_a} A. What happened in the app and the car?"
+    )
     s.record(step, "owner_note", note=note)
     ok2, _, obs = await s.watch(
         step, "a fault (external_edit)", lambda o: _state(o) == "fault", 120
@@ -673,8 +797,8 @@ async def r_t6(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
     s.result(
         step,
         waited,
-        f"car waited: {'yes' if waited else 'no'}; charge now: {note or '-'}"
-        + (hint if fault else ""),
+        f"car waited: {'yes' if waited else 'no'}; charge now: {charge_now_a} A, "
+        f"{note or '-'}" + (hint if fault else ""),
     )
 
 
@@ -694,19 +818,87 @@ async def r_t7(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
             120,
         )
         count = _control(obs).get("provider_schedule_count")
-        s.record(step, "inventory", summary=obs.get("last_provider_read"), count=count)
-        same = ctx.get("inventory_count") is None or count == ctx.get("inventory_count")
+        fp = (obs.get("last_provider_read") or {}).get("fingerprint")
+        s.record(step, "inventory", summary=obs.get("last_provider_read"), count=count, fp=fp)
+        before_fp = ctx.get("inventory_fp")
+        if fp and before_fp:
+            same = fp == before_fp
+            how = f"fingerprint {fp}, inventory had {before_fp}"
+        else:  # no inventory this run, or no fingerprint: the counts only
+            same = ctx.get("inventory_count") is None or count == ctx.get("inventory_count")
+            how = f"{count} schedule(s), inventory had {ctx.get('inventory_count', '?')}"
+            how += " (no fingerprint to compare: run the inventory first)"
         app = s.console.choose("  Does the Rivian app show your own schedules again? [y/n]", "n")
-        s.result(
+        s.result(step, ok and same and app == "y", how, lat)
+
+
+async def r_t8(s: Session, ctx: dict[str, Any], settle_s: float) -> None:
+    step = "T8 midnight"
+    if not s.begin(step, "keep a short lease charging across local midnight (start ~23:50)"):
+        return
+    local = s.now()
+    if not T8_START[0] <= local.time() <= T8_START[1]:
+        return s.result(
             step,
-            ok and same and app == "y",
-            f"{count} schedule(s), inventory had {ctx.get('inventory_count', '?')}",
-            lat,
+            False,
+            f"not run at {local:%H:%M}: T8 is mandatory; start it with --only t8 between "
+            f"{T8_START[0]:%H:%M} and {T8_START[1]:%H:%M}",
         )
+    car = s.car
+    if _state(await s.observe()) == "handed_back":
+        s.console.say("  Unplug, wait at least 60 s, and plug in again (handed back until then).")
+        s.console.text("  Press Enter when the car is plugged in again.")
+        await s.watch(step, "leaving handed_back", lambda o: _state(o) != "handed_back", 600)
+    if not await s.act(step, "number", "set_value", car["current"], value=16):
+        return s.result(step, None, "command not sent")
+    if not await s.act(step, "switch", "turn_on", car["switch"]):
+        return s.result(step, None, "command not sent")
+    ok, _, obs = await s.watch(
+        step, "charging under a lease", lambda o: drawing(o) and _state(o) == "lease_active", 900
+    )
+    if not ok:
+        return s.result(step, False, "never charged under a lease")
+    midnight = datetime.combine(local.date() + timedelta(days=1), dtime(0), local.tzinfo)
+    renewals, gaps, after, last = 0, 0, 0, _control(obs).get("lease_written_at")
+    while s.now() < midnight + T8_PAST_MIDNIGHT:
+        obs = await s.observe()
+        s.record(step, "sample", obs=obs)
+        written = _control(obs).get("lease_written_at")
+        if written != last:
+            renewals += 1
+            if s.now() >= midnight:
+                after += 1
+        last = written
+        if not drawing(obs) or obs.get("contactor") != "on":
+            gaps += 1
+        await s.sleep(max(s.poll_s, 15.0))
+    s.result(
+        step,
+        gaps == 0 and after >= 1,
+        f"{renewals} renewals ({after} after midnight), {gaps} samples without current",
+    )
+    a = _control(obs)
+    if a.get("lease_fixed") and a.get("lease_expires_at"):
+        # a free-hours window (the planner's charging-until end): it must end on its own
+        try:
+            end = datetime.fromisoformat(a["lease_expires_at"])
+        except ValueError:
+            end = None
+        if end is not None:
+            wait = max(60.0, (end - s.now()).total_seconds() + 600.0)
+            ok, lat, obs = await s.watch(step, f"the window ending at {end:%H:%M}", stopped, wait)
+            return s.result("T8 window end", ok, f"car {obs.get('wall_a')} A", lat)
+    s.result(
+        "T8 window end",
+        None,
+        "no free-hours window held: check the 06:00 end on the first planner night "
+        "(docs/TESTING.md stage 6)",
+    )
 
 
 RIVIAN_FUNCS: dict[str, Callable[[Session, dict[str, Any], float], Awaitable[None]]] = {
     "inventory": r_inventory,
+    "t0": r_t0,
     "t1": r_t1,
     "t2": r_t2,
     "t2b": r_t2b,
@@ -715,6 +907,7 @@ RIVIAN_FUNCS: dict[str, Callable[[Session, dict[str, Any], float], Awaitable[Non
     "t5": r_t5,
     "t6": r_t6,
     "t7": r_t7,
+    "t8": r_t8,
 }
 
 
@@ -786,6 +979,7 @@ async def amain(
     interactive: bool | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     clock: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] | None = None,
 ) -> int:
     args = parser().parse_args(argv)
     console = console or Console()
@@ -816,6 +1010,8 @@ async def amain(
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     log = args.log or tool_config.OUT_DIR / f"attended_{args.car}_{stamp}.jsonl"
     s = Session(client, cfg, args.car, console, log, args.poll, sleep, clock)
+    if now is not None:
+        s.now = now
     s.record("start", "begin", car=args.car, kind=kind, argv=list(argv or sys.argv[1:]))
     code = 0
     try:

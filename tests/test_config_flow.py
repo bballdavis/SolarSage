@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+import inspect
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -29,6 +30,7 @@ from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 import pytest
+from rivian import Rivian as RealRivian
 from rivian.exceptions import (
     RivianApiException,
     RivianInvalidCredentials,
@@ -40,6 +42,7 @@ from custom_components.rivian_schedule_control.const import (
     CONF_CEILING_HOLD,
     CONF_CHARGER_STATE_ENTITY,
     CONF_CHARGING_ENTITY,
+    CONF_COMMUNITY_PATTERN,
     CONF_DRY_RUN,
     CONF_EMAIL,
     CONF_INCREASE_MARGIN,
@@ -51,6 +54,7 @@ from custom_components.rivian_schedule_control.const import (
     CONF_PASSWORD,
     CONF_PLUGGED_ENTITY,
     CONF_RENEW_BEFORE_MINUTES,
+    CONF_RESTORE_ENABLED_ONLY,
     CONF_VEHICLE_ID,
     CONF_WALL_CONNECTOR_ENTITY,
     DEFAULT_OPTIONS,
@@ -137,6 +141,9 @@ async def test_user_flow_without_otp(
     # The evcc-era increase rules are off for the planner.
     assert result["options"][CONF_INCREASE_MARGIN] == 0
     assert result["options"][CONF_CEILING_HOLD] == 0
+    # The restore fallback and the community pattern are opt-in.
+    assert result["options"][CONF_RESTORE_ENABLED_ONLY] is False
+    assert result["options"][CONF_COMMUNITY_PATTERN] is False
     entry = result["result"]
     assert (entry.version, entry.minor_version) == (ENTRY_VERSION, ENTRY_MINOR_VERSION)
     assert mock_rivian.init_kwargs[0]["request_timeout"] == 30
@@ -329,6 +336,8 @@ async def test_options_flow(
             CONF_INCREASE_MARGIN: 3.0,
             CONF_CEILING_HOLD: 30.0,
             CONF_DRY_RUN: False,
+            CONF_RESTORE_ENABLED_ONLY: True,
+            CONF_COMMUNITY_PATTERN: True,
         },
     )
     await hass.async_block_till_done()
@@ -340,6 +349,8 @@ async def test_options_flow(
     assert entry.options[CONF_INCREASE_MARGIN] == 3
     assert entry.options[CONF_CEILING_HOLD] == 30
     assert entry.options[CONF_DRY_RUN] is False
+    assert entry.options[CONF_RESTORE_ENABLED_ONLY] is True
+    assert entry.options[CONF_COMMUNITY_PATTERN] is True
     assert entry.options[CONF_WALL_CONNECTOR_ENTITY] == WALL_CONNECTOR_ENTITY
     assert entry.options[CONF_LIVENESS_ENTITY] == LIVENESS_ENTITY
     assert entry.options[CONF_CHARGING_ENTITY] == CHARGING_ENTITY
@@ -423,10 +434,41 @@ def test_translations_match_strings() -> None:
         assert key in options["data_description"]
         assert key in strings["config"]["step"]["entities"]["data"]
         assert key in strings["config"]["step"]["entities"]["data_description"]
-    for key in (CONF_INCREASE_MARGIN, CONF_CEILING_HOLD):
+    for key in (
+        CONF_INCREASE_MARGIN,
+        CONF_CEILING_HOLD,
+        CONF_RESTORE_ENABLED_ONLY,
+        CONF_COMMUNITY_PATTERN,
+    ):
         assert key in options["data"]
         assert key in options["data_description"]
     assert set(strings["entity"]["sensor"]["charger_status"]["state"]) == {"a", "b", "c"}
     assert "handed_back" in strings["entity"]["sensor"]["control_state"]["state"]
     assert "force_restore" in strings["services"]
     assert "restored" in options["data_description"][CONF_DRY_RUN]
+    assert "Off by default" in options["data_description"][CONF_COMMUNITY_PATTERN]
+    assert "archived" in options["data_description"][CONF_RESTORE_ENABLED_ONLY]
+
+
+def test_installed_client_has_the_private_login_attributes() -> None:
+    """The login state the config flow reads from the client still exists.
+
+    The client exposes it only through private attributes (the upstream Rivian
+    integration reads them the same way), so a client release that renames them
+    must fail here rather than in a sign-in.
+    """
+    client = RealRivian(
+        access_token="access", refresh_token="refresh", user_session_token="session"
+    )
+    assert client._otp_needed is False  # noqa: SLF001
+    assert client._access_token == "access"  # noqa: SLF001
+    assert client._refresh_token == "refresh"  # noqa: SLF001
+    assert client._user_session_token == "session"  # noqa: SLF001
+    # Signing in and validating a code set them.
+    for method, names in (
+        (RealRivian.authenticate, ("_otp_needed", "_access_token", "_refresh_token")),
+        (RealRivian.validate_otp, ("_access_token", "_refresh_token", "_user_session_token")),
+    ):
+        source = inspect.getsource(method)
+        for name in names:
+            assert f"self.{name} =" in source, (method.__name__, name)

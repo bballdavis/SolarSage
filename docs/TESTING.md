@@ -4,17 +4,19 @@ This is the path from "the software passes its tests" to "the planner charges bo
 
 | Stage | Plan phase | What changes in the house | Commands sent |
 | --- | --- | --- | --- |
-| [0. Set up the tools](#0-set-up-the-tools) | 0 | Nothing | None |
-| [1. Read everything for a week](#1-read-everything-for-a-week) | 1 | Tesla Fleet, Rivian schedule control (dry run) and the free-hours schedule are added | None |
+| [0. Set up the tools](#0-set-up-the-tools) | 0 | Tesla Fleet set up and tesla_custom removed; the Rivian app prepared ([plan, phase 0](PLAN.md#phase-0-the-tesla-checklist)) | None |
+| [1. Read everything for a week](#1-read-everything-for-a-week) | 1 | Upstream Rivian (schedule entities disabled), Rivian schedule control (dry run) and the free-hours schedule are added | None |
 | [2. Replay real days](#2-replay-real-days) | 2 | Nothing | None |
 | [3. Shadow mode for a week](#3-shadow-mode-for-a-week) | 3 | The planner is installed in shadow mode | None |
 | [4. The Tesla under the planner](#4-the-tesla-under-the-planner) | 4 | Attended Tesla test, then shadow mode off with Rivian schedule control in dry run | Tesla only |
-| [5. The attended Rivian trial](#5-the-attended-rivian-trial) | 5 | Rivian schedule control's dry run off, shadow mode on | Rivian, by you |
+| [5. The attended Rivian trial](#5-the-attended-rivian-trial) | 5 | Rivian schedule control's dry run off, shadow mode on; the community pattern only if the trial fails | Rivian, by you |
 | [6. The Rivian under the planner](#6-the-rivian-under-the-planner) | 6 | Shadow mode off with Rivian schedule control live | Both cars |
 
 [Turning shadow mode off](#turning-shadow-mode-off) and [stopping quickly](#stopping-quickly) apply from stage 4 on.
 
 ## 0. Set up the tools
+
+First do the plan's phase 0 checklists, for [the Tesla](PLAN.md#phase-0-the-tesla-checklist) and [the Rivian app](PLAN.md#phase-0-the-rivian-app), and make the [owner's decisions](PLAN.md#information-needed). Stage 1 needs Tesla Fleet working.
 
 The [tools](../tools/README.md) run on any computer that reaches Home Assistant (a laptop, or an always-on machine for the forecast recorder), not inside Home Assistant.
 
@@ -39,16 +41,17 @@ Run every tool from the repository root, for example `.venv/bin/python -m tools.
 
 Plan phase 1: every planner input is present and fresh, with no control yet.
 
-1. **Tesla Fleet.** Add the HA core Tesla Fleet integration with your Tesla developer app and approve its virtual key in the car ([plan phase 0](PLAN.md#phases) covers the app and the key's domain). The Tesla's entities should become `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable` and `device_tracker.roxxo_location`; if they are named differently, put the real names in `tools/config.json`.
-2. **Rivian schedule control, in dry run.** Install and configure it ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the three controller options empty until stage 3. Keep **dry run on**.
-3. **The free-hours Schedule helper.** Settings → Devices & services → Helpers → Create helper → Schedule, named "Free hours" (`schedule.free_hours`), painted 00:00–06:00 and 20:00–24:00 every day.
-4. **Start recording forecasts.** Home Assistant's history does not keep Solcast's half hours, so start the recorder now on an always-on machine and leave it running:
+1. **Tesla Fleet, and no tesla_custom.** Add the HA core Tesla Fleet integration with your Tesla developer app and approve its virtual key in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)). Confirm its entities work, then remove the tesla_custom integration and its tesla-http-proxy add-on, and rename any `*_2` entities. The Tesla's entities should become `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable`, `device_tracker.roxxo_location` and `sensor.roxxo_charging`; if they are named differently, put the real names in `tools/config.json`. Turn Sentry Mode off at home.
+2. **The Rivian app and upstream Rivian.** Turn off Smart Charging and its schedule recommendation, keep one home schedule with no shared weekdays, and check its pin in the car ([plan, the Rivian app](PLAN.md#phase-0-the-rivian-app)). In upstream Rivian, disable its four schedule entities, and set the `rivian` logger to `error` ([guide, step 2](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)).
+3. **Rivian schedule control, in dry run.** Install and configure it ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the three controller options empty until stage 3. Keep **dry run on**. Press **Read schedules** to inventory the owner's list: one schedule, no shared weekdays, and no "Owner's Rivian schedules share weekdays" repair issue later.
+4. **The free-hours Schedule helper.** Settings → Devices & services → Helpers → Create helper → Schedule, named "Free hours" (`schedule.free_hours`), painted 00:00–06:00 and 20:00–24:00 every day.
+5. **Start recording forecasts.** Home Assistant's history does not keep Solcast's half hours, so start the recorder now on an always-on machine and leave it running:
 
    ```sh
    nohup .venv/bin/python -m tools.snapshot record-forecasts &
    ```
 
-5. **Run the check** and fix every FAIL:
+6. **Run the check** and fix every FAIL:
 
    ```sh
    python -m tools.check
@@ -59,13 +62,15 @@ Plan phase 1: every planner input is present and fresh, with no control yet.
    - **signs (24 h)** OK: grid + import / − export, battery + charging. A FAIL names the reversed one; the planner's config flow then needs **Invert** for it;
    - **Solcast** `detailedForecast` with 48 half hours today and tomorrow, and a recent poll;
    - **free hours weekly** showing your blocks;
-   - **tesla on Tesla Fleet** OK (not the tesla_custom names);
+   - **the Tesla's platform** OK: Tesla Fleet (or Teslemetry or Tessie), for every mapped entity including the limit and location; a tesla_custom entity under those IDs is a FAIL, and tesla_custom's own names still present a WARN;
+   - **the Rivian tracker** under either ID (`device_tracker.r1s_location` or `device_tracker.r1s`), with a WARN to map the one that exists;
+   - **upstream Rivian's schedule entities** disabled (enabled is a WARN);
    - **rivian control state** `dry_run` (INFO);
    - **car on the charger** naming the right car each time you plug one in, and `none` when the charger is empty;
    - **planner** "not installed" (INFO) for now.
 
-6. **Every day for a week**, run the check once with a car plugged in and once without. Plug each car in at least once.
-7. At the end of the week, save it:
+7. **Every day for a week**, run the check once with a car plugged in and once without. Plug each car in at least once.
+8. At the end of the week, save it:
 
    ```sh
    python -m tools.snapshot pull --days 7
@@ -129,6 +134,8 @@ It confirms every command before sending it (Tesla bills each one). It sets 16 �
 
 **Pass:** the Wall Connector reaches each current (within 1.5 A) and you know the latency, typically under 2 minutes. If it does not, stop here: the planner's Tesla control would not work either.
 
+Also confirm, in Tesla Fleet's diagnostics or entities, that the car needs signed commands (`command_signing` required) and accepts 48 A (the current number's maximum).
+
 ### 4b. Shadow mode off, the Rivian kept out
 
 1. Make sure **Rivian schedule control is in dry run**: the planner may then send the Rivian requests, but the schedule control writes nothing to Rivian. While plugged in, the Rivian charges from its own schedule. Its control state's `dry_run_target` shows what it would write: a short window by day, and in the free hours the one window to their end.
@@ -143,14 +150,17 @@ Every day with the Tesla on the charger, look at:
 - **Changes:** a few a day in the history of `number.roxxo_charge_current`.
 - **Each change confirmed:** the Wall Connector current follows the planned current (`sensor.roxxo_planner_planned_current`, attributes `car_current` and `waiting`).
 - **Plans met**, if you set one (`sensor.roxxo_planner_outlook`).
-- **Tesla's developer dashboard:** the number of billed commands, within the monthly credit.
+- **Tesla's developer dashboard:** the number of billed commands and wakes, within the monthly credit. Check it weekly.
+- **The Tesla guard** ([PLANNER.md](PLANNER.md#the-tesla-guard)), once: with the Tesla plugged in at its charge limit, the planner sends no repeated "on" and causes no wakes; the car's planned-current sensor says why a command waits. Restart Home Assistant once and check that the hourly command count carries over (the planner's diagnostics).
 - **At unplug,** the Tesla's current goes back to 48 A (the restore current).
 
 **Done when** a week shows no unexpected paid import, a few changes a day, plans met, and the Wall Connector confirming each change.
 
 ## 5. The attended Rivian trial
 
-Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are in the [Rivian schedule control guide](RIVIAN_SCHEDULE_CONTROL.md#attended-trial); the tool walks you through them.
+Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are in the [Rivian schedule control guide](RIVIAN_SCHEDULE_CONTROL.md#attended-trial); the tool walks you through them. **The trial is the gate:** every step, T0 to T8, must pass before stage 6.
+
+Before you start: Smart Charging is still off in the Rivian app, upstream's schedule entities are still disabled, and you can be at the car one night from 23:30 to 00:15 for T8.
 
 1. **Turn shadow mode on** (the tool refuses while the planner commands). The Tesla keeps its last current, so unplug it.
 2. **Turn Rivian schedule control's dry run off** (its Configure).
@@ -161,11 +171,28 @@ Plan phase 5: does the Gen 2 Rivian follow schedule changes? The trial steps are
    python -m tools.attended_test rivian --i-am-at-the-car
    ```
 
-   It refuses while the schedule control is in dry run, faulted or handed back, or while the schedule control sees its controller as down. It asks before every command, and asks you for what only you can see, such as the Rivian app's schedule screen.
+   It refuses while the schedule control is in dry run, faulted or handed back, or while the schedule control sees its controller as down. It asks before every command, and asks you for what only you can see, such as the Rivian app's schedule screen. It records the car's software version first, and runs inventory, T1, T0, T2, T2b, T3, T4, T5, T6, T7 and T8 in that order.
+
+5. **Run T8 on its own** between 23:30 and 23:59, if the first run was at another time (it fails as not run then):
+
+   ```sh
+   python -m tools.attended_test rivian --i-am-at-the-car --only t8
+   ```
+
+6. **Watch the pace and the location** in the control state's attributes: `reads_last_hour` and `writes_last_hour` stay at about 60 or less, `window_location_source` is `vehicle`, and `window_location_distance_m` is under 50.
 
 In shadow mode the planner's charging-until sensor stays unknown, so every trial write is a short lease; the one window per free night is checked in [stage 6](#6-the-rivian-under-the-planner).
 
-**Pass:** T1 to T5 and T7 pass with acceptable latency, and **Read schedules** at the end matches the inventory. If the car does not follow schedule changes reliably, decide as the plan's phase 5 says.
+**Pass:** every step from T0 to T8 passes with acceptable latency, and **Read schedules** at the end matches the inventory by fingerprint.
+
+**If T0, T3, T4 or T5 fail** (the car does not start on a short window, or does not stop when one ends):
+
+1. Restore the owner's schedule, then turn on **Community pattern** in Rivian schedule control's Configure ([how it works](RIVIAN_SCHEDULE_CONTROL.md#community-pattern-fallback-mode)).
+2. Repeat the whole trial, T0 to T8.
+3. If it passes, continue with stage 6 in that mode. Its trade-off: if Home Assistant goes down, the car charges on at the last current until Home Assistant is back and parks the window.
+4. If it fails too, the Rivian charges in the free hours only ([plan, fallbacks](PLAN.md#if-the-rivian-trial-fails)).
+
+Re-run T0 and T2 (`--only t0,t2`) after every Rivian software update.
 
 ## 6. The Rivian under the planner
 
@@ -182,6 +209,7 @@ Plan phase 6.
    - `lease_written_at` and `last_write_at` stay at that first write all night, and are still unchanged after 06:00, when the window has ended on the car by itself and the control state shows `paused`. The next write is the planner's first command by day. On the night the clocks change, one more write moves the window to the new local time, with the same end.
 6. **Once,** unplug the Rivian and press **Read schedules** a few minutes later: the owner's schedule is back exactly.
 7. For a week, the same checks as stage 4c, with the Rivian's `lease_amps` (control state attribute) and the Wall Connector following the planned current, and one schedule write per free night.
+8. **Every week from now on,** look at Rivian schedule control's faults (`restore_rejected`, `external_edit`) and its `reads_last_hour` and `writes_last_hour`.
 
 **Done when** a week passes the stage 4 checks and the owner's schedule is restored at every unplug. Then plan phase 7, unattended running, starts.
 
@@ -206,7 +234,7 @@ Then turn `switch.solar_ev_planner_shadow_mode` off. The heartbeat changes to `a
 | The Tesla | Turn shadow mode on (or Planning off), then stop charging in the Tesla app | The planner sends nothing more; the Tesla keeps what the app set |
 | Everything | Turn Planning off, and unplug | No commands; the Rivian's own schedule returns after unplug |
 
-If Home Assistant itself is down, the Rivian's charging window lapses on its own within about 25 minutes by day, and at the end of the free hours at night. The Tesla keeps its last current up to its own limit.
+If Home Assistant itself is down, the Rivian's charging window lapses on its own within about 25 minutes by day, and at the end of the free hours at night. In community-pattern mode it does not: the car charges on at the last current until you unplug it. The Tesla keeps its last current up to its own limit.
 
 ## The software tests
 

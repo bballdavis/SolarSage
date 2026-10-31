@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 
@@ -78,6 +78,30 @@ async def run(client, owner: Owner, clock: Clock, *argv: str, tmp: Path) -> int:
         interactive=True,
         sleep=clock.sleep,
         clock=clock,
+    )
+
+
+class Wall:
+    """Local wall time for T8: 23:50 at its first reading, then moving with the fake clock."""
+
+    def __init__(self, clock: Clock, at: datetime = datetime(2026, 10, 21, 23, 50, tzinfo=TZ)):
+        self.clock, self.at, self.start = clock, at, None
+
+    def __call__(self) -> datetime:
+        if self.start is None:
+            self.start = self.clock.t
+        return self.at + timedelta(seconds=self.clock.t - self.start)
+
+
+async def run_at(client, owner: Owner, clock: Clock, wall: Wall, *argv: str, tmp: Path) -> int:
+    return await at.amain(
+        [*argv, "--log", str(tmp / "log.jsonl"), "--poll", "5"],
+        client=client,
+        console=owner.console(),
+        interactive=True,
+        sleep=clock.sleep,
+        clock=clock,
+        now=wall,
     )
 
 
@@ -296,21 +320,27 @@ async def test_rivian_full_trial(live, fake, tmp_path) -> None:
 
     owner = Owner(
         [
-            ("plugged in again", replugged),
+            ("*plugged in again", replugged),  # after T1, and after T7 for T8
+            ("software version", "2025.46.1"),
             ("Did the car wait", "y"),
             ("What happened", "it stayed waiting"),
             ("own schedules again", "y"),
         ]
     )
-    code = await run(live, owner, clock, "rivian", "--i-am-at-the-car", tmp=tmp_path)
+    code = await run_at(
+        live, owner, clock, Wall(clock), "rivian", "--i-am-at-the-car", tmp=tmp_path
+    )
     assert code == 0, owner.text
     for step in (
         "inventory",
         "T1 write and readback",
         "replug",
+        "T0 idle start",
         "T2 16 A",
         "T2 10 A",
         "T2 20 A",
+        "T2 8 A",
+        "T2 48 A",
         "T2b continuity",
         "T3 window off now",
         "T4 lease expiry",
@@ -318,14 +348,114 @@ async def test_rivian_full_trial(live, fake, tmp_path) -> None:
         "T5 window back on",
         "T6 plug in while parked",
         "T7 exact restore",
+        "T8 midnight",
     ):
         assert f"[PASS] {step}" in owner.text, step
+    assert "[SKIP] T8 window end" in owner.text  # no free-hours window in the trial
+    assert "fingerprint a1b2c3d4e5f6, inventory had a1b2c3d4e5f6" in owner.text
+    lines = log_lines(tmp_path)
+    software = [x for x in lines if x["event"] == "software_version"]
+    assert software == [software[0]] and software[0]["version"] == "2025.46.1"
+    assert software[0]["source"] == "owner"
+    # every write that moved the Wall Connector has its latency logged
+    moved = [x for x in lines if x["event"] == "wall_change"]
+    assert {x["step"] for x in moved} >= {"T0 idle start", "T2 8 A", "T2 48 A", "T8 midnight"}
+    assert all(x["latency_s"] >= 0 for x in moved)
+    t48 = next(x for x in moved if x["step"] == "T2 48 A")
+    assert (t48["before_a"], t48["after_a"]) == (8, 48)
+    charge_now = [x for x in lines if x["event"] == "charge_now"]
+    assert charge_now and charge_now[0]["wall_a"] == "0"
     # only the schedule control's entities were commanded, never a Rivian service
     targets = {c["target"]["entity_id"] for c in fake.service_calls}
     assert targets <= {E[k] for k in ("r_switch", "r_current", "r_renewal", "r_restore", "r_read")}
     assert fake.states[E["r_renewal"]]["state"] == "on"
     notes = [x for x in log_lines(tmp_path) if x["event"] == "owner_note"]
     assert any(n["note"] == "it stayed waiting" for n in notes)
+
+
+async def test_t8_is_mandatory_and_runs_only_before_midnight(live, fake, tmp_path) -> None:
+    build_site(fake, NOW)
+    live_schedule_control(fake)
+    clock = Clock()
+    FakeCars(fake, clock)
+    owner = Owner()
+    noon = Wall(clock, NOW)
+    code = await run_at(
+        live, owner, clock, noon, "rivian", "--i-am-at-the-car", "--only", "t8", tmp=tmp_path
+    )
+    assert code == 1
+    assert "[FAIL] T8 midnight: not run at 13:00: T8 is mandatory" in owner.text
+    assert "T8 (across midnight) is mandatory" in owner.text
+    assert fake.service_calls == []
+
+
+async def test_t8_follows_a_free_hours_window_to_its_end(live, fake, tmp_path) -> None:
+    """With the planner's free-hours window held (lease_fixed), T8 also watches it end."""
+    build_site(fake, NOW)
+    live_schedule_control(fake)
+    clock = Clock()
+    cars = FakeCars(fake, clock)
+    wall = Wall(clock)
+    write = cars.write_lease
+
+    def fixed() -> None:
+        write()
+        end = wall.at + timedelta(minutes=40)  # 00:30, as written (a fixed window)
+        cars.control(cars.st("r_state"), lease_fixed=True, lease_expires_at=end.isoformat())
+
+    cars.write_lease = fixed
+    polled = cars.on_poll
+
+    def poll() -> None:
+        polled()
+        if cars.a("lease_fixed") and wall() >= datetime.fromisoformat(cars.a("lease_expires_at")):
+            cars.control("paused", lease_active=False)
+            cars.wall(0)
+
+    fake.on_poll = poll
+    owner = Owner()
+    code = await run_at(
+        live, owner, clock, wall, "rivian", "--i-am-at-the-car", "--only", "t8", tmp=tmp_path
+    )
+    assert "[PASS] T8 midnight" in owner.text, owner.text
+    assert "[PASS] T8 window end" in owner.text, owner.text
+    assert code == 0
+
+
+async def test_t7_fails_when_the_fingerprint_differs(live, fake, tmp_path) -> None:
+    build_site(fake, NOW)
+    live_schedule_control(fake)
+    clock = Clock()
+    cars = FakeCars(fake, clock)
+    restore = cars.on_service
+
+    def changed(domain, service, data, target) -> None:
+        if (target or {}).get("entity_id") == E["r_restore"]:
+            cars.owner_fp = "ffffffffffff"  # same count, different schedules
+        restore(domain, service, data, target)
+
+    fake.on_service = changed
+    owner = Owner([("own schedules again", "y")])
+    code = await run(
+        live, owner, clock, "rivian", "--i-am-at-the-car", "--only", "inventory,t7", tmp=tmp_path
+    )
+    assert code == 1
+    assert "[FAIL] T7 exact restore: fingerprint ffffffffffff, inventory had a1b2c3d4e5f6" in (
+        owner.text
+    )
+
+
+async def test_the_rivian_software_version_is_read_when_shown(live, fake, tmp_path) -> None:
+    build_site(fake, NOW)
+    live_schedule_control(fake)
+    fake.set_state("update.r1s_software_update", "off", {"installed_version": "2026.38.0"})
+    owner = Owner([("*run this step", "s")])
+    code = await run(live, owner, Clock(), "rivian", "--i-am-at-the-car", tmp=tmp_path)
+    assert code == 0
+    assert "Rivian software version: 2026.38.0" in owner.text
+    assert not [p for p in owner.prompts if "software version" in p]  # not asked
+    line = next(x for x in log_lines(tmp_path) if x["event"] == "software_version")
+    assert line["source"] == "update.r1s_software_update"
 
 
 async def test_rivian_selected_steps_and_cleanup(live, fake, tmp_path) -> None:

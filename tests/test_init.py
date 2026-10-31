@@ -1645,3 +1645,130 @@ async def test_remove_without_ownership_deletes_journal(
     await hass.async_block_till_done(wait_background_tasks=True)
     assert not journal_path(hass).exists()
     assert mock_rivian.reads == 0
+
+
+# Window location, overlapping schedules and request counts --------------------------
+
+# The vehicle's GPS fix, about 20 m from Home Assistant's test home.
+VEHICLE_FIX = {"latitude": 32.87354, "longitude": -117.22743}
+
+
+async def test_window_is_written_at_the_vehicles_position_reported_only_as_a_distance(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, mock_rivian: FakeRivian
+) -> None:
+    """The tracker's coordinates locate the window; reports carry only the distance."""
+    hass.states.async_set(LOCATION_ENTITY, "home", VEHICLE_FIX | {"gps_accuracy": 5})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await start_charging(hass)
+    assert mock_rivian.writes[-1][0]["location"] == VEHICLE_FIX
+
+    control = attributes(hass)
+    assert control["window_location_source"] == "vehicle"
+    assert control["window_location_distance_m"] == 0
+    assert control["reads_last_hour"] == 3
+    assert control["writes_last_hour"] == 1
+    diagnostics = await async_get_config_entry_diagnostics(hass, loaded_entry)
+    assert diagnostics["controller"]["window_location_distance_m"] == 0
+    assert diagnostics["controller"]["writes_last_hour"] == 1
+    assert diagnostics["journal"]["window_location"] == "**REDACTED**"
+    for text in (str(control), str(diagnostics)):
+        assert "32.873" not in text and "117.227" not in text
+
+
+@pytest.mark.parametrize(
+    "attrs",
+    [
+        {},
+        {"latitude": "32.9", "longitude": -117.2},
+        {"latitude": 32.9},
+        {"latitude": 95.0, "longitude": 1.0},
+    ],
+)
+async def test_tracker_without_a_valid_position_gives_none(
+    hass: HomeAssistant, loaded_entry: MockConfigEntry, attrs: dict[str, Any]
+) -> None:
+    hass.states.async_set(LOCATION_ENTITY, "home", attrs)
+    assert loaded_entry.runtime_data.observation().location is None
+    hass.states.async_set(LOCATION_ENTITY, "unavailable", VEHICLE_FIX)
+    assert loaded_entry.runtime_data.observation().location is None
+
+
+async def test_tracker_position_is_read(hass: HomeAssistant, loaded_entry: MockConfigEntry) -> None:
+    hass.states.async_set(LOCATION_ENTITY, "not_home", {"latitude": 33, "longitude": -117.5})
+    assert loaded_entry.runtime_data.observation().location == {
+        "latitude": 33.0,
+        "longitude": -117.5,
+    }
+
+
+OVERLAPPING_SCHEDULES = [
+    OWNER_SCHEDULES[0],
+    OWNER_SCHEDULES[1] | {"weekDays": ["Friday", "Saturday"]},
+]
+
+
+@pytest.mark.parametrize(
+    ("fallback", "translation_key"),
+    [
+        (False, "overlapping_owner_schedules"),
+        (True, "overlapping_owner_schedules_fallback"),
+    ],
+)
+async def test_overlapping_owner_schedules_raise_a_repair_issue_before_any_write(
+    hass: HomeAssistant,
+    mock_rivian: FakeRivian,
+    freezer: FrozenDateTimeFactory,
+    fallback: bool,
+    translation_key: str,
+) -> None:
+    """Shared weekdays are reported before the first write; the issue ends on unload."""
+    mock_rivian.schedules = deepcopy(OVERLAPPING_SCHEDULES)
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = make_entry(restore_enabled_only=fallback)
+    await set_up(hass, entry)
+    await start_charging(hass)
+
+    issue_id = f"overlapping_owner_schedules_{entry.entry_id}"
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == translation_key
+    assert issue.translation_placeholders == {"title": VEHICLE_NAME, "days": "Friday"}
+    assert mock_rivian.writes == []
+    assert attributes(hass)["owner_schedules_overlap_days"] == ["Friday"]
+
+    await advance(hass, freezer, TICK_INTERVAL)
+    assert len(mock_rivian.writes) == 1
+    assert state(hass, "sensor", "control_state") == "lease_active"
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_rejected_restore_writes_enabled_schedules_when_opted_in(
+    hass: HomeAssistant, mock_rivian: FakeRivian, freezer: FrozenDateTimeFactory
+) -> None:
+    """With the option on, a refused full list is restored as its enabled entries."""
+    mock_rivian.schedules = deepcopy(OVERLAPPING_SCHEDULES)
+    hass.states.async_set(PLUGGED_ENTITY, "on")
+    hass.states.async_set(LOCATION_ENTITY, "home")
+    entry = make_entry(restore_enabled_only=True)
+    await set_up(hass, entry)
+    await start_charging(hass)
+    await advance(hass, freezer, TICK_INTERVAL)
+
+    write = mock_rivian.set_charging_schedules
+
+    async def refuse_full_list(vehicle_id: str, schedules: list[dict[str, Any]]) -> Any:
+        if schedules == OVERLAPPING_SCHEDULES:
+            raise RivianBadRequestError(400, {"errors": [{"message": "INVALID_INPUT"}]})
+        return await write(vehicle_id, schedules)
+
+    with patch.object(mock_rivian, "set_charging_schedules", refuse_full_list):
+        await call(hass, BUTTON_DOMAIN, SERVICE_PRESS, "button", "release")
+        assert state(hass, "sensor", "control_state") != "fault"
+        await advance(hass, freezer, timedelta(seconds=31))
+    assert mock_rivian.schedules == [OWNER_SCHEDULES[0]]
+    assert state(hass, "sensor", "control_state") == "handed_back"
+    assert read_journal(hass)["archived_original"] == OVERLAPPING_SCHEDULES

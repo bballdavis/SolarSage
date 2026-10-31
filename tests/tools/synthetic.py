@@ -50,6 +50,7 @@ E = {
     "t_location": "device_tracker.roxxo_location",
     "t_switch": "switch.roxxo_charge",
     "t_current": "number.roxxo_charge_current",
+    "t_charging": "sensor.roxxo_charging",
 }
 
 
@@ -267,8 +268,9 @@ def _static(fake: FakeHass, now: datetime, hist_from: datetime, dry_run: bool) -
         {"unit_of_measurement": "A", "min": 0, "max": 48, "step": 1},
         when=hist_from,
     )
-    for eid in (E["t_soc"], E["t_limit"], E["t_plugged"], E["t_switch"], E["t_current"]):
-        fake.register(eid, "tesla_fleet")
+    fake.set_state(E["t_charging"], "disconnected", {"device_class": "enum"}, when=hist_from)
+    for key in ("t_soc", "t_limit", "t_plugged", "t_switch", "t_current", "t_charging"):
+        fake.register(E[key], "tesla_fleet")
     fake.register(E["t_location"], "tesla_fleet")
     # Rivian schedule control
     fake.set_state(E["r_switch"], "off", {}, when=hist_from)

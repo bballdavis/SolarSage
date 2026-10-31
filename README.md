@@ -7,7 +7,7 @@ Smart solar charging in Home Assistant for **both** household EVs, a Tesla and a
 In short:
 
 - **Existing hardware only:** Home Assistant OS, the Sol-Ark, the Tesla Wall Connector (measurement only) and the two cars.
-- **The cars through their own APIs:** the Tesla through HA core Tesla Fleet, the Rivian through this repository's Rivian schedule control, software in Home Assistant that writes the car's charging schedule through Rivian's API. Both cars plug into the same Wall Connector.
+- **The cars through their own APIs:** the Tesla through HA core Tesla Fleet, the Rivian through this repository's Rivian schedule control, software in Home Assistant that writes the car's charging schedule through Rivian's API. The schedule's amperage is the only way to set a Rivian's current. Both cars plug into the same Wall Connector.
 - **A planner in Home Assistant** decides each car's current: full current in the free tariff hours up to the car's charge limit, and smooth daytime solar charging planned from the Solcast forecast and recent usage, with the home battery absorbing swings.
 - **One dashboard** in Home Assistant to see and steer it.
 
@@ -27,7 +27,7 @@ In short:
 
 Earlier designs, research notes and prototype snapshots are in git history.
 
-**Nothing here has been run against the real cars, charger or Home Assistant instance yet.** The planner installs in shadow mode and sends nothing until shadow mode is turned off; Rivian schedule control installs in dry run and writes nothing until dry run is turned off. [TESTING.md](docs/TESTING.md) is the way in.
+**Nothing here has been run against the real cars, charger or Home Assistant instance yet.** The planner installs in shadow mode and sends nothing until shadow mode is turned off; Rivian schedule control installs in dry run and writes nothing until dry run is turned off. The owner's first steps are the plan's [phase 0 checklists](docs/PLAN.md#phase-0-the-tesla-checklist) and [decisions](docs/PLAN.md#information-needed); then [TESTING.md](docs/TESTING.md) is the way in. The attended Rivian trial (T0–T8) is the gate before the planner commands the Rivian.
 
 ## Installing
 

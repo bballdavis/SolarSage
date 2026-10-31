@@ -44,6 +44,10 @@ PENDING_AFTER_SEND: Final = timedelta(minutes=3)
 SEND_SPACING: Final = timedelta(seconds=60)
 MAX_SENDS_PER_HOUR: Final = 12
 FAILURE_BACKOFF_MAX: Final = timedelta(minutes=15)
+# A Tesla (billed commands, each may wake the car) stops retrying after this many failures in
+# a row, until its plug, SoC or limit changes, or this long has passed.
+STALL_AFTER_FAILURES: Final = 3
+STALL_BACKOFF: Final = timedelta(hours=3)
 SERVICE_TIMEOUT: Final = 60
 PV_DAYS_KEPT: Final = 21
 
@@ -124,6 +128,7 @@ CONF_LIMIT: Final = "limit"
 CONF_PLUGGED: Final = "plugged"
 CONF_LOCATION: Final = "location"
 CONF_CONTROL_STATE: Final = "control_state"
+CONF_CHARGING_STATE: Final = "charging_state"  # a Tesla's charging sensor, optional
 CONF_MIN_A: Final = "min_a"
 CONF_MAX_A: Final = "max_a"
 CONF_STEP_A: Final = "step_a"
@@ -230,6 +235,15 @@ MODES: Final = ["off", "empty", "stale", "full", "day", "night", MODE_NO_DATA]
 # Rivian schedule control's control states in which the planner does not repeat a request.
 SCHEDULE_CONTROL_IGNORES: Final = frozenset({"handed_back", "fault", "waiting_for_vehicle"})
 SCHEDULE_CONTROL_WRITING: Final = "writing"
+
+# Tesla Fleet's charging sensor states in which a start command cannot start a charge (the
+# car is at its limit, unplugged or the charger gives no power): the planner sends no "on".
+TESLA_CANNOT_START: Final = frozenset({"complete", "disconnected", "no_power"})
+# Tesla Fleet's command refusals that mean the car already is where the command would take it.
+TESLA_ALREADY_DONE: Final[dict[str, frozenset[str]]] = {
+    "on": frozenset({"complete", "is_charging"}),
+    "off": frozenset({"not_charging"}),
+}
 
 DEVICE_MANUFACTURER: Final = "HASS-Solar-Rivian"
 DEVICE_MODEL: Final = "Solar EV planner"

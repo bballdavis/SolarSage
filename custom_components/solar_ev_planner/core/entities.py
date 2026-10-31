@@ -25,7 +25,8 @@ How each input of a ``Snapshot`` is read:
 Commands (CarCommand.amps): None = no service call; 0 = switch off; > 0 = set the current
 number, then switch on if it was off. Rivian: Rivian schedule control's switch and number
 (each change is a cloud schedule write, ~1-2 min). Tesla (Fleet): charge switch and charge
-current (billed).
+current (billed); its charging sensor, optional, keeps the planner from sending a start the
+car cannot act on (complete, disconnected, no_power).
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ CAR_ENTITIES: dict[str, dict[str, str]] = {
         "soc": "sensor.r1s_battery_state_of_charge",
         "limit": "sensor.r1s_battery_state_of_charge_limit",
         "plugged": "binary_sensor.r1s_charger_connection",
-        "location": "device_tracker.r1s_location",
+        "location": "device_tracker.r1s_location",  # or device_tracker.r1s (below)
         "switch": "switch.r1s_schedule_control_solar_charging",
         "current": "number.r1s_schedule_control_solar_current",
         "control_state": "sensor.r1s_schedule_control_control_state",
@@ -64,10 +65,20 @@ CAR_ENTITIES: dict[str, dict[str, str]] = {
         "location": "device_tracker.roxxo_location",
         "switch": "switch.roxxo_charge",
         "current": "number.roxxo_charge_current",
+        "charging_state": "sensor.roxxo_charging",  # enum: charging, complete, disconnected, ...
     },
 }
 
-# today's tesla_custom names, for an owner who has not moved to Tesla Fleet yet
+# Other IDs the same entity has, tried in order when the first one does not exist. Upstream
+# Rivian installs made before 2026-10-12 name the tracker r1s_location; fresh 2.0.0 installs
+# name it after the car.
+CAR_ENTITY_ALTERNATIVES: dict[str, dict[str, tuple[str, ...]]] = {
+    "rivian": {"location": ("device_tracker.r1s",)},
+}
+
+# The custom tesla_custom integration's names. Never suggested: on the 2020 Model Y it cannot
+# command without its proxy add-on, and it takes Tesla Fleet's IDs (the limit is the same), so
+# Tesla Fleet's own entities would get a _2 suffix. tools/check.py names leftovers to remove.
 TESLA_CUSTOM_ENTITIES: dict[str, str] = {
     "switch": "switch.roxxo_charger",
     "current": "number.roxxo_charging_amps",

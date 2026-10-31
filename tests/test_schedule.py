@@ -9,11 +9,15 @@ import pytest
 
 from custom_components.rivian_schedule_control.schedule import (
     MINUTES_PER_DAY,
+    WEEK_DAYS,
+    all_week_window,
     applied_amps,
     fingerprint,
     lease_window,
     normalize_schedule,
     normalize_schedules,
+    overlapping_week_days,
+    parked_ahead_window,
     provider_fingerprint,
     to_provider_input,
 )
@@ -274,3 +278,54 @@ def test_end_does_not_change_a_parked_window():
         )
         == parked
     )
+
+
+def test_all_week_window_covers_every_day_all_day():
+    window = all_week_window(amps=24, location={"latitude": 1.23456789, "longitude": 2.0})
+    assert window == {
+        "weekDays": list(WEEK_DAYS),
+        "startTime": 0,
+        "duration": MINUTES_PER_DAY,
+        "location": {"latitude": 1.234568, "longitude": 2.0},
+        "amperage": 24,
+        "enabled": True,
+    }
+    assert normalize_schedule(window, strict=True) == window
+
+
+def test_parked_ahead_window_starts_ahead_on_the_local_clock():
+    now = datetime(2026, 10, 24, 18, 37, 42, tzinfo=CDT)  # Saturday
+    window, start = parked_ahead_window(
+        now, ahead=timedelta(hours=12), duration_minutes=60, amps=8, location=HOME
+    )
+    assert start == datetime(2026, 10, 25, 6, 37, tzinfo=CDT)
+    assert window == {
+        "weekDays": ["Sunday"],
+        "startTime": 6 * 60 + 37,
+        "duration": 60,
+        "location": HOME,
+        "amperage": 8,
+        "enabled": True,
+    }
+    with pytest.raises(ValueError):
+        parked_ahead_window(
+            now.replace(tzinfo=None),
+            ahead=timedelta(hours=12),
+            duration_minutes=60,
+            amps=8,
+            location=HOME,
+        )
+
+
+@pytest.mark.parametrize(
+    ("days", "shared"),
+    [
+        ([["Monday", "Friday"], ["Saturday"]], []),
+        ([["Monday", "Friday"], ["Friday", "Sunday"], ["Sunday"]], ["Friday", "Sunday"]),
+        ([list(WEEK_DAYS)], []),
+        ([], []),
+    ],
+)
+def test_overlapping_week_days(days, shared):
+    schedules = [schedule(weekDays=d, enabled=i % 2 == 0) for i, d in enumerate(days)]
+    assert overlapping_week_days(schedules) == shared

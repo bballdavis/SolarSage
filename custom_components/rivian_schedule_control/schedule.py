@@ -230,10 +230,72 @@ def lease_window(
         "weekDays": [WEEK_DAYS[start.weekday()]],
         "startTime": start.hour * 60 + start.minute,
         "duration": duration,
-        "location": {
-            "latitude": round(float(location["latitude"]), WRITE_COORD_DIGITS),
-            "longitude": round(float(location["longitude"]), WRITE_COORD_DIGITS),
-        },
+        "location": _written_location(location),
         "amperage": amps,
         "enabled": True,
     }
+
+
+def _written_location(location: dict[str, float]) -> dict[str, float]:
+    return {
+        "latitude": round(float(location["latitude"]), WRITE_COORD_DIGITS),
+        "longitude": round(float(location["longitude"]), WRITE_COORD_DIGITS),
+    }
+
+
+def all_week_window(*, amps: int, location: dict[str, float]) -> dict[str, Any]:
+    """The community pattern's charging window: every day, all day, at ``amps``.
+
+    It never lapses: charging stops only when another window replaces it.
+    """
+    return {
+        "weekDays": list(WEEK_DAYS),
+        "startTime": 0,
+        "duration": MINUTES_PER_DAY,
+        "location": _written_location(location),
+        "amperage": amps,
+        "enabled": True,
+    }
+
+
+def parked_ahead_window(
+    local_now: datetime,
+    *,
+    ahead: timedelta,
+    duration_minutes: int,
+    amps: int,
+    location: dict[str, float],
+) -> tuple[dict[str, Any], datetime]:
+    """The community pattern's parked window: enabled, starting ``ahead`` from now.
+
+    No window covers now, so the vehicle waits. The window must be pushed away
+    again before it begins. Returns the window and its start (in ``local_now``'s
+    zone).
+    """
+    if local_now.tzinfo is None:
+        raise ValueError("local_now must be timezone-aware")
+    start = local_now.replace(second=0, microsecond=0) + ahead
+    window = {
+        "weekDays": [WEEK_DAYS[start.weekday()]],
+        "startTime": start.hour * 60 + start.minute,
+        "duration": duration_minutes,
+        "location": _written_location(location),
+        "amperage": amps,
+        "enabled": True,
+    }
+    return window, start
+
+
+def overlapping_week_days(schedules: list[dict[str, Any]]) -> list[str]:
+    """Weekdays that more than one entry names, disabled entries included.
+
+    Rivian returns such lists but refuses to accept them back as one write
+    (upstream PR #308), so an exact restore of one would fail.
+    """
+    seen: set[str] = set()
+    shared: set[str] = set()
+    for schedule in schedules:
+        days = set(schedule["weekDays"])
+        shared |= seen & days
+        seen |= days
+    return [day for day in WEEK_DAYS if day in shared]

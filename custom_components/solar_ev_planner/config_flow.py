@@ -48,6 +48,7 @@ from .const import (
     CONF_CAPACITY_KWH,
     CONF_CAR_ID,
     CONF_CHARGER_MAX_A,
+    CONF_CHARGING_STATE,
     CONF_CONTROL_STATE,
     CONF_CURRENT,
     CONF_EXPORT_PRICE,
@@ -79,14 +80,13 @@ from .const import (
     DOMAIN,
     ENTRY_TITLE,
     KIND_RIVIAN,
-    KIND_TESLA,
     POWER_UNITS,
     SUBENTRY_CAR,
     SUBENTRY_PRICE,
     invert_key,
     unit_key,
 )
-from .core.entities import CAR_ENTITIES, SITE_ENTITIES, TESLA_CUSTOM_ENTITIES
+from .core.entities import CAR_ENTITIES, CAR_ENTITY_ALTERNATIVES, SITE_ENTITIES
 
 
 def _entity(domain: str | list[str]) -> EntitySelector:
@@ -312,6 +312,9 @@ def car_fields(kind: str) -> dict[str, tuple[bool, Any]]:
     }
     if kind == KIND_RIVIAN:
         fields[CONF_CONTROL_STATE] = (False, _entity("sensor"))
+    else:
+        # Tesla Fleet's charging sensor: no start is sent while it reads complete and the like
+        fields[CONF_CHARGING_STATE] = (False, _entity("sensor"))
     fields |= {
         CONF_MIN_A: (True, _number(1, 80, 1, "A")),
         CONF_MAX_A: (True, _number(1, 80, 1, "A")),
@@ -324,10 +327,10 @@ def car_fields(kind: str) -> dict[str, tuple[bool, Any]]:
 def car_suggestions(hass: HomeAssistant, kind: str) -> dict[str, Any]:
     """The kind's defaults and the owner's entity IDs for it that exist."""
     found = _existing(hass, CAR_ENTITIES.get(kind, {}))
-    if kind == KIND_TESLA:
-        # Before the move to Tesla Fleet, tesla_custom names the same controls differently.
-        for key, eid in _existing(hass, TESLA_CUSTOM_ENTITIES).items():
-            found.setdefault(key, eid)
+    for key, others in CAR_ENTITY_ALTERNATIVES.get(kind, {}).items():
+        existing = [eid for eid in others if hass.states.get(eid) is not None]
+        if key not in found and existing:
+            found[key] = existing[0]
     return CAR_DEFAULTS[kind] | found
 
 

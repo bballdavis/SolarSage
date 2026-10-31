@@ -15,6 +15,7 @@ from collections.abc import Awaitable
 from dataclasses import asdict
 from datetime import datetime, timedelta
 import logging
+import math
 from typing import Any
 
 from homeassistant.components import persistent_notification
@@ -53,6 +54,7 @@ from .const import (
     CONF_CHARGER_STATE_ENTITY,
     CONF_CHARGING_ENTITY,
     CONF_CLOCK_SKEW_MINUTES,
+    CONF_COMMUNITY_PATTERN,
     CONF_DRY_RUN,
     CONF_EMAIL,
     CONF_INCREASE_INTERVAL,
@@ -66,6 +68,7 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_RELEASE_DELAY,
     CONF_RENEW_BEFORE_MINUTES,
+    CONF_RESTORE_ENABLED_ONLY,
     CONF_UNTIL_ENTITY,
     CONF_USER_SESSION_TOKEN,
     CONF_VEHICLE_ID,
@@ -100,6 +103,7 @@ _UNKNOWN_STATES = frozenset({STATE_UNKNOWN, STATE_UNAVAILABLE, ""})
 REDACT_KEYS = frozenset(
     {
         "location",
+        "window_location",
         "latitude",
         "longitude",
         "locations",
@@ -133,6 +137,8 @@ def control_config_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> Schedu
         ceiling_hold=timedelta(minutes=int(options[CONF_CEILING_HOLD])),
         release_delay=timedelta(seconds=int(options[CONF_RELEASE_DELAY])),
         dry_run=bool(options[CONF_DRY_RUN]),
+        restore_enabled_only=bool(options[CONF_RESTORE_ENABLED_ONLY]),
+        community_pattern=bool(options[CONF_COMMUNITY_PATTERN]),
     )
 
 
@@ -159,6 +165,23 @@ def _binary_state(hass: HomeAssistant, entity_id: str | None) -> bool | None:
     if state == STATE_OFF:
         return False
     return None
+
+
+def _tracker_position(hass: HomeAssistant, entity_id: str | None) -> dict[str, float] | None:
+    """A device tracker's latitude and longitude attributes; None unless both are valid."""
+    if not entity_id or (state := hass.states.get(entity_id)) is None:
+        return None
+    if state.state in _UNKNOWN_STATES:
+        return None
+    position = {}
+    for key, limit in (("latitude", 90), ("longitude", 180)):
+        value = state.attributes.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value) or not -limit <= value <= limit:
+            return None
+        position[key] = float(value)
+    return position
 
 
 def restore_failed_notification_id(vehicle_id: str) -> str:
@@ -212,6 +235,8 @@ class ScheduleControlRuntime:
         self._notified_fault: tuple[str, datetime] | None = None
         self._missing_since: dict[str, datetime] = {}
         self._missing_issues: set[str] = set()
+        # The shared weekdays the overlap issue was raised for, if one is open.
+        self._overlap_issue: str | None = None
 
     # Observation ---------------------------------------------------------
 
@@ -233,6 +258,7 @@ class ScheduleControlRuntime:
             controller_alive=self._controller_alive(),
             controller_charging=_binary_state(self.hass, options.get(CONF_CHARGING_ENTITY)),
             controller_until=_time_state(self.hass, options.get(CONF_UNTIL_ENTITY)),
+            location=_tracker_position(self.hass, options.get(CONF_LOCATION_ENTITY)),
         )
 
     def _controller_alive(self) -> bool | None:
@@ -332,6 +358,9 @@ class ScheduleControlRuntime:
         for option in self._missing_issues:
             ir.async_delete_issue(self.hass, DOMAIN, self._missing_issue_id(option))
         self._missing_issues.clear()
+        if self._overlap_issue is not None:
+            self._overlap_issue = None
+            ir.async_delete_issue(self.hass, DOMAIN, self._overlap_issue_id)
         self._listeners.clear()
 
     @callback
@@ -374,6 +403,7 @@ class ScheduleControlRuntime:
     def async_notify(self) -> None:
         """Update the fault notification and tell the entities to write their state."""
         self._async_update_fault_notification()
+        self._async_update_overlap_issue()
         for update_callback in list(self._listeners):
             update_callback()
 
@@ -512,6 +542,43 @@ class ScheduleControlRuntime:
                 translation_key=f"missing_{option}",
                 translation_placeholders={"entity_id": entity_id, "title": self.entry.title},
             )
+
+    @property
+    def _overlap_issue_id(self) -> str:
+        return f"overlapping_owner_schedules_{self.entry.entry_id}"
+
+    @callback
+    def _async_update_overlap_issue(self) -> None:
+        """Report an owner's snapshot whose entries share weekdays (upstream PR #308).
+
+        Rivian may refuse such a list when it is written back, which leaves
+        schedule control's window on the vehicle. The controller writes no window
+        before this is reported.
+        """
+        days = ", ".join(self.controller.owner_overlap_days or [])
+        if not days:
+            if self._overlap_issue is not None:
+                self._overlap_issue = None
+                ir.async_delete_issue(self.hass, DOMAIN, self._overlap_issue_id)
+            return
+        if self._overlap_issue == days:
+            return
+        self._overlap_issue = days
+        fallback = self.controller.config.restore_enabled_only
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._overlap_issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=(
+                "overlapping_owner_schedules_fallback"
+                if fallback
+                else "overlapping_owner_schedules"
+            ),
+            translation_placeholders={"title": self.entry.title, "days": days},
+        )
 
     # Notifications -------------------------------------------------------
 

@@ -5,10 +5,12 @@
 For every mapped input it checks that the entity exists, is available, has the expected unit
 and a plausible value, and that its integration is alive. It also checks the Sol-Ark sign
 conventions against the last 24 h of 5-min statistics, the Solcast detailedForecast and its
-last poll, the free-hours Schedule helper, the Tesla Fleet entities, Rivian schedule
-control's entities and control state, which car the Wall Connector sees, and, once the
-planner is installed, its heartbeat and shadow mode and whether the schedule control's
-controller options point at the planner. It prints a table and exits 1 when anything FAILs
+last poll, the free-hours Schedule helper, the Tesla's integration (Tesla Fleet, Teslemetry or
+Tessie, for every mapped Tesla entity, so leftover tesla_custom entities show), Rivian schedule
+control's entities and control state, the Rivian tracker under either of its IDs, upstream
+Rivian's own schedule entities (they must stay disabled), which car the Wall Connector sees,
+and, once the planner is installed, its heartbeat and shadow mode and whether the schedule
+control's controller options point at the planner. It prints a table and exits 1 when anything FAILs
 (also on WARN with --strict), 2 when it cannot connect.
 
 Freshness: an unchanged value keeps an old ``last_updated`` / ``last_reported`` timestamp,
@@ -99,13 +101,35 @@ CAR_EXPECT = {
     "switch": Expect("switch"),
     "current": Expect("number", "A", 0, 80),
     "control_state": Expect("sensor"),
+    "charging_state": Expect("sensor", required=False),  # Tesla: the planner's start guard
     "charger_status": Expect("sensor"),
     "charger_state": Expect("sensor", required=False),  # Rivian: for schedule control's option
     "lease_renewal": Expect("switch", required=False),
     "restore_button": Expect("button", required=False),
     "read_schedules_button": Expect("button", required=False),
 }
-PLATFORMS = {"tesla": "tesla_fleet", "rivian_schedule_control": "rivian_schedule_control"}
+PLATFORMS = {"rivian_schedule_control": "rivian_schedule_control"}
+# The integrations that give the Tesla the planner's entity IDs, and what a command costs.
+TESLA_PLATFORMS = {
+    "tesla_fleet": "every command (and wake) is billed by Tesla's Fleet API; set a billing limit",
+    "teslemetry": "commands use Teslemetry credits (1 per command, 20 per wake)",
+    "tessie": "commands are included in the Tessie subscription",
+}
+TESLA_KEYS = ("switch", "current", "soc", "plugged", "limit", "location", "charging_state")
+# Other IDs of a mapped entity, tried when it does not exist: upstream Rivian installs made
+# before 2026-10-12 name the tracker r1s_location, fresh 2.0.0 installs name it after the car.
+ALTERNATIVES = {
+    "device_tracker.r1s_location": ("device_tracker.r1s",),
+    "device_tracker.r1s": ("device_tracker.r1s_location",),
+}
+# Upstream Rivian's charging-schedule entities: a change to any of them rewrites the car's
+# schedule list under the schedule control (an external_edit fault), so they stay disabled.
+UPSTREAM_SCHEDULE = (
+    "number.{car}_charging_schedule_amperage",
+    "switch.{car}_charging_schedule_enabled",
+    "time.{car}_charging_schedule_start",
+    "time.{car}_charging_schedule_end",
+)
 SCHEDULE_CONTROL_KEYS = ("switch", "current", "control_state", "charger_status")
 
 
@@ -540,8 +564,8 @@ async def tesla_rows(
     fleet = [car[k] for k in ("switch", "current", "soc", "plugged") if car.get(k)]
     legacy = [car[k] for k in ("legacy_switch", "legacy_current") if car.get(k)]
     found = [e for e in fleet if states.get(e)]
+    old = [e for e in legacy if states.get(e)]
     if len(found) < len(fleet):
-        old = [e for e in legacy if states.get(e)]
         rows.append(
             Row(
                 FAIL,
@@ -554,29 +578,54 @@ async def tesla_rows(
             )
         )
         return rows
-    platforms = {e: await _platform(client, e) for e in fleet}
-    other = {e: p for e, p in platforms.items() if p and p != PLATFORMS["tesla"]}
+    mapped = [car[k] for k in TESLA_KEYS if car.get(k) and states.get(car[k])]
+    platforms = {e: await _platform(client, e) for e in mapped}
+    other = {e: p for e, p in platforms.items() if p and p not in TESLA_PLATFORMS}
+    used = sorted({p for p in platforms.values() if p in TESLA_PLATFORMS})
     if other:
+        custom = "tesla_custom" in other.values()
+        rows.append(
+            Row(
+                FAIL if custom else WARN,
+                f"{car_id} on Tesla Fleet",
+                ", ".join(other),
+                ", ".join(sorted(set(other.values()))),
+                "remove tesla_custom (and its proxy add-on), then rename Tesla Fleet's _2 "
+                "entities to these IDs"
+                if custom
+                else f"these come from another integration, not {' / '.join(TESLA_PLATFORMS)}",
+            )
+        )
+    elif len(used) > 1:
         rows.append(
             Row(
                 WARN,
                 f"{car_id} on Tesla Fleet",
-                ", ".join(other),
-                ", ".join(sorted(set(other.values()))),
-                "these come from another integration, not tesla_fleet",
+                "",
+                ", ".join(used),
+                "the Tesla's entities come from two integrations: keep one (both poll the car)",
             )
         )
     else:
-        known = any(platforms.values())
         rows.append(
             Row(
-                OK if known else INFO,
+                OK if used else INFO,
                 f"{car_id} on Tesla Fleet",
                 "",
-                "tesla_fleet" if known else "?",
-                "every command is billed by Tesla's API"
-                if known
+                used[0] if used else "?",
+                TESLA_PLATFORMS[used[0]]
+                if used
                 else "the entity registry could not say which integration",
+            )
+        )
+    if old:
+        rows.append(
+            Row(
+                WARN,
+                f"{car_id} tesla_custom leftovers",
+                ", ".join(old),
+                "present",
+                "remove tesla_custom: two integrations poll and wake the car",
             )
         )
     cur = states.get(car.get("current") or "")
@@ -646,6 +695,74 @@ async def schedule_control_rows(
     if a.get("dry_run") and a.get("dry_run_target"):
         t = a["dry_run_target"]
         rows.append(Row(INFO, f"{car_id} dry-run target", "", "", json.dumps(t, default=str)))
+    return rows
+
+
+def resolve_alternatives(cfg: Config, states: Mapping[str, Any]) -> tuple[Config, list[Row]]:
+    """A mapped car entity that does not exist, under another ID that does: checked under
+    that ID, with a WARN to map it (the planner and the tools read only the mapped ID)."""
+    over: dict[str, dict[str, str]] = {}
+    rows = []
+    for car_id, car in cfg.cars.items():
+        for key, eid in car.items():
+            if not isinstance(eid, str) or states.get(eid):
+                continue
+            alt = next((a for a in ALTERNATIVES.get(eid, ()) if states.get(a)), None)
+            if alt is None:
+                continue
+            over.setdefault(car_id, {})[key] = alt
+            rows.append(
+                Row(
+                    WARN,
+                    f"{car_id}.{key} id",
+                    alt,
+                    "",
+                    f"{eid} does not exist but {alt} does: set cars.{car_id}.{key} to it "
+                    "(and in the planner's car)",
+                )
+            )
+    if not over:
+        return cfg, rows
+    return cfg.overlay({"cars": over}), rows
+
+
+async def upstream_schedule_rows(client: HassClient, cfg: Config) -> list[Row]:
+    """Upstream Rivian's own charging-schedule entities must be disabled while the schedule
+    control owns the car (present and not disabled = enabled)."""
+    rows = []
+    for car_id, car in cfg.cars.items():
+        if car.get("kind") != "rivian":
+            continue
+        soc = str(car.get("soc") or "")
+        name = soc.partition(".")[2].removesuffix("_battery_state_of_charge") or "r1s"
+        ids = [t.format(car=name) for t in UPSTREAM_SCHEDULE]
+        states = await client.states_of(ids)
+        enabled = []
+        for eid in ids:
+            try:
+                entry = await client.registry_entry(eid)
+            except HassError:
+                entry = None
+            if entry is not None:
+                if entry.get("disabled_by") is None:
+                    enabled.append(eid)
+            elif states.get(eid):
+                enabled.append(eid)
+        if enabled:
+            rows.append(
+                Row(
+                    WARN,
+                    f"{car_id} upstream schedule entities",
+                    ", ".join(enabled),
+                    "enabled",
+                    "disable them in Home Assistant: a change to any rewrites the car's "
+                    "schedule list under the schedule control (external_edit fault)",
+                )
+            )
+        else:
+            rows.append(
+                Row(OK, f"{car_id} upstream schedule entities", "", "disabled", "none enabled")
+            )
     return rows
 
 
@@ -900,6 +1017,9 @@ async def run_checks(client: HassClient, cfg: Config, now: datetime | None = Non
     ]
     tz = _zone(ha.get("time_zone"))
     states = await client.states_of(cfg.entity_ids())
+    extra = sorted({a for e in cfg.entity_ids() for a in ALTERNATIVES.get(e, ())} - set(states))
+    states = {**states, **await client.states_of(extra)} if extra else states
+    cfg, moved = resolve_alternatives(cfg, states)
     rows += site_rows(cfg, states, now)
     site = cfg.site
     ids = [
@@ -915,7 +1035,9 @@ async def run_checks(client: HassClient, cfg: Config, now: datetime | None = Non
         rows += sign_rows(cfg, stats)
     rows += forecast_rows(cfg, states, now, tz)
     rows += await schedule_rows(client, cfg)
+    rows += moved
     rows += await car_rows(client, cfg, states, now)
+    rows += await upstream_schedule_rows(client, cfg)
     rows += wall_rows(cfg, states)
     rows += planner_rows(cfg, states)
     return rows

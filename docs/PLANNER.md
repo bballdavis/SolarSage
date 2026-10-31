@@ -50,7 +50,7 @@ Without a terminal, download the repository as a ZIP from GitHub and copy the `c
 
 1. **Solcast** ([BJReplay/ha-solcast-solar](https://github.com/BJReplay/ha-solcast-solar)) with its forecast-today and forecast-tomorrow sensors. Their `detailedForecast` attribute gives the half hours with `pv_estimate10`, `pv_estimate` and `pv_estimate90`.
 2. **A Schedule helper for the free hours.** Settings → Devices & services → Helpers → Create helper → Schedule. Name it "Free hours" (it becomes `schedule.free_hours`) and paint 00:00–06:00 and 20:00–24:00 on every day. Repaint it when the electricity plan changes. Leave it out for a flat or time-of-use plan.
-3. **Tesla Fleet** set up for the Tesla, with the virtual key approved in the car. Until then the planner can map today's tesla_custom entities instead.
+3. **Tesla Fleet** set up for the Tesla, with the virtual key approved in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)), and tesla_custom removed. The planner does not use tesla_custom: on a 2020 Model Y it cannot command without its proxy add-on, and its entities take Tesla Fleet's IDs. Teslemetry, the fallback, has the same entity IDs.
 4. **Rivian schedule control** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
 
 ## Configure
@@ -88,13 +88,14 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 | Field | Rivian (R1S) | Tesla (Roxxo, Tesla Fleet) |
 | --- | --- | --- |
 | Name | `R1S` | `Roxxo` |
-| Charge switch | `switch.r1s_schedule_control_solar_charging` (Rivian schedule control) | `switch.roxxo_charge` (tesla_custom: `switch.roxxo_charger`) |
-| Charge current | `number.r1s_schedule_control_solar_current` (Rivian schedule control) | `number.roxxo_charge_current` (tesla_custom: `number.roxxo_charging_amps`) |
+| Charge switch | `switch.r1s_schedule_control_solar_charging` (Rivian schedule control) | `switch.roxxo_charge` |
+| Charge current | `number.r1s_schedule_control_solar_current` (Rivian schedule control) | `number.roxxo_charge_current` |
 | Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.roxxo_battery_level` |
 | Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `number.roxxo_charge_limit` |
 | Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.roxxo_charge_cable` |
-| Location | `device_tracker.r1s_location` | `device_tracker.roxxo_location` |
+| Location | `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install (the form suggests whichever exists) | `device_tracker.roxxo_location` |
 | Schedule control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
+| Charging state | — | `sensor.roxxo_charging` (optional, recommended: the [Tesla guard](#the-tesla-guard) reads it) |
 | Minimum, maximum, step | 8 A, 48 A, 2 A | 6 A, 48 A, 1 A |
 | Usable pack energy | 135 kWh | 75 kWh |
 
@@ -102,6 +103,7 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 - **The car's own current number caps the maximum:** Tesla Fleet's says what the car accepts on this charger.
 - **Car ids** are `rivian` and `tesla` (a second car of a kind becomes `rivian_2`). The charger car override uses them, and Rivian schedule control's vehicle override treats `rivian` as its own car.
 - **Never map the planner's own entities** as a car's switch or current; the form refuses them.
+- **tesla_custom's entities are never suggested.** If its names (`switch.roxxo_charger`, `number.roxxo_charging_amps`) still exist, remove tesla_custom; `python -m tools.check` warns about them.
 
 ### Electricity plans
 
@@ -196,8 +198,19 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 1. The planner starts a fresh session and sends its first decision at once to the car on the charger, and only to that car.
 2. **Tesla:** the charge current, then the charge switch. Every command is billed by Tesla's API, so a command is never repeated on the planner's own initiative.
 3. **Rivian:** Rivian schedule control's current, then its switch. In the free hours the charging-until sensor is set first, so the schedule control writes one window to their end. If the schedule control drops the request (after a restart, an outage or a replug), the planner sends it again, except while the schedule control is handed back, faulted or waiting for the vehicle. With the schedule control still in dry run, the requests are recorded but nothing is written to Rivian.
-4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure.
+4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure of up to 15 minutes. The hourly count survives restarts. For the Tesla, the [Tesla guard](#the-tesla-guard) also applies.
 5. **At unplug** the Tesla's current is set back to its restore current, if the planner changed it during that plug-in.
+
+### The Tesla guard
+
+Each Tesla command is billed and may wake the car. A start refused because the car is at its limit, retried every 15 minutes with a wake, would cost about $2 a day. So for the Tesla:
+
+- **No start while the car cannot start.** Nothing is sent, not even the current, while its charging state (`sensor.roxxo_charging`, if mapped) reads complete, disconnected or no power, while its level is at or above its own limit, or after it answered a start with "complete" and its plug, level and limit have not changed since. The command waits and is checked again each cycle, which costs nothing.
+- **"Already there" is success.** A refusal that says the car already is where the command would take it counts as done: "complete" or "is_charging" for a start, "not_charging" for a pause.
+- **Three failures in a row stall it.** No more starts or current changes for 3 hours, or until its plug, level or limit takes a new known value; then it tries at once. A value going unavailable does not count. A pause keeps the short back-off.
+- **It survives restarts:** the hourly command count, the "complete" answer and the stall are saved.
+
+The car's planned-current sensor shows why a command waits. The Rivian has no guard: its commands are not billed, and it keeps the back-off of up to 15 minutes.
 
 ### Planning off and shadow mode
 
@@ -313,6 +326,6 @@ views:
 
 - **Not run against the real system yet.** Real Tesla Fleet timing (its charge switch reads on only while the car charges), real Solcast attribute types and how often the Sol-Ark reports unchanged values are unchecked until [TESTING.md](TESTING.md) phase 1 and 3.
 - **The caution level is optimistic.** In simulation (run with a 10 PM–6 AM night charging window and a battery that held its level in free hours) the 90% battery path held 76% of the time; the closed loop compensated. Shadow-mode data should recalibrate it ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
-- **The hourly command cap resets on restart.** The planner's own rate limits are saved; the executor's count of commands in the last hour is not.
+- **A pause is not capped.** The hourly cap never holds back a pause, because a pause is the safety stop. It cannot loop: once it succeeds the switch reads off, and failures go through the back-off and, for the Tesla, the stall.
 - **The Wall Connector power sensor is required.** While it is unavailable the planner does not plan, and the heartbeat goes down.
 - **Only one planner and one charger.** Car ids other than `rivian` and `tesla` show their raw id in the override and car-on-charger states.

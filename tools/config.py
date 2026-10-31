@@ -134,6 +134,10 @@ class Config:
     def entity_ids(self) -> list[str]:
         return sorted({eid for _, eid in self.entities()})
 
+    def overlay(self, over: Mapping[str, Any]) -> Config:
+        """A copy with ``over`` merged in, key by key (the source stays)."""
+        return Config(_merge(self.data, over), self.source)
+
 
 def validate(data: Mapping[str, Any]) -> list[str]:
     """Problems in a merged config (empty when it is usable)."""
