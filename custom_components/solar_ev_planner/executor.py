@@ -26,6 +26,11 @@ planner holds; a new command replaces it. After ``STALL_AFTER_FAILURES`` failure
 Tesla gets no more starts or current changes until its plug, SoC or limit changes, or
 ``STALL_BACKOFF`` has passed; a pause keeps the short back-off. The sends of the last hour
 are persisted, so a restart does not reset the cap.
+
+A Tesla's calls also go through the spending guard (``spend.TeslaSpend``): each is counted
+and priced, with a wake when the car's status does not read online, and as the month's spend
+nears the planner's cap only essential commands go out, then none (see ``spend``). With Tesla
+Fleet's polling off, the car is refreshed first when its data is old.
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ from .const import (
     TESLA_CANNOT_START,
 )
 from .inputs import available, state_float
+from .spend import LEVEL_NORMAL, TeslaSpend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -230,9 +236,10 @@ def refusal(err: Exception) -> str | None:
 class CarExecutor:
     """Sends the planner's commands; one per config entry."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, spend: TeslaSpend | None = None) -> None:
         self.hass = hass
         self.context = Context()
+        self.spend = spend  # the Tesla spending guard (None: not counted)
 
     def blocked(
         self, rt: CarRuntime, now: datetime, target: int, cond: list[Any] | None = None
@@ -277,9 +284,15 @@ class CarExecutor:
         return None
 
     async def async_apply(
-        self, car: Mapping[str, Any], rt: CarRuntime, target: int, now: datetime
+        self,
+        car: Mapping[str, Any],
+        rt: CarRuntime,
+        target: int,
+        now: datetime,
+        free: bool = False,
     ) -> bool:
-        """Bring the car to ``target`` A (0 = paused). True when the car holds it now."""
+        """Bring the car to ``target`` A (0 = paused). True when the car holds it now.
+        ``free``: the command is for the free hours (the spending guard lets it through)."""
         rt.retry_a = None
         standing = standing_request(self.hass, car)
         calls = calls_for(target, standing)
@@ -288,22 +301,50 @@ class CarExecutor:
             rt.blocked = None
             return True
         billed = car.get(CONF_KIND) != KIND_RIVIAN
+        spend = self.spend if billed else None
         cond = condition(self.hass, car) if billed else None
         if cond is not None and "on" in calls and (why := self.cannot_start(car, rt, cond)):
             # nothing is sent (not even the current): the guard is re-checked every cycle
             rt.retry_a = target
             rt.blocked = why
             return False
-        if why := self.blocked(rt, now, target, cond):
+        send, note = target, None
+        if spend is not None:
+            send, why = spend.gate(target, standing.charging, standing.amps, now, free)
+            if why is not None:
+                rt.retry_a = target
+                rt.blocked = why
+                return False
+            if send != target:
+                calls = calls_for(send, standing)
+                note = f"stopped instead of {target} A: the Tesla API budget is nearly used"
+        if why := self.blocked(rt, now, send, cond):
             rt.retry_a = target
             rt.blocked = why
             return False
+        if spend is not None and spend.stale_before_send(car, now):
+            await spend.async_refresh(car, now)
+            standing = standing_request(self.hass, car)
+            calls = calls_for(send, standing)
+            if not calls:
+                rt.commanded_a = send
+                rt.blocked = note
+                return True
+            cond = condition(self.hass, car)
+            if "on" in calls and (why := self.cannot_start(car, rt, cond)):
+                rt.retry_a = target
+                rt.blocked = why
+                return False
         rt.last_sent = now
         rt.sends.append(now)
+        if spend is not None and spend.wake_expected(car):
+            spend.count_wake(now)
         held = False
         for call in calls:
+            if spend is not None:
+                spend.count_command(now)  # billed whatever the answer
             try:
-                await self._async_call(car, call, target)
+                await self._async_call(car, call, send)
             except (HomeAssistantError, TimeoutError) as err:
                 reason = refusal(err) if billed else None
                 if reason is not None and reason in TESLA_ALREADY_DONE.get(call, ()):
@@ -312,14 +353,14 @@ class CarExecutor:
                     )
                     held = held or reason == "complete"
                     continue
-                self._failed(car, rt, target, now, err, cond)
+                self._failed(car, rt, send, now, err, cond)
                 return False
         rt.failures = 0
         rt.retry_at = None
         rt.stalled = None
         rt.last_error = None
-        rt.blocked = None
-        rt.commanded_a = target
+        rt.blocked = note
+        rt.commanded_a = send
         if held:
             rt.held = cond
             rt.blocked = "the car answered complete; no start until its plug, SoC or limit changes"
@@ -355,11 +396,13 @@ class CarExecutor:
             " or once its plug, SoC or limit changes" if rt.stalled is not None else "",
         )
 
-    async def async_reconcile(self, car: Mapping[str, Any], rt: CarRuntime, now: datetime) -> bool:
+    async def async_reconcile(
+        self, car: Mapping[str, Any], rt: CarRuntime, now: datetime, free: bool = False
+    ) -> bool:
         """While the planner holds: send a command that is still waiting, or repeat the last
         one to a Rivian whose schedule control dropped it. True when something was sent."""
         if rt.retry_a is not None:
-            return await self.async_apply(car, rt, rt.retry_a, now)
+            return await self.async_apply(car, rt, rt.retry_a, now, free)
         if rt.commanded_a is None or car.get(CONF_KIND) != KIND_RIVIAN:
             return False
         standing = standing_request(self.hass, car)
@@ -372,10 +415,19 @@ class CarExecutor:
             return await self.async_apply(car, rt, rt.commanded_a, now)
         return False
 
-    async def async_restore(self, car: Mapping[str, Any], amps: int) -> bool:
-        """Set the car's current back to ``amps`` (the Tesla restore at unplug)."""
+    async def async_restore(self, car: Mapping[str, Any], amps: int, now: datetime) -> bool:
+        """Set the car's current back to ``amps`` (the Tesla restore at unplug). Skipped once
+        the spending guard keeps to essential commands."""
         if state_float(self.hass.states.get(car[CONF_CURRENT])) == amps:
             return True
+        spend = self.spend if car.get(CONF_KIND) != KIND_RIVIAN else None
+        if spend is not None:
+            if spend.level(now) != LEVEL_NORMAL:
+                _LOGGER.info("Not restoring %s A on %s: %s", amps, car.get("name"), spend.note(now))
+                return False
+            if spend.wake_expected(car):
+                spend.count_wake(now)
+            spend.count_command(now)
         try:
             await self._async_call(car, "current", amps)
         except (HomeAssistantError, TimeoutError) as err:

@@ -1,5 +1,6 @@
 """Sensors: what the planner decided and why, the battery outlook, the forecast correction,
-each car's planned current and energy outlook, and the heartbeat.
+each car's planned current and energy outlook, the heartbeat, and (with a Tesla) what the
+planner's Tesla Fleet calls cost this month.
 
 The heartbeat is Rivian schedule control's ``controller_liveness_entity``: its state is
 ``active`` (commanding) or ``shadow`` while the planner is on and its last decision is recent,
@@ -24,10 +25,12 @@ from homeassistant.const import PERCENTAGE, UnitOfElectricCurrent, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_KIND, CONF_NAME, HEARTBEAT_CHECK, KIND_RIVIAN, MODES
 from .coordinator import CarView, PlannerConfigEntry, PlannerCoordinator, PlannerData
 from .entity import PlannerEntity
+from .spend import next_month
 
 PARALLEL_UPDATES = 0
 MAX_STATE = 255
@@ -57,6 +60,8 @@ async def async_setup_entry(
             HeartbeatSensor(coordinator),
         ]
     )
+    if coordinator.spend.teslas:
+        async_add_entities([TeslaSpendSensor(coordinator)])
     for car_id, car in coordinator.cars.items():
         async_add_entities(
             [
@@ -306,6 +311,38 @@ class HeartbeatSensor(DataSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         last = self.coordinator.last_success
         return {"last_decision": last.isoformat() if last else None}
+
+
+class TeslaSpendSensor(PlannerEntity, SensorEntity):
+    """What the planner's own Tesla Fleet calls cost this calendar month (USD, Tesla's prices),
+    with the counts, the cap and the guard's level (``spend``)."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "USD"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: PlannerCoordinator) -> None:
+        super().__init__(coordinator, "tesla_api_spend")
+
+    @property
+    def available(self) -> bool:
+        """Always available: the count is kept by the planner, also while a cycle fails."""
+        return True
+
+    @property
+    def native_value(self) -> float:
+        return round(self.coordinator.spend.spent(dt_util.now()), 3)
+
+    @property
+    def last_reset(self) -> datetime:
+        now = dt_util.now()
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        now = dt_util.now()
+        return self.coordinator.spend.attributes(now) | {"resets": next_month(now).isoformat()}
 
 
 # --------------------------------------------------------------------------- each car

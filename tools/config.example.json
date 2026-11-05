@@ -33,6 +33,7 @@
       "switch": "switch.roxxo_charge",
       "current": "number.roxxo_charge_current",
       "charging_state": "sensor.roxxo_charging",
+      "status": "binary_sensor.roxxo_status",
       "charging_wanted": "binary_sensor.roxxo_planner_charging_wanted",
       "legacy_switch": "switch.roxxo_charger",
       "legacy_current": "number.roxxo_charging_amps"

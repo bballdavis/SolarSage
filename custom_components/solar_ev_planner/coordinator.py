@@ -10,6 +10,10 @@ Each cycle:
 5. unless shadow mode is on or the planner is off, sends the command for the car on the
    charger (``executor``), then saves what it commanded and the planner's memory.
 
+Every Tesla Fleet call the planner causes is counted against a monthly budget
+(``spend.TeslaSpend``); with Tesla Fleet's own polling off, the planner refreshes the Tesla
+itself at the start of a cycle while it is on the Wall Connector.
+
 The load profile is rebuilt from the recorder at start-up, at every date change and every
 few hours, off the event loop. Nothing is commanded while the site's readings are missing.
 """
@@ -144,6 +148,7 @@ from .inputs import (
     state_home,
     state_on,
 )
+from .spend import TeslaSpend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -251,9 +256,10 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             elif sub.subentry_type == SUBENTRY_PRICE:
                 self.windows[subentry_id] = dict(sub.data)
         self.planner = Planner()
-        self.executor = CarExecutor(hass)
         self.runtime: dict[str, CarRuntime] = {car_id: CarRuntime() for car_id in self.cars}
         self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
+        self.spend = TeslaSpend(hass, self.settings, self.cars)
+        self.executor = CarExecutor(hass, self.spend)
         self.car_settings: dict[str, dict[str, Any]] = {
             car_id: default_car_settings(car[CONF_KIND], int(car[CONF_MAX_A]))
             for car_id, car in self.cars.items()
@@ -326,6 +332,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
                 )
             except KeyError, TypeError, ValueError:
                 continue
+        self.spend.load(stored.get("tesla_spend") or {})
         self.day = dict(stored.get("day") or {})
         self.schedules = {k: dict(v) for k, v in (stored.get("schedules") or {}).items()}
         if self.override not in (OVERRIDE_AUTO, *self.cars):
@@ -348,6 +355,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             ],
             "day": self.day,
             "schedules": self.schedules,
+            "tesla_spend": self.spend.to_dict(),
         }
 
     def save(self) -> None:
@@ -542,6 +550,10 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
     async def _async_cycle(self, now: datetime) -> PlannerData:
         self.planner.settings = self.core_settings()
         site = self._read_site(now)
+        self.spend.roll(now)
+        if self.enabled:
+            sessions = {cid: rt.plugged_since is not None for cid, rt in self.runtime.items()}
+            await self.spend.async_watch(now, site.wall_connected, sessions)
         self._roll_day(now)
         self._schedule_history(now)
         if self.schedules_at is None or now - self.schedules_at >= SCHEDULE_REFRESH:
@@ -555,7 +567,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             "fc_kwh": round(forecast_energy(slots, midnight, midnight + timedelta(days=1)), 3),
         }
         ident, cars = self._read_cars(now)
-        await self._async_restore_at_unplug()
+        await self._async_restore_at_unplug(now)
         tariff, tariff_problem = self._tariff()
         pv = self._pv_info(slots, now, pv_today, issued)
         problem = site.problem or tariff_problem
@@ -598,14 +610,23 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             self.last_success = now
             self.last_error = None
         self.save()
+        reason = (
+            (OFF_REASON if decision.mode == "off" else decision.reason)
+            if decision
+            else f"Not planning: {problem}"
+        )
+        if (
+            decision is not None
+            and self.active
+            and decision.car_id in self.cars
+            and self.cars[decision.car_id][CONF_KIND] == KIND_TESLA
+            and (note := self.spend.note(now))
+        ):
+            reason = f"{reason} {note}"
         return PlannerData(
             now=now,
             mode=decision.mode if decision else MODE_NO_DATA,
-            reason=(
-                (OFF_REASON if decision.mode == "off" else decision.reason)
-                if decision
-                else f"Not planning: {problem}"
-            ),
+            reason=reason,
             decision=decision,
             site=site,
             identification=ident,
@@ -886,15 +907,16 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             if until is not None:
                 rt.until = until
             self.async_update_listeners()
+        free = decision.mode == "night"
         if amps is not None:
-            await self.executor.async_apply(car, rt, amps, now)
+            await self.executor.async_apply(car, rt, amps, now, free)
         elif decision.mode in ("day", "night"):
-            await self.executor.async_reconcile(car, rt, now)
+            await self.executor.async_reconcile(car, rt, now, free)
         if until is None and rt.until is not None and rt.retry_a is None:
             rt.until = None  # the car holds the command that replaced the request
             self.async_update_listeners()
 
-    async def _async_restore_at_unplug(self) -> None:
+    async def _async_restore_at_unplug(self, now: datetime) -> None:
         """The Tesla keeps the last current it was given; when it unplugs at home after the
         planner set it, set the owner's current back (a setting; 0 turns it off)."""
         for car_id, car in self.cars.items():
@@ -914,7 +936,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
                     and rt.touched
                     and self.active
                     and restore > 0
-                    and await self.executor.async_restore(car, restore)
+                    and await self.executor.async_restore(car, restore, now)
                 ):
                     rt.touched = False
             if plugged is not None:

@@ -1,4 +1,5 @@
-"""Numbers: the planner's limits and prices, and each car's limit, plan target and the
+"""Numbers: the planner's limits and prices, the Tesla spending guard's budget, polling
+estimate and refresh interval (with a Tesla only), and each car's limit, plan target and the
 Tesla's current restored at unplug."""
 
 from __future__ import annotations
@@ -34,6 +35,9 @@ from .const import (
     S_MIN_CHANGE,
     S_PAID_TOLERANCE,
     S_PRICE,
+    S_TESLA_BUDGET,
+    S_TESLA_POLLING,
+    S_TESLA_REFRESH,
     S_WANTED,
 )
 from .coordinator import PlannerConfigEntry, PlannerCoordinator
@@ -65,6 +69,14 @@ SETTINGS = (
     Range("solar_buyback", S_BUYBACK, 0, 5, 0.01, PRICE, False),
 )
 
+# The Tesla spending guard (USD: Tesla's Fleet API prices are in dollars).
+USD = "USD"
+TESLA_SETTINGS = (
+    Range("tesla_api_budget", S_TESLA_BUDGET, 0, 10, 0.1, USD),
+    Range("tesla_polling_estimate", S_TESLA_POLLING, 0, 30, 0.1, USD),
+    Range("tesla_refresh_interval", S_TESLA_REFRESH, 0, 240, 5, UnitOfTime.MINUTES),
+)
+
 INTEGER_SETTINGS = frozenset({S_MAX_STEP})
 
 
@@ -76,6 +88,8 @@ async def async_setup_entry(
     """Add the setting numbers, the price windows' prices and the per-car numbers."""
     coordinator = entry.runtime_data
     async_add_entities(SettingNumber(coordinator, r) for r in SETTINGS)
+    if coordinator.spend.teslas:
+        async_add_entities(SettingNumber(coordinator, r) for r in TESLA_SETTINGS)
     for subentry_id in coordinator.windows:
         async_add_entities(
             [WindowPriceNumber(coordinator, subentry_id)], config_subentry_id=subentry_id

@@ -178,6 +178,7 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     # never suggested
     set_tesla(hass)
     hass.states.async_set("sensor.roxxo_charging", "stopped")
+    hass.states.async_set("binary_sensor.roxxo_status", "off")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["switch"], "off")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["current"], "32")
     entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
@@ -191,7 +192,7 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     assert data["control_state"] == "sensor.r1s_schedule_control_control_state"
     assert data["plugged"] == "binary_sensor.r1s_charger_connection"
     assert data["location"] == "device_tracker.r1s_location"
-    assert "charging_state" not in data  # a Tesla's only
+    assert "charging_state" not in data and "status" not in data  # a Tesla's only
     assert (data["min_a"], data["max_a"], data["step_a"]) == (8, 48, 2)
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], data)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -202,6 +203,7 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     assert data["current"] == "number.roxxo_charge_current"
     assert data["limit"] == "number.roxxo_charge_limit"
     assert data["charging_state"] == "sensor.roxxo_charging"
+    assert data["status"] == "binary_sensor.roxxo_status"  # the spending guard's wakes
     assert data["soc"] == "sensor.roxxo_battery_level"
     assert "control_state" not in data
     assert (data["min_a"], data["step_a"]) == (6, 1)
@@ -213,6 +215,7 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     assert cars["rivian"].title == "R1S" and cars["tesla"].title == "Roxxo"
     assert cars["tesla"].data["kind"] == "tesla"
     assert cars["tesla"].data["charging_state"] == "sensor.roxxo_charging"
+    assert cars["tesla"].data["status"] == "binary_sensor.roxxo_status"
 
     # a second Rivian gets its own id
     result = await _add_car(hass, entry, "rivian")

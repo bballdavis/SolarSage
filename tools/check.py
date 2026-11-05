@@ -102,6 +102,7 @@ CAR_EXPECT = {
     "current": Expect("number", "A", 0, 80),
     "control_state": Expect("sensor"),
     "charging_state": Expect("sensor", required=False),  # Tesla: the planner's start guard
+    "status": Expect("binary_sensor", required=False),  # Tesla: online, for the spending guard
     "charger_status": Expect("sensor"),
     "charger_state": Expect("sensor", required=False),  # Rivian: for schedule control's option
     "lease_renewal": Expect("switch", required=False),
@@ -111,11 +112,23 @@ CAR_EXPECT = {
 PLATFORMS = {"rivian_schedule_control": "rivian_schedule_control"}
 # The integrations that give the Tesla the planner's entity IDs, and what a command costs.
 TESLA_PLATFORMS = {
-    "tesla_fleet": "every command (and wake) is billed by Tesla's Fleet API; set a billing limit",
+    "tesla_fleet": (
+        "every command, wake and data request is billed by Tesla's Fleet API; add no card, keep "
+        "the billing limit at $0, and see sensor.solar_ev_planner_tesla_api_spend"
+    ),
     "teslemetry": "commands use Teslemetry credits (1 per command, 20 per wake)",
     "tessie": "commands are included in the Tessie subscription",
 }
-TESLA_KEYS = ("switch", "current", "soc", "plugged", "limit", "location", "charging_state")
+TESLA_KEYS = (
+    "switch",
+    "current",
+    "soc",
+    "plugged",
+    "limit",
+    "location",
+    "charging_state",
+    "status",
+)
 # Other IDs of a mapped entity, tried when it does not exist: upstream Rivian installs made
 # before 2026-10-12 name the tracker r1s_location, fresh 2.0.0 installs name it after the car.
 ALTERNATIVES = {

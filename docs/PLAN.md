@@ -18,6 +18,7 @@ Only the hardware already in place:
 | Sol-Ark inverter and home battery (about 31 kWh usable) | Solar, house and battery measurements | Existing Sol-Ark integration |
 | Tesla Wall Connector Gen 3 | **Measurement only**: power, current, whether a car is connected. Tesla publishes no way to set its current. | HA core Tesla Wall Connector integration (local) |
 | Tesla | Charging on/off and current | Tesla's own API, through HA core **Tesla Fleet** |
+| DuckDNS and Caddy 2 add-ons | Serve only Tesla's public key on port 443, for Tesla Fleet's registration and pairing; Home Assistant itself stays off the internet | Run inside Home Assistant OS ([key hosting](#phase-0-hosting-the-key-in-home-assistant)) |
 | Rivian R1S (2025, Gen 2) | Charging current and pause, through its charging schedule | Rivian's API: upstream [`home-assistant-rivian`](https://github.com/bretterer/home-assistant-rivian) for data, this repo's [Rivian schedule control](RIVIAN_SCHEDULE_CONTROL.md) for control |
 
 Only one car can be on the Wall Connector at a time, so only one car charges at a time.
@@ -27,7 +28,7 @@ Only one car can be on the Wall Connector at a time, so only one car charges at 
 Made:
 
 1. **No new hardware.** Everything goes through the existing stack and the cars' and charger's APIs.
-2. **Tesla through Tesla's API.** HA core Tesla Fleet, with the owner's own Tesla developer account. Tesla Fleet signs commands itself, so no tesla-http-proxy add-on and no Docker are needed. No Bluetooth hardware. HA core Teslemetry is the fallback if Tesla's partner registration fails ([phase 0](#phase-0-the-tesla-checklist)). tesla_custom is removed once Tesla Fleet works.
+2. **Tesla through Tesla's API.** HA core Tesla Fleet, with the owner's own Tesla developer account. Tesla Fleet signs commands itself, so no tesla-http-proxy add-on and no Docker are needed. No Bluetooth hardware. Its public key is hosted at home (decision 16). HA core Teslemetry is the fallback if Tesla's partner registration fails ([phase 0](#phase-0-the-tesla-checklist)). tesla_custom is removed once Tesla Fleet works.
 3. **Rivian through Rivian's API.** As of October 31, 2026, the charging schedule's amperage is the only way to set a Rivian's current, on any generation and any path. No API command sets the current. This repository's Rivian schedule control (software in Home Assistant, no extra hardware) writes the schedule.
    - **Start/stop and the charge limit** need a phone key. On a Gen 2 a key can be paired only from a Mac, through an unofficial proof of concept ([upstream issue #181](https://github.com/bretterer/home-assistant-rivian/issues/181)). It gives no current control and is outside the Home-Assistant-only setup, so it is out of scope.
    - **Rivian's newer Parallax channel** has no proven charging write, so it is not used.
@@ -45,6 +46,7 @@ Made:
 13. **One repository, two integrations.** HACS installs one integration per repository, so it installs Rivian schedule control, and the planner is copied by hand ([PLANNER.md, install](PLANNER.md#install)).
 14. **The home battery refills in free hours** (October 25, 2026). The Sol-Ark's own settings charge it from the grid during the free hours, so every paid day starts at 100%; the planner leaves this to the inverter. Its prediction assumes the same: in the free hours it charges the battery at its maximum charge power (9 kW by default) until it is full, and never discharges it. Whatever the battery still holds when the free hours begin would be replaced for free overnight, so a car plugged in by day may also use that energy, spread over the afternoon, down to the level wanted at free start (default: the floor). Raising that level keeps more in the battery.
 15. **Whichever car is plugged in charges.** The cars take turns on the one Wall Connector; the planner identifies the car on the charger and commands only that one ([PLANNER_DESIGN.md, two cars](PLANNER_DESIGN.md#7-two-cars)).
+16. **Tesla's key is hosted at home, and the Tesla stays inside Tesla's free credit** (November 5, 2026). The public key is served from Home Assistant by the DuckDNS and Caddy 2 add-ons, with only port 443 forwarded and Home Assistant itself never exposed ([how](#phase-0-hosting-the-key-in-home-assistant)). FleetKey.net and GitHub/Cloudflare Pages are fallbacks. The developer account has no payment method and a $0 billing limit, so nothing can be charged; Tesla Fleet's polling is turned off and the planner's [spending guard](PLANNER.md#the-tesla-spending-guard) keeps its calls inside the $10 monthly credit ([free credit](#phase-0-staying-inside-the-free-credit)).
 
 ## How it works
 
@@ -148,42 +150,119 @@ Each phase ends with a check that must pass before the next. [TESTING.md](TESTIN
 | 1. Read everything | Tesla Fleet from phase 0. Install upstream Rivian with its schedule entities disabled, and Rivian schedule control in dry run. Confirm Wall Connector, Sol-Ark, Solcast and both cars read correctly for a week, including which car is on the charger. | Every planner input is present and fresh; no control yet. | Ready: `tools/check.py` and `tools/snapshot.py` are built |
 | 2. Planner design | Finish the simulation, pick the design, write `PLANNER_DESIGN.md`. | Owner agrees with the behaviour on the simulated days. | Design **done** ([PLANNER_DESIGN.md](PLANNER_DESIGN.md)); the owner's agreement is open, and `tools/replay.py` shows the behaviour on real days |
 | 3. Build the planner | HA integration with tests: night charging first, then daytime solar charging; tariff schedules; dashboard. Runs in **shadow mode**: it plans and explains, but sends nothing. | A week of shadow plans that the owner finds sensible. | **Built** and tested against fakes; starting dashboard only. Owner's shadow week to do. |
-| 4. Tesla under the planner | Let the planner command the Tesla. Its [Tesla guard](PLANNER.md#the-tesla-guard) keeps billed commands and wakes down. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. Billing on Tesla's developer dashboard inside the monthly credit. | Ready: `tools/attended_test.py tesla` first |
+| 4. Tesla under the planner | Let the planner command the Tesla. Its [Tesla guard](PLANNER.md#the-tesla-guard) keeps billed commands and wakes down. | A week with no unexpected paid import, few changes per day, plans met, and the Wall Connector confirming each change. Tesla's developer dashboard, checked weekly, inside the monthly credit. | Ready: `tools/attended_test.py tesla` first |
 | 5. Rivian trial | Attended trial T0–T8 with Rivian schedule control ([steps](RIVIAN_SCHEDULE_CONTROL.md#attended-trial)): a start on an idle car, current changes from 8 to 48 A, pause, lapse, Charge now, exact restore of the owner's schedule, and midnight. | Every step passes. If T0, T3, T4 or T5 fail, turn on [community-pattern mode](#if-the-rivian-trial-fails) and repeat T0–T8. If that fails too, the Rivian charges in the free hours only. | Ready: `tools/attended_test.py rivian` |
 | 6. Rivian under the planner | Let the planner command the Rivian through Rivian schedule control. | Same checks as phase 4, plus one schedule write per free night and the owner's own Rivian schedule restored on unplug. Each week, no faults and Rivian reads and writes at about 1 a minute or less. | Ready after phase 5 |
 | 7. Unattended | Notifications for faults and safety-rule trips; review a month of results. | A month without manual intervention. | Not started |
 
 ### Phase 0: the Tesla checklist
 
-HA core Tesla Fleet with your own Tesla developer app. It signs commands itself (a 2020 Model Y needs signed commands), so no tesla-http-proxy add-on, no Docker and no telemetry server are needed. Do the steps in this order.
+HA core Tesla Fleet with your own Tesla developer app. It signs commands itself (a 2020 Model Y needs signed commands), so no tesla-http-proxy add-on, no Docker and no telemetry server are needed. Home Assistant itself never has to be reachable from the internet. The only public piece is a tiny web server that hands out the public key. Do the steps in this order.
 
-1. **Create the developer app** at [developer.tesla.com](https://developer.tesla.com):
+1. **Pick the key's domain.** You host the key from Home Assistant ([how](#phase-0-hosting-the-key-in-home-assistant)), at a free DuckDNS name such as `tesla-<name>.duckdns.org`. Use that exact name everywhere below. Changing the domain later means registering and pairing again, so choose once.
+2. **Create the developer app** at [developer.tesla.com](https://developer.tesla.com):
    - **OAuth grant type:** "Authorization Code and Machine-to-Machine".
-   - **Allowed origin:** the key host: `https://fleetkey.net` with FleetKey.net, or `https://<sub>.<your-domain>` with your own subdomain (step 3).
+   - **Allowed origin:** `https://tesla-<name>.duckdns.org`, the exact name from step 1. Do not rely on a parent domain: `duckdns.org` is a public suffix, and Tesla does not say how it matches those. With a [fallback host](#fallback-key-hosts), use that host's address.
    - **Redirect URI:** `https://my.home-assistant.io/redirect/oauth`.
    - **Scopes:** Vehicle Information, Vehicle Location, Vehicle Commands and Vehicle Charging Management.
-   - **Billing:** add a payment method and set a billing limit of about $5. Sources disagree on whether an app without a payment method is disabled; the limit caps any surprise.
+   - **Billing:** add no payment method and leave the billing limit at $0 ([free credit](#phase-0-staying-inside-the-free-credit)).
    - Note the **Client ID** and **Client Secret**.
-2. **Add the credentials to Home Assistant.** Settings → Devices & services → ⋮ → Application credentials → Add: Tesla Fleet, with the Client ID and Secret. Then add the **Tesla Fleet** integration, region North America, and give it the key host's domain. If an earlier attempt exists, delete its `/config/tesla_fleet.key` and the old credentials first: reusing them can make Tesla reject the registration ([HA issue #170342](https://github.com/home-assistant/core/issues/170342)).
-3. **Host the public key.** Home Assistant shows the public key (a PEM) and the address it must be at: `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`. Pick one host:
-   - **FleetKey.net** (free, run by Teslemetry, listed in the HA docs, no domain to buy): paste the PEM and you get a `<id>.fleetkey.net` domain.
-   - **Your own subdomain** on GitHub Pages or Cloudflare Pages: publish the file at that path. On GitHub Pages also add an empty `.nojekyll` file, or the `.well-known` folder is not served.
-
-   Check it from any computer:
-
-   ```sh
-   curl -sSI https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem   # HTTP 200, no redirect
-   curl -sS  https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem   # the PEM itself
-   ```
-
-   It must answer 200 directly, with no redirect, challenge or login page. Keep the file there for good. Then let Home Assistant finish the partner registration.
-4. **Pair the virtual key.** Scan the QR code Home Assistant shows (`https://www.tesla.com/_ak/<domain>`) on the phone with the Tesla app, and approve the key in the car.
-5. **Remove tesla_custom.** Once the Tesla Fleet entities work, remove the tesla_custom integration and its tesla-http-proxy add-on. tesla_custom holds some of the same entity IDs (`number.roxxo_charge_limit`), so Tesla Fleet's may have a `_2` suffix: rename them to `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable` and `device_tracker.roxxo_location`. Also keep Tesla Fleet's `sensor.roxxo_charging`: the planner's [Tesla guard](PLANNER.md#the-tesla-guard) reads it. `tools/check.py` fails while a tesla_custom entity sits under one of these IDs.
-6. **Turn Sentry Mode off at home.** A car kept awake is polled and billed all day.
-
-**Expected cost: $0 a month.** Usage should be about $3–6 a month, inside Tesla's $10 monthly credit: about $3.60 of polling, $0.15–0.50 of commands and $0.60–1.80 of wakes. Sentry Mode at home would add about $8.60 a month of polling. A command retried every 15 minutes with a wake would cost about $2 a day; the Tesla guard prevents that. The prices are from secondary sources, so check the developer dashboard weekly in phase 4.
+3. **Set up the key host** in Home Assistant: the DuckDNS and Caddy 2 add-ons and one port forward ([steps 1–5 there](#phase-0-hosting-the-key-in-home-assistant)). Stop the old tesla-http-proxy add-on first: it writes its own key over the file you will host.
+4. **Add the credentials to Home Assistant.** Settings → Devices & services → ⋮ → Application credentials → Add: Tesla Fleet, with the Client ID and Secret. Then add the **Tesla Fleet** integration, region North America, and give it the domain from step 1. If an earlier attempt exists, delete its `/config/tesla_fleet.key` and the old credentials first: reusing them can make Tesla reject the registration ([HA issue #170342](https://github.com/home-assistant/core/issues/170342)).
+5. **Publish the key and finish the registration.** At "Registering public key", Home Assistant shows the PEM and the address it must be at: `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`. Put the file in place and check it ([step 6 there](#phase-0-hosting-the-key-in-home-assistant)). Then press Submit. If Home Assistant says the key was not found or does not match, fix the file and press Submit again.
+6. **Pair the virtual key.** Scan the QR code Home Assistant shows (`https://www.tesla.com/_ak/<domain>`) on the phone with the Tesla app, and approve the key in the car. Tesla reads the hosted key again here.
+7. **Remove tesla_custom.** Once the Tesla Fleet entities work, remove the tesla_custom integration and uninstall its tesla-http-proxy add-on. tesla_custom holds some of the same entity IDs (`number.roxxo_charge_limit`), so Tesla Fleet's may have a `_2` suffix: rename them to `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable` and `device_tracker.roxxo_location`. Also keep Tesla Fleet's `sensor.roxxo_charging`: the planner's [Tesla guard](PLANNER.md#the-tesla-guard) reads it. Keep `binary_sensor.roxxo_status` enabled too: the planner's [spending guard](PLANNER.md#the-tesla-spending-guard) reads it. `tools/check.py` fails while a tesla_custom entity sits under one of these IDs.
+8. **Turn Sentry Mode off at home.** A car kept awake is polled and billed all day.
+9. **Turn Tesla Fleet's polling off** once the planner commands the Tesla ([free credit](#phase-0-staying-inside-the-free-credit), step 3).
 
 **Fallback: Teslemetry** (HA core), if partner registration keeps failing or you want no developer account. It takes 10–15 minutes, nothing is self-hosted, and the entity IDs are the same. It costs about $30 a year, and up to about $90 a year if wakes use up the smaller plan's credits (prices from search snippets, so uncertain). `tools/check.py` accepts Tesla Fleet, Teslemetry and Tessie.
+
+### Phase 0: hosting the key in Home Assistant
+
+Tesla must be able to fetch the public key at `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem`. It needs a publicly trusted certificate on port 443 and a direct HTTP 200: no redirect, error page, challenge or login. The recommended route uses two add-ons. The **DuckDNS** add-on keeps the name pointed at your home. The **Caddy 2** add-on serves that one file and nothing else. Only port 443 is forwarded, to Caddy. Home Assistant (port 8123) is never forwarded and never proxied. It costs nothing.
+
+1. **DuckDNS.** Create `tesla-<name>` at [duckdns.org](https://www.duckdns.org) and note your token. Install the **DuckDNS** add-on (official add-on store). Set `domains: [tesla-<name>.duckdns.org]`, your token, and `lets_encrypt.accept_terms: false`. It only keeps the address current; Caddy gets its own certificate. Start it.
+2. **Free port 443.** Stop the old tesla-http-proxy add-on, and do not run the NGINX SSL proxy add-on: both can hold port 443, and the proxy add-on writes its own key to `/share/tesla/com.tesla.3p.public-key.pem`, so Tesla would see a key that does not match Home Assistant's.
+3. **Caddy 2.** Add-on store → ⋮ → Repositories → add `https://github.com/einschmidt/app-caddy-2`, then install **Caddy 2**. Set its option `non_caddyfile_config` to `{}`. Create `/addon_configs/c80c7555_caddy-2/Caddyfile` (with the Terminal & SSH or File editor add-on):
+
+   ```caddyfile
+   {
+   	email you@example.com
+   }
+
+   tesla-<name>.duckdns.org {
+   	@key path /.well-known/appspecific/com.tesla.3p.public-key.pem
+   	handle @key {
+   		root * /share/tesla
+   		rewrite * /com.tesla.3p.public-key.pem
+   		header Content-Type application/x-pem-file
+   		file_server
+   	}
+   	handle {
+   		respond 404
+   	}
+   }
+   ```
+
+   Every other address answers 404. Caddy does not proxy Home Assistant at all.
+4. **The router.** Forward WAN TCP 443 to the Home Assistant VM's LAN address, port 443. Forward nothing else: not 80, not 8123. Caddy gets its Let's Encrypt certificate through port 443 itself.
+5. **Start Caddy 2** and read its log: it should report a certificate for `tesla-<name>.duckdns.org`.
+6. **Put the key in place** when Tesla Fleet's setup shows "Registering public key" ([checklist](#phase-0-the-tesla-checklist), step 5). Home Assistant has just made its private key, `/config/tesla_fleet.key`. In the Terminal & SSH add-on:
+
+   ```sh
+   mkdir -p /share/tesla
+   openssl ec -in /config/tesla_fleet.key -pubout -out /share/tesla/com.tesla.3p.public-key.pem
+   ```
+
+   The file must hold the same PEM that Home Assistant shows (`-----BEGIN PUBLIC KEY-----`). You can also paste that PEM into the file by hand. Check it from outside your network, for example from a phone on mobile data:
+
+   ```sh
+   curl -sSI https://tesla-<name>.duckdns.org/.well-known/appspecific/com.tesla.3p.public-key.pem   # HTTP 200, no redirect
+   curl -sS  https://tesla-<name>.duckdns.org/.well-known/appspecific/com.tesla.3p.public-key.pem   # the PEM itself
+   curl -sSI https://tesla-<name>.duckdns.org/                                                         # 404: nothing else is served
+   ```
+
+   Then press Submit in Home Assistant.
+
+**Security notes.**
+
+- **Only the public key is published.** It is not a secret. Anyone can read it, and it lets no one command the car.
+- **The private key stays private.** `/config/tesla_fleet.key` signs every command. Never copy it into `/share`, `/config/www` or any folder that is served. It is in Home Assistant's backups: keep those encrypted. If it is lost, you must register and pair again.
+- **What is exposed:** Caddy on port 443, and your home's IP address through the DuckDNS name. Keep the Caddy 2 add-on updated. The DuckDNS token is a secret; it can repoint the name, nothing more.
+- **Home Assistant stays off the internet.** Never forward 8123, and do not add a site for Home Assistant to the Caddyfile. Tesla Fleet's sign-in goes through `my.home-assistant.io`, and its polling and commands go out from Home Assistant to Tesla, so nothing needs to reach in.
+- **Do not use** Home Assistant's `/local` folder (wrong path, and it would put Home Assistant on the internet) or Nabu Casa (no control over `/.well-known`, and Tesla is reported to refuse it as an allowed origin).
+- **If you change the key,** update the hosted file, register again and pair the car again.
+
+**Can the key go offline?** Keep it online for good. Tesla's docs say the key "must be and remain hosted", and the host above costs nothing and exposes nothing else. What is known:
+
+- Tesla reads the key when the domain is registered, and again each time a car is paired through `tesla.com/_ak/<domain>` (since Tesla app 4.30.0, announced 2024-02-02).
+- Tesla does not read it for commands. The car checks each signed command against the key in its own keychain, and Home Assistant signs locally with `/config/tesla_fleet.key`. So already-paired commands should keep working while the host is down.
+- Whether Tesla re-checks the key later, or drops a domain whose key is gone, is not documented. Do not rely on it never doing so.
+- Bring the host back before any new pairing (another car, or a re-pair after the key was removed from the car), a new Tesla Fleet config entry, or a registration in another region.
+
+**Option without an open port** (about $10 a year for a domain): the **Cloudflared** add-on as a local tunnel. DuckDNS names cannot be used; your own domain must be on Cloudflare DNS. Leave `external_hostname` empty, so Home Assistant is not published. Add one `additional_hosts` entry, `{hostname: tesla.<your-domain>, service: http://<HA LAN address>:8098}`, and give Caddy a second site, `http://:8098`, with the same key-only `handle` and 404 blocks. Turn off Bot Fight Mode, challenge pages, Access policies and redirects for that hostname, or Tesla gets a page instead of the key.
+
+#### Fallback key hosts
+
+If you would rather not host the key at home:
+
+- **FleetKey.net** (free, run by Teslemetry, listed in the HA docs, no domain to buy): paste the PEM and you get a `<id>.fleetkey.net` domain. The allowed origin is then `https://fleetkey.net`.
+- **Your own subdomain** on GitHub Pages or Cloudflare Pages: publish the file at the `.well-known` path. On GitHub Pages also add an empty `.nojekyll` file, or the `.well-known` folder is not served.
+
+Check either with the same `curl` lines. Moving to another host later changes the domain, so you register and pair again.
+
+### Phase 0: staying inside the free credit
+
+Tesla's prices (2026, USD): commands $1 per 1,000, data requests $1 per 500, wakes $1 per 50, with a $10 credit per account and month. Every request below status 500 is billed, a refused command too. Hosting the key costs nothing. The plan is to make a charge impossible, and to keep use well inside the credit so the API is never suspended either.
+
+1. **Tesla's developer account.** Add no payment method. Leave the billing limit at its default of $0. Tesla's billing page says an app over its limit, or one that would need to pay without a payment method, is suspended until the next billing cycle, and Tesla emails at 80% of the limit. So going past the $10 credit should mean a suspended API, not a bill. This was read through search extracts on 2026-11-05 (likely, not verified): open developer.tesla.com/docs/fleet-api/billing-and-limits once to confirm that the credit applies before the limit.
+2. **The planner's [spending guard](PLANNER.md#the-tesla-spending-guard)** counts the planner's own Tesla calls each calendar month (`sensor.solar_ev_planner_tesla_api_spend`). From 70% of its cap it sends essential commands only, and near the cap it sends nothing until the 1st. Its settings: `number.solar_ev_planner_tesla_api_budget` ($5), `number.solar_ev_planner_tesla_fleet_polling_estimate` ($5.20, counted only while Tesla Fleet polls) and `number.solar_ev_planner_tesla_refresh_interval` (60 minutes). Keep the defaults.
+3. **Tesla Fleet's polling off** once the planner commands the Tesla (phase 4): Settings → Devices & services → Tesla Fleet → ⋮ → System options → "Enable polling for updates" off. The planner then refreshes the Tesla itself: at plug-in and unplug, hourly while it is on the Wall Connector, and before a command. That costs less than polling every 10 minutes, and the guard's cap rises from $3.80 to the $5 budget. Until phase 4, leave polling on so phase 1 sees the car's data.
+4. **Sentry Mode off at home.** It keeps the car awake, and an awake car is polled all day: about $8.60 a month.
+5. **Do not wake the car by hand from automations.** Never press Tesla Fleet's Wake button in an automation. A wake costs as much as 20 data reads.
+6. **Check Tesla's developer dashboard weekly in phase 4,** and compare it with the spend sensor. The guard sees only the planner's calls, not the Tesla app's, other automations' or Tesla Fleet's own polling.
+
+**Expected cost: $0 a month.** With Tesla Fleet polling, an awake car costs about $5 a month of polling alone (84 reads a day while awake 14 hours), plus $0.15–0.50 of commands and $1.20–1.80 of wakes. If Tesla bills Tesla Fleet's state check too, polling alone passes the credit. With its polling off and the planner refreshing hourly while plugged in, about $3–5 a month.
 
 ### Phase 0: the Rivian app
 
@@ -251,8 +330,8 @@ Retired:
 
 Decisions for the owner, the first one blocking phase 0:
 
-1. **Where Tesla's public key is hosted:** FleetKey.net (free, run by Teslemetry, no domain needed) or a subdomain of your own domain on GitHub Pages or Cloudflare Pages ([Tesla checklist](#phase-0-the-tesla-checklist), step 3). Tesla Fleet needs it before the Tesla can be read or commanded.
-2. **Tesla Fleet or Teslemetry.** Tesla Fleet with your own developer app is recommended: $0 a month expected, after adding a payment method and a $5 billing limit. Teslemetry costs about $30–90 a year and needs no developer account.
+1. **Where Tesla's public key is hosted:** at home, from Home Assistant, as you chose: the DuckDNS and Caddy 2 add-ons with only port 443 forwarded ([how](#phase-0-hosting-the-key-in-home-assistant)). Still to pick: the DuckDNS name (`tesla-<name>.duckdns.org`). FleetKey.net or GitHub/Cloudflare Pages remain [fallbacks](#fallback-key-hosts). Tesla Fleet needs the key before the Tesla can be read or commanded.
+2. **Tesla Fleet or Teslemetry.** Tesla Fleet with your own developer app, as you chose: $0 a month expected, with no payment method and the billing limit at $0, Tesla Fleet's polling off and the planner's [spending guard](PLANNER.md#the-tesla-spending-guard) on its defaults ([free credit](#phase-0-staying-inside-the-free-credit)). Teslemetry, about $30–90 a year with no developer account, stays the fallback.
 3. **Rivian Smart Charging off,** and the schedules reduced to one home schedule with its pin on the house ([Rivian checklist](#phase-0-the-rivian-app)).
 4. **Which Rivian login** schedule control uses: a second login with your own account (a second one-time code at setup and at each re-authentication), or an invited-driver account. Whether an invited driver can write schedules is not known; test it if you choose it.
 5. **The enabled-only restore:** allow Rivian schedule control to write back only your enabled schedules if Rivian refuses the full list (the `restore_enabled_only` option, off by default). The full list stays archived.
@@ -290,7 +369,8 @@ Answered:
 - **Leftover tesla_custom entities** would point the planner at the wrong integration. Remove tesla_custom; `tools/check.py` fails on them.
 - **The Rivian client logs** whole error responses, with coordinates, at warning level. Set the `rivian` logger to `error`. The client's private login attributes, which the config flow reads, could change in a 2.x release; a test checks them against the installed version.
 - **Forecast quality** on fast-changing days: the planner leans on the battery and the safety rules there.
-- **Tesla API cost and limits:** about $3–6 a month stays within Tesla's $10 monthly credit; verify on Tesla's developer dashboard in phase 4. A refused start retried every 15 minutes with a wake would cost about $2 a day; the [Tesla guard](PLANNER.md#the-tesla-guard) prevents it. Tesla's partner registration can fail ([HA issue #170342](https://github.com/home-assistant/core/issues/170342)); Teslemetry is the fallback.
+- **Tesla API cost and limits:** about $3–5 a month stays within Tesla's $10 monthly credit; the [spending guard](PLANNER.md#the-tesla-spending-guard) stops the planner before its cap, and with no payment method and a $0 limit an overrun should suspend the API until next month, not bill you (from search extracts of Tesla's billing page, not verified). Verify on Tesla's developer dashboard weekly in phase 4. A refused start retried every 15 minutes with a wake would cost about $2 a day; the [Tesla guard](PLANNER.md#the-tesla-guard) prevents it. Tesla's partner registration can fail ([HA issue #170342](https://github.com/home-assistant/core/issues/170342)); Teslemetry is the fallback.
+- **The key host at home.** If the home IP changes and DuckDNS lags, or Caddy is down, Tesla cannot read the key. Commands to an already-paired car should keep working, since the car checks them against its own keychain, but registration and pairing fail until it is back. Whether Tesla re-checks the key later is undocumented, so keep it online. Caddy on port 443 is the only thing exposed; keep it updated.
 - **Internet down:** both cars' APIs are cloud services, so neither can be commanded. The Rivian's window ends on its own (in the free hours, when they end); the Tesla keeps charging at its last current up to its limit.
 - **The free-hours refill is assumed to reach 100%.** The daytime plan counts on it and leaves the refill to the Sol-Ark's own settings. If its time-of-use slot or grid-charge rate changes so that the battery is no longer full when the free hours end, the assumption breaks: a day planned down to the floor can leave the next morning short, and the house imports paid power until the sun covers it. Phase 1 checks the refill in the Sol-Ark's history.
 - **The caution level is optimistic** until it is recalibrated from shadow-mode data; the safety rules and re-planning every 15 minutes cover the gap in simulation.

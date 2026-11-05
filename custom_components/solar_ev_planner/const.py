@@ -49,6 +49,34 @@ FAILURE_BACKOFF_MAX: Final = timedelta(minutes=15)
 STALL_AFTER_FAILURES: Final = 3
 STALL_BACKOFF: Final = timedelta(hours=3)
 SERVICE_TIMEOUT: Final = 60
+
+# The Tesla spending guard. Tesla's Fleet API price table (USD, developer.tesla.com
+# billing-and-limits, read 2026-11-05): commands $1 per 1,000, data requests $1 per 500, wakes
+# $1 per 50, with a $10 discount per account and month. Every request below status 500 is
+# billed, a refused or failed command too. Tesla Fleet's state check before vehicle_data is
+# "free" by HA's comment but unconfirmed, so it is counted as a data request.
+TESLA_PRICE_COMMAND: Final = 0.001
+TESLA_PRICE_DATA: Final = 0.002
+TESLA_PRICE_WAKE: Final = 0.02
+TESLA_CREDIT: Final = 10.0
+# Kept free of the credit whatever the settings say: the counts are the planner's own, and
+# Tesla's billing month may not start with the calendar month.
+TESLA_MARGIN: Final = 1.0
+# At this share of the planner's cap only essential commands go out; at the cap minus the
+# cost of one more send (TESLA_WORST_SEND) nothing is sent until the next month.
+TESLA_ESSENTIAL_AT: Final = 0.7
+# A wake (Tesla Fleet wakes an asleep car before each command) is followed by up to three
+# state checks, counted as data requests. A refresh is the state check plus vehicle_data.
+TESLA_WAKE_CHECKS: Final = 3
+TESLA_REFRESH_DATA: Final = 2
+TESLA_WORST_SEND: Final = (
+    2 * TESLA_PRICE_COMMAND
+    + TESLA_PRICE_WAKE
+    + (TESLA_WAKE_CHECKS + TESLA_REFRESH_DATA) * TESLA_PRICE_DATA
+)
+# Before a command, the Tesla is refreshed (with Tesla Fleet's polling off) when its data is
+# older than this, so Tesla Fleet neither wakes an awake car nor commands an asleep one.
+TESLA_FRESH_BEFORE_SEND: Final = timedelta(minutes=10)
 PV_DAYS_KEPT: Final = 21
 
 STORAGE_VERSION: Final = 1
@@ -129,6 +157,7 @@ CONF_PLUGGED: Final = "plugged"
 CONF_LOCATION: Final = "location"
 CONF_CONTROL_STATE: Final = "control_state"
 CONF_CHARGING_STATE: Final = "charging_state"  # a Tesla's charging sensor, optional
+CONF_STATUS: Final = "status"  # a Tesla's status (online) binary sensor, optional
 CONF_MIN_A: Final = "min_a"
 CONF_MAX_A: Final = "max_a"
 CONF_STEP_A: Final = "step_a"
@@ -172,6 +201,9 @@ S_PAID_TOLERANCE: Final = "paid_tolerance_min"
 S_PRICE: Final = "price"
 S_BUYBACK: Final = "buyback"
 S_OVERRIDE: Final = "override"
+S_TESLA_BUDGET: Final = "tesla_budget"  # USD a month for the planner's own Tesla calls
+S_TESLA_POLLING: Final = "tesla_polling"  # USD a month Tesla Fleet's own polling may cost
+S_TESLA_REFRESH: Final = "tesla_refresh_min"  # minutes; 0 = the planner never refreshes
 
 OVERRIDE_AUTO: Final = "auto"
 
@@ -188,6 +220,11 @@ DEFAULT_SETTINGS: Final[dict[str, Any]] = {
     S_PRICE: 0.32,
     S_BUYBACK: 0.0,
     S_OVERRIDE: OVERRIDE_AUTO,
+    S_TESLA_BUDGET: 5.0,
+    # Tesla Fleet polls an awake car every 10 minutes: about 84 vehicle_data a day with the
+    # car awake 14 hours, $5.11 a month. Not counted once its polling is turned off.
+    S_TESLA_POLLING: 5.2,
+    S_TESLA_REFRESH: 60.0,
 }
 
 # Caution select options (translation-friendly keys) -> the core's labels.

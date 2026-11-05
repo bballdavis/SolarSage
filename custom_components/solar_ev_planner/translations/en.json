@@ -194,6 +194,7 @@
             "location": "Location",
             "control_state": "Schedule control state",
             "charging_state": "Charging state",
+            "status": "Status",
             "min_a": "Minimum current",
             "max_a": "Maximum current",
             "step_a": "Current step",
@@ -209,6 +210,7 @@
             "location": "Recommended. The car's own device tracker (home), not a person, or a binary sensor that is on at home.",
             "control_state": "Optional, recommended for a Rivian: sensor.r1s_schedule_control_control_state. Its attributes tell a pause from no request, so a request that Rivian schedule control dropped is sent again.",
             "charging_state": "Optional, recommended for a Tesla: the Tesla Fleet charging sensor (sensor.roxxo_charging). While it reads complete, disconnected or no power, the planner sends no billed start command.",
+            "status": "Optional, recommended for a Tesla: the Tesla Fleet status sensor (binary_sensor.roxxo_status, on while the car is online). The Tesla spending guard counts a wake for a command only while it is not on; without it, every command counts one.",
             "min_a": "Rivian 8 A, Tesla 6 A.",
             "max_a": "48 A for both on a 48 A Wall Connector. The current number's own maximum also applies.",
             "step_a": "Rivian 2 A (even currents), Tesla 1 A.",
@@ -228,6 +230,7 @@
             "location": "Location",
             "control_state": "Schedule control state",
             "charging_state": "Charging state",
+            "status": "Status",
             "min_a": "Minimum current",
             "max_a": "Maximum current",
             "step_a": "Current step",
@@ -243,6 +246,7 @@
             "location": "Recommended. The car's own device tracker (home), not a person, or a binary sensor that is on at home.",
             "control_state": "Optional, recommended for a Rivian: sensor.r1s_schedule_control_control_state. Its attributes tell a pause from no request, so a request that Rivian schedule control dropped is sent again.",
             "charging_state": "Optional, recommended for a Tesla: the Tesla Fleet charging sensor (sensor.roxxo_charging). While it reads complete, disconnected or no power, the planner sends no billed start command.",
+            "status": "Optional, recommended for a Tesla: the Tesla Fleet status sensor (binary_sensor.roxxo_status, on while the car is online). The Tesla spending guard counts a wake for a command only while it is not on; without it, every command counts one.",
             "min_a": "Rivian 8 A, Tesla 6 A.",
             "max_a": "48 A for both on a 48 A Wall Connector. The current number's own maximum also applies.",
             "step_a": "Rivian 2 A (even currents), Tesla 1 A.",
@@ -355,6 +359,15 @@
       },
       "restore_current": {
         "name": "Restore current at unplug"
+      },
+      "tesla_api_budget": {
+        "name": "Tesla API budget"
+      },
+      "tesla_polling_estimate": {
+        "name": "Tesla Fleet polling estimate"
+      },
+      "tesla_refresh_interval": {
+        "name": "Tesla refresh interval"
       }
     },
     "select": {
@@ -446,6 +459,9 @@
       },
       "paid_energy": {
         "name": "Energy paid"
+      },
+      "tesla_api_spend": {
+        "name": "Tesla API spend"
       }
     },
     "switch": {

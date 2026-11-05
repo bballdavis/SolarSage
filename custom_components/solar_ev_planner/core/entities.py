@@ -26,7 +26,8 @@ Commands (CarCommand.amps): None = no service call; 0 = switch off; > 0 = set th
 number, then switch on if it was off. Rivian: Rivian schedule control's switch and number
 (each change is a cloud schedule write, ~1-2 min). Tesla (Fleet): charge switch and charge
 current (billed); its charging sensor, optional, keeps the planner from sending a start the
-car cannot act on (complete, disconnected, no_power).
+car cannot act on (complete, disconnected, no_power); its status sensor, optional, tells the
+spending guard whether a command needs a wake.
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ CAR_ENTITIES: dict[str, dict[str, str]] = {
         "switch": "switch.roxxo_charge",
         "current": "number.roxxo_charge_current",
         "charging_state": "sensor.roxxo_charging",  # enum: charging, complete, disconnected, ...
+        "status": "binary_sensor.roxxo_status",  # on while the car is online (awake)
     },
 }
 

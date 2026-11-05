@@ -45,6 +45,12 @@ PLANNER_ENTITIES = {
     "sensor.solar_ev_planner_car_on_charger",
     "sensor.solar_ev_planner_heartbeat",
 }
+TESLA_SPEND_ENTITIES = {
+    "sensor.solar_ev_planner_tesla_api_spend",
+    "number.solar_ev_planner_tesla_api_budget",
+    "number.solar_ev_planner_tesla_fleet_polling_estimate",
+    "number.solar_ev_planner_tesla_refresh_interval",
+}
 CAR_ENTITIES = {
     "binary_sensor.{car}_planner_charging_wanted",
     "sensor.{car}_planner_planned_current",
@@ -74,6 +80,7 @@ async def test_entity_ids(site: HomeAssistant, fake_cars: FakeCars) -> None:
         expected |= {e.format(car=car) for e in CAR_ENTITIES}
     expected.add("number.roxxo_planner_restore_current_at_unplug")  # the Tesla only
     expected.add("sensor.r1s_planner_charging_until")  # the Rivian only
+    expected |= TESLA_SPEND_ENTITIES  # with a Tesla only
     assert ids == expected
     for entity_id in expected:
         assert hass.states.get(entity_id) is not None, entity_id

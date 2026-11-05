@@ -69,6 +69,7 @@ from .const import (
     CONF_PV_POWER,
     CONF_SCHEDULE,
     CONF_SOC,
+    CONF_STATUS,
     CONF_STEP_A,
     CONF_SWITCH,
     CONF_VOLTS,
@@ -315,6 +316,9 @@ def car_fields(kind: str) -> dict[str, tuple[bool, Any]]:
     else:
         # Tesla Fleet's charging sensor: no start is sent while it reads complete and the like
         fields[CONF_CHARGING_STATE] = (False, _entity("sensor"))
+        # Tesla Fleet's status (on while online): a send to a car that is not online is
+        # counted with a wake by the spending guard
+        fields[CONF_STATUS] = (False, _entity("binary_sensor"))
     fields |= {
         CONF_MIN_A: (True, _number(1, 80, 1, "A")),
         CONF_MAX_A: (True, _number(1, 80, 1, "A")),

@@ -59,6 +59,7 @@ async def async_get_config_entry_diagnostics(
         "pv_days": [asdict(d) for d in coordinator.pv_days],
         "runtime": {car_id: rt.to_dict() for car_id, rt in coordinator.runtime.items()},
         "planner_state": coordinator.planner.state_dict(),
+        "tesla_spend": coordinator.spend.attributes(now),
     }
     if data is not None:
         out["last_cycle"] = {

@@ -50,7 +50,7 @@ Without a terminal, download the repository as a ZIP from GitHub and copy the `c
 
 1. **Solcast** ([BJReplay/ha-solcast-solar](https://github.com/BJReplay/ha-solcast-solar)) with its forecast-today and forecast-tomorrow sensors. Their `detailedForecast` attribute gives the half hours with `pv_estimate10`, `pv_estimate` and `pv_estimate90`.
 2. **A Schedule helper for the free hours.** Settings → Devices & services → Helpers → Create helper → Schedule. Name it "Free hours" (it becomes `schedule.free_hours`) and paint 00:00–06:00 and 20:00–24:00 on every day. Repaint it when the electricity plan changes. Leave it out for a flat or time-of-use plan.
-3. **Tesla Fleet** set up for the Tesla, with the virtual key approved in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)), and tesla_custom removed. The planner does not use tesla_custom: on a 2020 Model Y it cannot command without its proxy add-on, and its entities take Tesla Fleet's IDs. Teslemetry, the fallback, has the same entity IDs.
+3. **Tesla Fleet** set up for the Tesla, with its public key hosted at home ([plan, key hosting](PLAN.md#phase-0-hosting-the-key-in-home-assistant)), the virtual key approved in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)), and tesla_custom removed. The planner does not use tesla_custom: on a 2020 Model Y it cannot command without its proxy add-on, and its entities take Tesla Fleet's IDs. Teslemetry, the fallback, has the same entity IDs.
 4. **Rivian schedule control** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
 
 ## Configure
@@ -96,6 +96,7 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 | Location | `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install (the form suggests whichever exists) | `device_tracker.roxxo_location` |
 | Schedule control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
 | Charging state | — | `sensor.roxxo_charging` (optional, recommended: the [Tesla guard](#the-tesla-guard) reads it) |
+| Status | — | `binary_sensor.roxxo_status` (optional, recommended: on while the car is online; the [spending guard](#the-tesla-spending-guard) counts a wake only while it is not on, and without it counts one for every command) |
 | Minimum, maximum, step | 8 A, 48 A, 2 A | 6 A, 48 A, 1 A |
 | Usable pack energy | 135 kWh | 75 kWh |
 
@@ -149,6 +150,7 @@ What the planner sends the schedule control, and the schedule control's rules fo
 | `sensor.solar_ev_planner_forecast_correction` | The factor today's production so far puts on the rest of today's forecast; attributes: the evidence weight, the multi-day bias, the forecast's age, and p10/p50/p90 left today |
 | `sensor.solar_ev_planner_car_on_charger` | `none`, `rivian` or `tesla`, with why, the candidates, the Wall Connector readings and `tonight_car`: the car that should be on the charger in the coming free hours |
 | `sensor.solar_ev_planner_heartbeat` | Rivian schedule control's liveness entity (above) |
+| `sensor.solar_ev_planner_tesla_api_spend` | With a Tesla only: what the planner's own Tesla Fleet calls cost this calendar month, in USD at Tesla's prices. Attributes: the counts (`commands`, `wakes`, `data_requests`, `refreshes`), the `level` (`normal`, `essential_only`, `stopped`), the budget, Tesla Fleet's polling (`on`, `off`, `unknown`) and its estimate, the `cap`, where essential-only starts and where it stops, what is `left`, how wakes are counted, the last refresh, and last month's total. See [the spending guard](#the-tesla-spending-guard). |
 
 ### Each car (device "R1S planner", "Roxxo planner")
 
@@ -181,6 +183,9 @@ All settings are entities on the planner's device. They are kept in the planner'
 | `number.solar_ev_planner_import_price` | 0.32 | 0–5 per kWh | Price outside the free hours and price windows |
 | `number.solar_ev_planner_solar_buyback` | 0.00 | 0–5 per kWh | What exported solar earns |
 | `select.solar_ev_planner_charger_car_override` | auto | auto, rivian, tesla | Names the car on the charger when both report being plugged in at home |
+| `number.solar_ev_planner_tesla_api_budget` | $5.00 | $0–10 | With a Tesla only: what the planner's own Tesla calls may cost a month ([spending guard](#the-tesla-spending-guard)) |
+| `number.solar_ev_planner_tesla_fleet_polling_estimate` | $5.20 | $0–30 | With a Tesla only: what Tesla Fleet's own polling may cost a month, kept free of the credit while that polling is on (not counted once it is off) |
+| `number.solar_ev_planner_tesla_refresh_interval` | 60 min | 0–240 min | With a Tesla only: how often the planner refreshes a plugged-in Tesla while Tesla Fleet's polling is off; 0 turns the planner's refreshes off |
 
 ## Shadow mode and commanding
 
@@ -198,7 +203,7 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 1. The planner starts a fresh session and sends its first decision at once to the car on the charger, and only to that car.
 2. **Tesla:** the charge current, then the charge switch. Every command is billed by Tesla's API, so a command is never repeated on the planner's own initiative.
 3. **Rivian:** Rivian schedule control's current, then its switch. In the free hours the charging-until sensor is set first, so the schedule control writes one window to their end. If the schedule control drops the request (after a restart, an outage or a replug), the planner sends it again, except while the schedule control is handed back, faulted or waiting for the vehicle. With the schedule control still in dry run, the requests are recorded but nothing is written to Rivian.
-4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure of up to 15 minutes. The hourly count survives restarts. For the Tesla, the [Tesla guard](#the-tesla-guard) also applies.
+4. **Limits:** the planner's own (15 minutes between changes, 6 A at a time; in free hours the car goes straight to its full current), and on top at most one command per car per minute and 12 an hour (a pause is never held back), with a back-off after a failure of up to 15 minutes. The hourly count survives restarts. For the Tesla, the [Tesla guard](#the-tesla-guard) and the [spending guard](#the-tesla-spending-guard) also apply.
 5. **At unplug** the Tesla's current is set back to its restore current, if the planner changed it during that plug-in.
 
 ### The Tesla guard
@@ -211,6 +216,30 @@ Each Tesla command is billed and may wake the car. A start refused because the c
 - **It survives restarts:** the hourly command count, the "complete" answer and the stall are saved.
 
 The car's planned-current sensor shows why a command waits. The Rivian has no guard: its commands are not billed, and it keeps the back-off of up to 15 minutes.
+
+### The Tesla spending guard
+
+Tesla's Fleet API bills every request below status 500 (2026 prices, USD): a command $0.001, a data request $0.002, a wake $0.02, with a $10 discount per account and month. The guard makes sure the planner's own calls, with Tesla Fleet's polling, stay inside that discount, so the owner is never charged.
+
+- **It counts every billable call the planner causes**, per calendar month, kept across restarts: each charge switch or charge current call (also when refused or failed), a wake for each send to a Tesla whose status (`binary_sensor.roxxo_status`, mapped on the car) does not read online, with its three follow-up state checks as data requests, and each refresh as two data requests. Without the status sensor every send counts a wake. `sensor.solar_ev_planner_tesla_api_spend` shows the total and the counts.
+- **Its cap** is the smaller of the budget (default $5) and $10 less a $1 margin less Tesla Fleet's polling estimate (default $5.20: about 84 reads a day with the car awake 14 hours). With Tesla Fleet polling the cap is $3.80; once its polling is off, the estimate is not counted and the cap is the budget.
+- **From 70% of the cap: essential commands only.** The Tesla is started only in the free hours, and by day a decrease becomes a stop, so the car never draws paid power the planner did not want: the free hours' end and the paid-import and battery-floor safety rules stop it. Daytime starts and current changes, timed refreshes and the restore at unplug wait. The reason says so.
+- **At the cap less the cost of one more send: nothing.** No start, current change or refresh until the first of the next month. A stop to a Tesla that is charging still goes out: it is awake, so the stop costs one command, far less than paid-hours charging. A car that is not charging keeps its last state: set a Tesla charging schedule or a Wall Connector schedule as a backstop for paid hours. The reason says so, and the car's planned-current sensor says why its command waits.
+- **The Rivian is never counted:** its commands are not billed.
+
+**Tesla Fleet's polling.** Tesla Fleet polls an awake car every 10 minutes: its state, then vehicle_data, $5 or more a month (more if Tesla bills the state check, which HA calls free). The planner's refreshes cost less, so turn that polling off: Settings → Devices & services → Tesla Fleet → ⋮ → System options → "Enable polling for updates" off. The guard reads that option. While it is off, the planner calls `homeassistant.update_entity` on the Tesla's battery level:
+
+- once when the Wall Connector reports a car connected (is it the Tesla?) and once when the Tesla leaves it, so its plug reading changes;
+- every `number.solar_ev_planner_tesla_refresh_interval` (60 minutes) while the Tesla is on the Wall Connector, never while it is off the charger;
+- before a command when its data is more than 10 minutes old, so Tesla Fleet neither wakes an awake car (its status would read asleep) nor commands an asleep one.
+
+The refreshes run while Planning is on, also in shadow mode, and never while Tesla Fleet polls. At about 14 hours a day on the charger, hourly refreshes cost about $1.70 a month. Keep `binary_sensor.roxxo_status` enabled and mapped, Sentry Mode off at home, and check the developer dashboard weekly: the guard counts only the planner's calls, not the Tesla app's or other automations'.
+
+**Tesla's account.** Add no payment method and leave the billing limit at $0. Tesla suspends an app that goes past its limit until the next billing cycle, so a mistake should cost a suspended API, not money (Tesla's billing page was read through search extracts only; confirm it once on developer.tesla.com). The whole plan for staying inside the free credit, Sentry Mode off at home included, is in [the plan](PLAN.md#phase-0-staying-inside-the-free-credit).
+
+**Settings.** Keep the defaults: a $5 budget (`number.solar_ev_planner_tesla_api_budget`), a $5.20 polling estimate (`number.solar_ev_planner_tesla_fleet_polling_estimate`, counted only while Tesla Fleet polls) and a 60-minute refresh interval (`number.solar_ev_planner_tesla_refresh_interval`). Lower the budget for more room under the credit. Raise the polling estimate if you leave Tesla Fleet's polling on and the dashboard shows more. A longer refresh interval saves a little but plans on older battery levels.
+
+**Hosting the key costs nothing.** Tesla reads the public key at registration and pairing, not through the Fleet API, so it is never billed ([key hosting](PLAN.md#phase-0-hosting-the-key-in-home-assistant)).
 
 ### Planning off and shadow mode
 
@@ -328,4 +357,5 @@ views:
 - **The caution level is optimistic.** In simulation (run with a 10 PM–6 AM night charging window and a battery that held its level in free hours) the 90% battery path held 76% of the time; the closed loop compensated. Shadow-mode data should recalibrate it ([PLANNER_DESIGN.md](PLANNER_DESIGN.md#11-known-limits)).
 - **A pause is not capped.** The hourly cap never holds back a pause, because a pause is the safety stop. It cannot loop: once it succeeds the switch reads off, and failures go through the back-off and, for the Tesla, the stall.
 - **The Wall Connector power sensor is required.** While it is unavailable the planner does not plan, and the heartbeat goes down.
+- **The spending guard counts calendar months.** Tesla's billing cycle may start on another day; the $1 margin and the 70% step leave room for that, and for Tesla billing a call the guard does not count. It never sees calls the planner did not cause.
 - **Only one planner and one charger.** Car ids other than `rivian` and `tesla` show their raw id in the override and car-on-charger states.

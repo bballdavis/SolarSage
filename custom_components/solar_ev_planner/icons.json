@@ -41,6 +41,15 @@
       },
       "restore_current": {
         "default": "mdi:restore"
+      },
+      "tesla_api_budget": {
+        "default": "mdi:piggy-bank-outline"
+      },
+      "tesla_polling_estimate": {
+        "default": "mdi:cloud-sync-outline"
+      },
+      "tesla_refresh_interval": {
+        "default": "mdi:refresh-auto"
       }
     },
     "select": {
@@ -105,6 +114,9 @@
       },
       "paid_energy": {
         "default": "mdi:cash"
+      },
+      "tesla_api_spend": {
+        "default": "mdi:cash-check"
       }
     },
     "switch": {
