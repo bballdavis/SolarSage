@@ -11,10 +11,24 @@ configuring it is in docs/PLANNER.md.
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 
+from . import websocket_api
 from .const import DOMAIN, PLATFORMS, STORAGE_VERSION
 from .coordinator import PlannerConfigEntry, PlannerCoordinator
+from .frontend import async_register_card
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the dashboard card and its websocket commands (docs/PLANNER.md, "The
+    dashboard card")."""
+    websocket_api.async_register(hass)
+    await async_register_card(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: PlannerConfigEntry) -> bool:

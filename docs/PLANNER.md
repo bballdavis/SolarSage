@@ -50,7 +50,7 @@ Without a terminal, download the repository as a ZIP from GitHub and copy the `c
 
 1. **Solcast** ([BJReplay/ha-solcast-solar](https://github.com/BJReplay/ha-solcast-solar)) with its forecast-today and forecast-tomorrow sensors. Their `detailedForecast` attribute gives the half hours with `pv_estimate10`, `pv_estimate` and `pv_estimate90`.
 2. **A Schedule helper for the free hours.** Settings → Devices & services → Helpers → Create helper → Schedule. Name it "Free hours" (it becomes `schedule.free_hours`) and paint 00:00–06:00 and 20:00–24:00 on every day. Repaint it when the electricity plan changes. Leave it out for a flat or time-of-use plan.
-3. **Tesla Fleet** set up for the Tesla, with its public key hosted at home ([plan, key hosting](PLAN.md#phase-0-hosting-the-key-in-home-assistant)), the virtual key approved in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)), and tesla_custom removed. The planner does not use tesla_custom: on a 2020 Model Y it cannot command without its proxy add-on, and its entities take Tesla Fleet's IDs. Teslemetry, the fallback, has the same entity IDs.
+3. **Tesla Fleet** set up for the Tesla, with its public key hosted at home ([plan, key hosting](PLAN.md#phase-0-hosting-the-key-through-traefik)), the virtual key approved in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)), and tesla_custom removed. The planner does not use tesla_custom: on a 2020 Model Y it cannot command without its proxy add-on, and its entities take Tesla Fleet's IDs. Teslemetry, the fallback, has the same entity IDs.
 4. **Rivian schedule control** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
 
 ## Configure
@@ -239,7 +239,7 @@ The refreshes run while Planning is on, also in shadow mode, and never while Tes
 
 **Settings.** Keep the defaults: a $5 budget (`number.solar_ev_planner_tesla_api_budget`), a $5.20 polling estimate (`number.solar_ev_planner_tesla_fleet_polling_estimate`, counted only while Tesla Fleet polls) and a 60-minute refresh interval (`number.solar_ev_planner_tesla_refresh_interval`). Lower the budget for more room under the credit. Raise the polling estimate if you leave Tesla Fleet's polling on and the dashboard shows more. A longer refresh interval saves a little but plans on older battery levels.
 
-**Hosting the key costs nothing.** Tesla reads the public key at registration and pairing, not through the Fleet API, so it is never billed ([key hosting](PLAN.md#phase-0-hosting-the-key-in-home-assistant)).
+**Hosting the key costs nothing.** Tesla reads the public key at registration and pairing, not through the Fleet API, so it is never billed ([key hosting](PLAN.md#phase-0-hosting-the-key-through-traefik)).
 
 ### Planning off and shadow mode
 
@@ -266,9 +266,37 @@ The refreshes run while Planning is on, also in shadow mode, and never while Tes
 
 An unchanged value keeps an old timestamp in Home Assistant (the battery level, the Wall Connector's power at 0), so no value is stale because of its age. The site counts as stale only when all of solar, grid, battery, Wall Connector power and the battery level have been silent for 30 minutes, or when an integration behind them is not loaded. A car is stale when its own values are unavailable or its integration is not loaded.
 
+## The dashboard card
+
+The planner ships its own card, in the Daylight look. Home Assistant loads it with the integration, so there is no Lovelace resource to add. After installing or updating the planner, restart Home Assistant and reload the browser once.
+
+Add a dashboard (Settings → Dashboards → Add dashboard → New dashboard from scratch), switch its view to **Panel (single card)**, and give it this card:
+
+```yaml
+type: custom:solar-ev-planner-card
+sky: auto      # auto follows sun.sun; day or night to fix the look
+fill: true     # fill the window; use false in a sections or masonry view
+```
+
+It needs no entity IDs: it finds the planner's entities itself.
+
+| Area | What it shows | What you can do |
+| --- | --- | --- |
+| Header | The mode, and whether the planner is off, in shadow mode or live | Turn Planning, Shadow and Daytime solar on or off. Turning shadow mode off, or the planner off while live, asks first |
+| On the charger | The car, its level and limit, what the planner sends (or would send) beside what the Wall Connector reads, the reason, the next change, the outlook and the plan. The other cars are listed underneath | |
+| Today: sun and the car | The Solcast range (p10 to p90) and median, solar so far, the planned car power (as planned until now, then the plan ahead) and what the car drew. After sunset it shows tomorrow | Point at the chart for the values at that time |
+| Site now | Solar, house, charger, battery and grid | |
+| Home battery outlook | The predicted battery level at the caution level and on an expected day, the floor, the free hours and the lowest point | Point at the chart for the values |
+| Settings | | Caution, battery floor and battery at free start (steps of 5%), and which car is on the charger. Changes and free hours are shown |
+| Health | Rivian schedule control's state (dry run, writes this hour, faults), Tesla API spend this month, the heartbeat, the inputs and the car on the charger | |
+
+Right-click a value, or press and hold it on a touch screen, to open its entity in Home Assistant. The remaining settings (largest change, prices, the Tesla guard, each car's plan) stay on the devices' pages.
+
+In shadow mode, compare the planned car area with the "Car drew" line: the gap is what the planner would have changed. The card gets a fresh snapshot after every planning cycle and every change of a setting (the `solar_ev_planner/subscribe` websocket command), and reads today's history from the recorder every 5 minutes.
+
 ## A starting dashboard
 
-Built-in cards only; add it as a new dashboard (raw configuration editor) and adjust. It has not been tried in the owner's Home Assistant yet.
+Built-in cards only, if you'd rather not use the card above; add it as a new dashboard (raw configuration editor) and adjust. It has not been tried in the owner's Home Assistant yet.
 
 ```yaml
 title: Solar EV
