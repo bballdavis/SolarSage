@@ -4,7 +4,9 @@
 ``solar_ev_planner/subscribe`` answers, then sends a new snapshot after every planning cycle
 and every settings change until the card unsubscribes. Both read only: the card changes
 settings through the planner's own entities (switch, select and number services), so the
-usual permissions and logbook apply.
+usual permissions and logbook apply. ``solar_ev_planner/refresh_schedules`` (admin) re-reads
+the Schedule helpers at once and plans again, after the card has edited the free hours
+(Home Assistant's own ``schedule/update``, also admin only).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ def async_register(hass: HomeAssistant) -> None:
     """Register the card's commands (once per Home Assistant run)."""
     websocket_api.async_register_command(hass, ws_dashboard)
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_refresh_schedules)
 
 
 @websocket_api.websocket_command({"type": f"{DOMAIN}/dashboard"})
@@ -64,3 +67,18 @@ def ws_subscribe(
     connection.subscriptions[msg["id"]] = coordinator.async_add_listener(_send)
     connection.send_result(msg["id"])
     _send()
+
+
+@websocket_api.websocket_command({"type": f"{DOMAIN}/refresh_schedules"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_refresh_schedules(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Re-read the free hours and price windows now, rather than within 15 minutes."""
+    coordinator = _coordinator(hass)
+    if coordinator is None:
+        connection.send_error(msg["id"], NOT_LOADED, "The Solar EV planner is not loaded")
+        return
+    await coordinator.async_refresh_schedules()
+    connection.send_result(msg["id"])

@@ -68,6 +68,7 @@ from .types import (
 STEP = timedelta(minutes=15)  # forward-model step and the planning cadence
 FIVE = timedelta(minutes=5)
 FREE_END_SEARCH = timedelta(days=8)  # how far the end of the free hours is looked for
+NIGHT_SCAN = timedelta(minutes=5)  # grid for "the free hours ran since the night start"
 
 
 @dataclass(frozen=True)
@@ -221,7 +222,16 @@ class Planner:
             )
         safety = None
         if snap.tariff.is_free(now):
-            amps, reason, dbg = self._night(snap, car)
+            wait = self._night_wait(snap)
+            if wait is not None:
+                amps, reason, dbg = (
+                    0,
+                    f"Free hours: the {car.spec.name} waits for the night charging start at "
+                    f"{wait:%H:%M}.",
+                    {"night_start": wait.isoformat()},
+                )
+            else:
+                amps, reason, dbg = self._night(snap, car)
             dbg["exempt"] = True  # free hours: full current at once
             mode = "night"
             self.import_since = self.export_since = None  # import is free: nothing to time
@@ -258,6 +268,38 @@ class Planner:
             if t > now and not is_free(t):
                 return t
         return end
+
+    def _start_in(self, t0: datetime, t1: datetime) -> datetime:
+        """When the car starts charging in the free period [t0, t1): the night charging start
+        if it falls inside the period, else the period's start."""
+        hhmm = self.settings.night_start
+        if not hhmm:
+            return t0
+        h, m = (int(x) for x in hhmm.split(":")[:2])
+        at = t0.replace(hour=h % 24, minute=m, second=0, microsecond=0)
+        if at < t0:
+            at += timedelta(days=1)
+        return at if at < t1 else t0
+
+    def _night_wait(self, snap: Snapshot) -> datetime | None:
+        """In free hours: the night charging start the car still waits for, or None when it
+        charges now (no start set, the start has passed in this free period, or the period
+        ends before it)."""
+        hhmm = self.settings.night_start
+        if not hhmm:
+            return None
+        now, free = snap.now, snap.tariff.is_free
+        h, m = (int(x) for x in hhmm.split(":")[:2])
+        nxt = now.replace(hour=h % 24, minute=m, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+        # Started already: the free hours have run without a break since the last start time.
+        t = nxt - timedelta(days=1)
+        while t < now and free(t):
+            t += NIGHT_SCAN
+        if t >= now:
+            return None
+        return nxt if nxt < self._free_end(snap) else None
 
     def _night(self, snap: Snapshot, car: CarState) -> tuple[int, str, dict]:
         """Free hours: the car charges at its full current to its limit; the Sol-Ark's own
@@ -844,8 +886,9 @@ class Planner:
             if car is not None and mode == "night":  # full current in the free hours
                 kw = car.spec.kw(self._max_a(car, snap), snap.volts)
                 left = car.need_kwh
+                start = self._night_wait(snap) or snap.now
                 for k, st in enumerate(steps):
-                    if st.refill and left > 0:
+                    if st.refill and left > 0 and st.t >= start - timedelta(seconds=1):
                         car_p[k] = min(kw, left / st.dt_h)
                         left -= car_p[k] * st.dt_h
             e_q = simulate_profile(steps, e0, car_p, bat)
@@ -874,6 +917,7 @@ class Planner:
         t0, t1 = self._cached("free", snap, lambda: self._next_free(snap))
         if t0 is None:
             return 0.0
+        t0 = self._start_in(t0, t1)  # the car waits for the night charging start
         if until is not None:
             t1 = min(t1, until)
         if t1 <= t0:
@@ -988,7 +1032,15 @@ class Planner:
                     return PlannedChange(max(now, st.t), a, why)
             max_a = self._max_a(car, snap)
             if b.t_free is not None and car.need_kwh > 0.5 and max_a != cur:
+                t0, t1 = self._next_free(snap)
+                start = self._start_in(t0, t1) if t0 is not None and t1 is not None else b.t_free
+                if start > b.t_free:
+                    return PlannedChange(start, max_a, "night charging starts")
                 return PlannedChange(b.t_free, max_a, "the free hours start")
+            return None
+        if mode == "night" and (wait := self._night_wait(snap)) is not None:
+            if car.need_kwh > 0.5:
+                return PlannedChange(wait, self._max_a(car, snap), "night charging starts")
             return None
         if mode == "night" and cur > 0:
             t_done = now + timedelta(hours=car.need_kwh / car.spec.kw(cur, snap.volts))

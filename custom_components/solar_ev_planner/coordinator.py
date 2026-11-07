@@ -82,6 +82,7 @@ from .const import (
     HISTORY_REFRESH,
     KIND_TESLA,
     MODE_NO_DATA,
+    NIGHT_FREE_START,
     OVERRIDE_AUTO,
     PENDING_AFTER_SEND,
     PLAN_DAYS,
@@ -97,6 +98,7 @@ from .const import (
     S_FLOOR,
     S_MAX_STEP,
     S_MIN_CHANGE,
+    S_NIGHT_START,
     S_OVERRIDE,
     S_PAID_TOLERANCE,
     S_PRICE,
@@ -435,6 +437,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
             min_change_min=float(s[S_MIN_CHANGE]),
             max_step_a=int(s[S_MAX_STEP]),
             paid_tolerance_min=float(s[S_PAID_TOLERANCE]),
+            night_start=None if s[S_NIGHT_START] == NIGHT_FREE_START else str(s[S_NIGHT_START]),
         )
 
     # ------------------------------------------------------------------ health
@@ -503,6 +506,11 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         ids = [self.options[CONF_FREE_HOURS]] if self.options.get(CONF_FREE_HOURS) else []
         ids += [w[CONF_SCHEDULE] for w in self.windows.values()]
         return ids
+
+    async def async_refresh_schedules(self) -> None:
+        """Re-read the Schedule helpers now (the card edited one) and plan again."""
+        await self._async_refresh_schedules(dt_util.now())
+        await self.async_request_refresh()
 
     async def _async_refresh_schedules(self, now: datetime) -> None:
         """Read the Schedule helpers' weekly configs; keep the last good one of each."""

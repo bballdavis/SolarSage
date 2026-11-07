@@ -354,6 +354,53 @@ def test_charging_when_free_hours_begin_carries_on(settings):
     assert d.reason.startswith("Free hours: charging at 48 A")
 
 
+# --------------------------------------------------------------------------- night charging start
+
+
+def test_the_car_waits_in_free_hours_for_the_night_charging_start(settings):
+    late = replace(settings, night_start="23:00")
+    now = datetime(2026, 6, 15, 20, 5)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    d = _plan(late).decide(snapshot(now, soc=50.0, cars=[car]))
+    assert d.mode == "night" and d.amps == 0
+    assert d.reason == "Free hours: the R1S waits for the night charging start at 23:00."
+    assert d.next_change is not None
+    assert (d.next_change.at, d.next_change.amps) == (datetime(2026, 6, 15, 23, 0), 48)
+    assert d.next_change.why == "night charging starts"
+    # the battery path has the car from 23:00, not before
+    before = [p.car_kw for p in d.trajectory if p.t <= datetime(2026, 6, 15, 23, 0)]
+    after = [p.car_kw for p in d.trajectory if p.t > datetime(2026, 6, 15, 23, 0)]
+    assert not any(before) and max(after) > 10  # (steps run from now, 20:05)
+    # from 23:00, and after midnight, full current
+    for t in (datetime(2026, 6, 15, 23, 0), datetime(2026, 6, 16, 2, 0)):
+        car = rivian(soc=60.0, since=t - timedelta(minutes=5))
+        d = _plan(late).decide(snapshot(t, soc=50.0, cars=[car]))
+        assert (d.mode, d.amps) == ("night", 48), t
+        assert d.free_until == MONDAY_NIGHT_END
+
+
+def test_a_night_start_outside_the_free_hours_means_their_start(settings):
+    early = replace(settings, night_start="18:00")
+    now = datetime(2026, 6, 15, 20, 5)
+    car = rivian(soc=60.0, since=now - timedelta(minutes=5))
+    d = _plan(early).decide(snapshot(now, soc=50.0, cars=[car]))
+    assert (d.mode, d.amps) == ("night", 48)
+
+
+def test_the_day_plans_the_night_from_the_night_charging_start(settings):
+    now = datetime(2026, 6, 15, 17, 0)
+    car = rivian(soc=40.0, since=now - timedelta(hours=3), commanded_a=40)
+    tariff = Tariff.free_nights("18:00", "06:00")
+    late = replace(settings, night_start="22:00")
+    d = _plan(late).decide(snapshot(now, soc=90.0, cars=[car], tariff=tariff))
+    assert d.next_change is not None
+    assert (d.next_change.at, d.next_change.amps) == (datetime(2026, 6, 15, 22, 0), 48)
+    assert d.next_change.why == "night charging starts"
+    # four fewer free hours to fill the car in
+    full = _plan(settings).decide(snapshot(now, soc=90.0, cars=[car], tariff=tariff))
+    assert d.outlooks[0].free_kwh <= full.outlooks[0].free_kwh
+
+
 # --------------------------------------------------------------------------- the free hours' end
 # Rivian schedule control writes one window to it for the whole night, so a night decision
 # carries when the free hours end, the same on every cycle; no other decision carries one.

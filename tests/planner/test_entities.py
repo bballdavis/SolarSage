@@ -28,6 +28,7 @@ PLANNER_ENTITIES = {
     "switch.solar_ev_planner_shadow_mode",
     "switch.solar_ev_planner_daytime_solar_charging",
     "select.solar_ev_planner_caution",
+    "select.solar_ev_planner_night_charging_start",
     "number.solar_ev_planner_battery_floor",
     "number.solar_ev_planner_battery_wanted_at_free_hours",
     "number.solar_ev_planner_minimum_time_between_changes",

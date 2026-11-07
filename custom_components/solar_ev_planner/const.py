@@ -204,6 +204,7 @@ S_OVERRIDE: Final = "override"
 S_TESLA_BUDGET: Final = "tesla_budget"  # USD a month for the planner's own Tesla calls
 S_TESLA_POLLING: Final = "tesla_polling"  # USD a month Tesla Fleet's own polling may cost
 S_TESLA_REFRESH: Final = "tesla_refresh_min"  # minutes; 0 = the planner never refreshes
+S_NIGHT_START: Final = "night_start"  # NIGHT_FREE_START or "HH:MM"
 
 OVERRIDE_AUTO: Final = "auto"
 
@@ -225,12 +226,21 @@ DEFAULT_SETTINGS: Final[dict[str, Any]] = {
     # car awake 14 hours, $5.11 a month. Not counted once its polling is turned off.
     S_TESLA_POLLING: 5.2,
     S_TESLA_REFRESH: 60.0,
+    S_NIGHT_START: "free_hours_start",
 }
 
 # Caution select options (translation-friendly keys) -> the core's labels.
 CAUTION_OPTIONS: Final[dict[str, str]] = {
     label.replace(" ", "_").replace("-", "_"): label for label in CAUTION_LEVELS
 }
+
+# Night charging start: with the free hours, or a half hour from 18:00 to 05:30. A time that
+# falls outside a free period means that period's start.
+NIGHT_FREE_START: Final = "free_hours_start"
+NIGHT_START_OPTIONS: Final = [
+    NIGHT_FREE_START,
+    *(f"{(18 + i // 2) % 24:02d}:{30 * (i % 2):02d}" for i in range(24)),
+]
 
 # Per-car settings
 C_LIMIT: Final = "limit_pct"  # 0 = the car's own limit

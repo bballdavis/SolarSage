@@ -175,6 +175,7 @@ All settings are entities on the planner's device. They are kept in the planner'
 | `switch.solar_ev_planner_shadow_mode` | **on** | | Plan and explain, send nothing |
 | `switch.solar_ev_planner_daytime_solar_charging` | on | | Off: a car plugged in by day waits for the free hours |
 | `select.solar_ev_planner_caution` | conservative | near-certain, conservative, balanced, typical day | How much of the forecast to count on (97%, 90%, 75%, 50%) |
+| `select.solar_ev_planner_night_charging_start` | with the free hours | with the free hours, or a half hour from 18:00 to 05:30 | In free hours the car waits until this time, then charges at its full current. Outside the free hours and without sun the car stays paused either way, unless a car's plan needs paid hours to make its deadline. A time outside the free period means its start. While the car waits, the Rivian gets no free-hours window yet |
 | `number.solar_ev_planner_battery_floor` | 30% | 5–95% | The predicted battery must stay above it |
 | `number.solar_ev_planner_battery_wanted_at_free_hours` | 30% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours). With free hours ahead, the car may use the battery down to it by day, since the Sol-Ark refills it from the grid in them; raise it to keep more in the battery |
 | `number.solar_ev_planner_minimum_time_between_changes` | 15 min | 1–120 min | |
@@ -284,11 +285,11 @@ It needs no entity IDs: it finds the planner's entities itself.
 | --- | --- | --- |
 | Header | The mode, and whether the planner is off, in shadow mode or live | Turn Planning, Shadow and Daytime solar on or off. Turning shadow mode off, or the planner off while live, asks first |
 | On the charger | The car, its level and limit, what the planner sends (or would send) beside what the Wall Connector reads, the reason, the next change, the outlook and the plan. The other cars are listed underneath | |
-| Today: sun and the car | The Solcast range (p10 to p90) and median, solar so far, the planned car power (as planned until now, then the plan ahead) and what the car drew. After sunset it shows tomorrow | Point at the chart for the values at that time |
-| Site now | Solar, house, charger, battery and grid | |
-| Home battery outlook | The predicted battery level at the caution level and on an expected day, the floor, the free hours and the lowest point | Point at the chart for the values |
-| Settings | | Caution, battery floor and battery at free start (steps of 5%), and which car is on the charger. Changes and free hours are shown |
-| Health | Rivian schedule control's state (dry run, writes this hour, faults), Tesla API spend this month, the heartbeat, the inputs and the car on the charger | |
+| Sun / Night chart | **Sun:** the Solcast range (p10 to p90) and median, solar so far, the planned car power (as planned until now, then the plan ahead) and what the car drew; after sunset it shows tomorrow. **Night:** the evening and the free hours, when the car starts, tonight's planned charging and what the car drew, with a warning if the car would charge, or charged, on paid power after dark | Switch between Sun and Night. Point at the chart for the values at that time |
+| Home now | Solar, house, grid (an arrow for import or export), charger, the battery level and the battery's flow (an arrow for charging or discharging) | |
+| Battery outlook | The predicted battery level at the caution level, on an expected day and without the car, the floor, the free hours and the lowest point; every curve is in the legend, and the readout shows each with its line style | Point at the chart for the values |
+| Health | A tile per part, coloured by state: the planner's heartbeat, the inputs, the Solcast forecast's age, the car on the charger, Rivian schedule control (dry run, writes, faults) and the Tesla API spend, with how many are OK | |
+| Settings | | Caution, battery floor and battery at free start (steps of 5%), the free hours (every day the same; edits their Schedule helper, admin only), the night charging start, and which car is on the charger |
 
 Right-click a value, or press and hold it on a touch screen, to open its entity in Home Assistant. The remaining settings (largest change, prices, the Tesla guard, each car's plan) stay on the devices' pages.
 

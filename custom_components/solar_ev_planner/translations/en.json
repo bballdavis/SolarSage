@@ -380,6 +380,12 @@
           "typical_day": "Typical day"
         }
       },
+      "night_charging_start": {
+        "name": "Night charging start",
+        "state": {
+          "free_hours_start": "When the free hours start"
+        }
+      },
       "charger_car_override": {
         "name": "Charger car override",
         "state": {

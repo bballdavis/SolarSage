@@ -56,6 +56,9 @@
       "caution": {
         "default": "mdi:weather-partly-cloudy"
       },
+      "night_charging_start": {
+        "default": "mdi:weather-night"
+      },
       "charger_car_override": {
         "default": "mdi:car-select"
       },

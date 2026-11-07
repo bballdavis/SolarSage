@@ -122,6 +122,25 @@ async def test_card_is_served_and_loaded_once(planner_hass: HomeAssistant) -> No
     (paths,) = http.async_register_static_paths.call_args.args
     assert paths[0].url_path == "/solar_ev_planner"
     assert (Path(paths[0].path) / card.CARD_FILE).is_file()
-    add_js.assert_called_once_with(
-        hass, f"/solar_ev_planner/{card.CARD_FILE}?v={card.CARD_VERSION}"
-    )
+    version = card.card_version(Path(paths[0].path) / card.CARD_FILE)
+    assert len(version) == 10
+    add_js.assert_called_once_with(hass, f"/solar_ev_planner/{card.CARD_FILE}?v={version}")
+
+
+async def test_refresh_schedules_rereads_the_free_hours(
+    site: HomeAssistant, fake_cars: FakeCars, hass_ws_client: WebSocketGenerator
+) -> None:
+    """After the card edits the free hours, the planner re-reads them at once."""
+    hass = site
+    entry = make_entry(RIVIAN)
+    coordinator = await setup_entry(hass, entry, fake_cars)
+    coordinator.schedules = {}  # forget them: only a re-read brings them back
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "solar_ev_planner/refresh_schedules"})
+    msg = await client.receive_json()
+    assert msg["success"], msg
+    assert "schedule.free_hours" in coordinator.schedules
+    await client.send_json_auto_id({"type": "solar_ev_planner/dashboard"})
+    snap = (await client.receive_json())["result"]
+    assert snap["free_hours_entity"] == "schedule.free_hours"
+    assert snap["cars"][0]["max_a"] == 48

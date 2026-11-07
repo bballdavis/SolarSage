@@ -1,4 +1,5 @@
-"""Selects: the caution level, the charger car override and each car's plan days."""
+"""Selects: the caution level, the night charging start, the charger car override and each
+car's plan days."""
 
 from __future__ import annotations
 
@@ -10,9 +11,11 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     C_PLAN_DAYS,
     CAUTION_OPTIONS,
+    NIGHT_START_OPTIONS,
     OVERRIDE_AUTO,
     PLAN_DAYS,
     S_CAUTION,
+    S_NIGHT_START,
     S_OVERRIDE,
 )
 from .coordinator import PlannerConfigEntry, PlannerCoordinator
@@ -31,6 +34,11 @@ async def async_setup_entry(
     async_add_entities(
         [
             SettingSelect(coordinator, "caution", S_CAUTION, list(CAUTION_OPTIONS)),
+            # In free hours the car waits until this time (a car that needs every free hour
+            # is still started at it: the planner does not move it earlier).
+            SettingSelect(
+                coordinator, "night_charging_start", S_NIGHT_START, list(NIGHT_START_OPTIONS)
+            ),
             # "auto" decides from the Wall Connector and the cars' own sensors; naming a car
             # leaves only that car. Rivian schedule control's vehicle override option can
             # point here too: it treats "auto" and "rivian" as no override.

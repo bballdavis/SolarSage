@@ -45,6 +45,9 @@ class Settings:
     min_change_min: float = 15.0  # minimum time between current changes
     max_step_a: int = 6  # largest single change
     paid_tolerance_min: float = 5.0  # paid import accepted this long before the safety rule acts
+    # "HH:MM": in free hours the car waits until this time before charging (None: from the
+    # start of the free hours). A time outside a free period means that period's start.
+    night_start: str | None = None
 
     def caution_p(self) -> float:
         c = self.caution

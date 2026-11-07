@@ -20,8 +20,11 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CAUTION_OPTIONS,
+    CONF_CHARGER_MAX_A,
     CONF_CONTROL_STATE,
+    CONF_FREE_HOURS,
     CONF_KIND,
+    CONF_MAX_A,
     CONF_NAME,
     CONF_PV_POWER,
     CONF_VOLTS,
@@ -112,6 +115,8 @@ def _car(coordinator: PlannerCoordinator, car_id: str, view: CarView | None) -> 
         "name": car[CONF_NAME],
         "kind": car[CONF_KIND],
         "control_state_entity": car.get(CONF_CONTROL_STATE),
+        # the current it gets in free hours: its own maximum, capped by the Wall Connector
+        "max_a": min(int(car[CONF_MAX_A]), int(coordinator.options.get(CONF_CHARGER_MAX_A, 48))),
         "settings": dict(coordinator.car_settings.get(car_id, {})),
     }
     if view is None:
@@ -232,6 +237,7 @@ def snapshot(hass: HomeAssistant, coordinator: PlannerCoordinator) -> dict[str, 
             for p in (decision.trajectory if decision else ())
         ],
         "free_windows": _free_windows(coordinator, now),
+        "free_hours_entity": options.get(CONF_FREE_HOURS),
         "settings": dict(coordinator.settings),
         "caution_levels": {key: CAUTION_LEVELS[label] for key, label in CAUTION_OPTIONS.items()},
         "caution_quantile": CAUTION_LEVELS.get(CAUTION_OPTIONS.get(caution, ""), None),
