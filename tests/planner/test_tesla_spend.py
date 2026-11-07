@@ -398,6 +398,54 @@ async def test_refreshes_near_and_at_the_cap(
     assert not await spend.async_refresh(CAR, NOV + 2 * interval)
 
 
+def teslamate_battery(hass: HomeAssistant, polling: bool) -> MockConfigEntry:
+    """The Tesla read from TeslaMate over MQTT: the battery level in the MQTT entry, the
+    charge switch in Tesla Fleet's."""
+    fleet = MockConfigEntry(domain="tesla_fleet", pref_disable_polling=not polling)
+    fleet.add_to_hass(hass)
+    mqtt = MockConfigEntry(domain="mqtt")
+    mqtt.add_to_hass(hass)
+    registry = er.async_get(hass)
+    for entity_id, platform, entry in (
+        (TES["switch"], "tesla_fleet", fleet),
+        (TES["soc"], "mqtt", mqtt),
+    ):
+        state = hass.states.get(entity_id)
+        if state is not None:
+            hass.states.async_remove(entity_id)
+        domain, object_id = entity_id.split(".", 1)
+        created = registry.async_get_or_create(
+            domain, platform, f"uid-{object_id}", suggested_object_id=object_id, config_entry=entry
+        )
+        assert created.entity_id == entity_id
+        if state is not None:
+            hass.states.async_set(entity_id, state.state, state.attributes)
+    return fleet
+
+
+async def test_with_teslamate_only_a_command_brings_a_refresh(
+    planner_hass: HomeAssistant, cars: FakeCars, refreshes: Refreshes
+) -> None:
+    """TeslaMate keeps the battery and plug current for free: Tesla Fleet's polling is read
+    from its own entity, the timed refreshes stop, and the refresh before a command (so Tesla
+    Fleet knows whether to wake the car) goes to a Tesla Fleet entity."""
+    hass = planner_hass
+    spend, settings = make_spend(hass)
+    fleet = teslamate_battery(hass, polling=True)
+    assert spend.fleet_entity(CAR) == TES["switch"]
+    assert spend.polling(CAR) is True and spend.cap == pytest.approx(CAP_POLLING)
+    hass.config_entries.async_update_entry(fleet, pref_disable_polling=True)
+    assert spend.polling(CAR) is False and not spend.reads_from_fleet(CAR)
+    interval = timedelta(minutes=settings[S_TESLA_REFRESH])
+    await spend.async_watch(NOV, True, {"tesla": False})  # a car connected
+    await spend.async_watch(NOV + interval, True, {"tesla": True})
+    await spend.async_watch(NOV + 2 * interval, False, {"tesla": True})  # the Tesla left
+    assert refreshes.calls == [] and spend.counts.data == 0
+    executor, rt = CarExecutor(hass, spend), CarRuntime()
+    assert await executor.async_apply(CAR, rt, 16, NOV + 3 * interval)
+    assert refreshes.calls == [TES["switch"]]
+
+
 def test_a_clock_set_back_keeps_the_count(planner_hass: HomeAssistant) -> None:
     spend, _ = make_spend(planner_hass)
     spend.count_command(NOV)

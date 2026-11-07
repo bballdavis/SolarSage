@@ -87,7 +87,12 @@ from .const import (
     invert_key,
     unit_key,
 )
-from .core.entities import CAR_ENTITIES, CAR_ENTITY_ALTERNATIVES, SITE_ENTITIES
+from .core.entities import (
+    CAR_ENTITIES,
+    CAR_ENTITY_ALTERNATIVES,
+    CAR_ENTITY_PREFERRED,
+    SITE_ENTITIES,
+)
 
 
 def _entity(domain: str | list[str]) -> EntitySelector:
@@ -335,6 +340,7 @@ def car_suggestions(hass: HomeAssistant, kind: str) -> dict[str, Any]:
         existing = [eid for eid in others if hass.states.get(eid) is not None]
         if key not in found and existing:
             found[key] = existing[0]
+    found |= _existing(hass, CAR_ENTITY_PREFERRED.get(kind, {}))
     return CAR_DEFAULTS[kind] | found
 
 

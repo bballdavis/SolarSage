@@ -11,7 +11,7 @@ not reset them:
   wake, and its follow-up state checks as data requests. Without that sensor every send
   counts a wake;
 - data requests: the planner's own refreshes of the Tesla (``homeassistant.update_entity`` on
-  its battery level), a state check and vehicle_data each, both counted.
+  a Tesla Fleet entity of the car), a state check and vehicle_data each, both counted.
 
 The planner's cap is the smaller of its budget and Tesla's credit less a margin and less Tesla
 Fleet's own polling estimate (not counted once that integration's polling is turned off). As
@@ -29,7 +29,10 @@ Refreshes replace Tesla Fleet's polling, which costs more: they run only while t
 is off, every ``S_TESLA_REFRESH`` minutes while the Tesla is on the Wall Connector, once when
 the Wall Connector reports a car connected (is it the Tesla?) or the Tesla gone, and before a
 command when the Tesla's data is older than ``TESLA_FRESH_BEFORE_SEND``, so Tesla Fleet
-neither wakes an awake car nor sends a command to an asleep one.
+neither wakes an awake car nor sends a command to an asleep one. When the battery level comes
+from another source (TeslaMate over MQTT, free), that source keeps it current: only the
+refresh before a command runs, since Tesla Fleet still decides from its own last read whether
+to wake the car.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -48,9 +52,11 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_CAR_ID,
+    CONF_CURRENT,
     CONF_KIND,
     CONF_SOC,
     CONF_STATUS,
+    CONF_SWITCH,
     KIND_TESLA,
     S_TESLA_BUDGET,
     S_TESLA_POLLING,
@@ -74,6 +80,7 @@ LEVEL_NORMAL = "normal"
 LEVEL_ESSENTIAL = "essential_only"
 LEVEL_STOPPED = "stopped"
 LEVELS = [LEVEL_NORMAL, LEVEL_ESSENTIAL, LEVEL_STOPPED]
+TESLA_FLEET = "tesla_fleet"
 
 
 def month_key(now: datetime) -> str:
@@ -183,16 +190,36 @@ class TeslaSpend:
     def teslas(self) -> dict[str, Mapping[str, Any]]:
         return {cid: car for cid, car in self.cars.items() if car.get(CONF_KIND) == KIND_TESLA}
 
-    def polling(self, car: Mapping[str, Any]) -> bool | None:
-        """Whether Tesla Fleet polls this car (its "Enable polling for updates" system
-        option), None when its battery level has no config entry to tell."""
-        entry = er.async_get(self.hass).async_get(car[CONF_SOC])
+    def _entry_of(self, entity_id: str | None) -> ConfigEntry | None:
+        entry = er.async_get(self.hass).async_get(entity_id) if entity_id else None
         if entry is None or entry.config_entry_id is None:
             return None
-        config_entry = self.hass.config_entries.async_get_entry(entry.config_entry_id)
+        return self.hass.config_entries.async_get_entry(entry.config_entry_id)
+
+    def fleet_entity(self, car: Mapping[str, Any]) -> str:
+        """The car's entity that Tesla Fleet owns: its charge switch, current number or
+        battery level, the first of them in Tesla Fleet's config entry. The battery level,
+        plug and charging state may come from elsewhere (TeslaMate over MQTT); the commands
+        always go through Tesla Fleet. Without a Tesla Fleet entity, the battery level."""
+        for key in (CONF_SWITCH, CONF_CURRENT, CONF_SOC):
+            config_entry = self._entry_of(car.get(key))
+            if config_entry is not None and config_entry.domain == TESLA_FLEET:
+                return car[key]
+        return car[CONF_SOC]
+
+    def polling(self, car: Mapping[str, Any]) -> bool | None:
+        """Whether Tesla Fleet polls this car (its "Enable polling for updates" system
+        option), None when its entity has no config entry to tell."""
+        config_entry = self._entry_of(self.fleet_entity(car))
         if config_entry is None:
             return None
         return not config_entry.pref_disable_polling
+
+    def reads_from_fleet(self, car: Mapping[str, Any]) -> bool:
+        """The car's battery level comes from Tesla Fleet, so only a refresh updates it.
+        False when it comes from elsewhere (TeslaMate), which keeps it current for free."""
+        soc = self._entry_of(car[CONF_SOC])
+        return soc is None or soc is self._entry_of(self.fleet_entity(car))
 
     def polling_off(self) -> bool:
         """Tesla Fleet's polling is off for every Tesla."""
@@ -309,7 +336,7 @@ class TeslaSpend:
                 await self.hass.services.async_call(
                     "homeassistant",
                     "update_entity",
-                    {ATTR_ENTITY_ID: car[CONF_SOC]},
+                    {ATTR_ENTITY_ID: self.fleet_entity(car)},
                     blocking=True,
                 )
         except (HomeAssistantError, TimeoutError) as err:
@@ -333,8 +360,8 @@ class TeslaSpend:
             return
         interval = timedelta(minutes=float(self.settings[S_TESLA_REFRESH]))
         for car_id, car in self.teslas.items():
-            if not self._refreshes(car):
-                continue
+            if not self._refreshes(car) or not self.reads_from_fleet(car):
+                continue  # another source keeps its battery and plug current
             last = self.refreshed.get(car_id)
             if wall is True and prev is not True:
                 due = True  # a car was connected (or is, at start-up): is it this one?

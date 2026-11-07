@@ -20,7 +20,10 @@ from custom_components.solar_ev_planner.const import (
     SUBENTRY_CAR,
     SUBENTRY_PRICE,
 )
-from custom_components.solar_ev_planner.core.entities import TESLA_CUSTOM_ENTITIES
+from custom_components.solar_ev_planner.core.entities import (
+    CAR_ENTITY_PREFERRED,
+    TESLA_CUSTOM_ENTITIES,
+)
 
 from .conftest import OPTIONS, RIV, RIVIAN, E, set_rivian, set_site, set_tesla
 
@@ -245,6 +248,24 @@ async def test_tesla_custom_is_never_suggested(planner_hass: HomeAssistant) -> N
     assert "switch" not in data and "current" not in data
     assert "charging_state" not in data  # optional, and absent here
     assert data["limit"] == "number.roxxo_charge_limit"
+
+
+async def test_teslamate_readings_are_suggested_over_tesla_fleets(
+    planner_hass: HomeAssistant,
+) -> None:
+    """With TeslaMate bridged in, its free readings are suggested; the switch and current
+    stay Tesla Fleet's."""
+    hass = planner_hass
+    set_tesla(hass)
+    preferred = CAR_ENTITY_PREFERRED["tesla"]
+    for eid in preferred.values():
+        hass.states.async_set(eid, "on")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
+    entry.add_to_hass(hass)
+    data = _car_input(await _add_car(hass, entry, "tesla"))
+    assert {key: data.get(key) for key in preferred} == preferred
+    assert data["switch"] == "switch.roxxo_charge"
+    assert data["current"] == "number.roxxo_charge_current"
 
 
 @pytest.mark.parametrize(

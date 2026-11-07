@@ -78,6 +78,20 @@ CAR_ENTITY_ALTERNATIVES: dict[str, dict[str, tuple[str, ...]]] = {
     "rivian": {"location": ("device_tracker.r1s",)},
 }
 
+# Readings preferred over the ones above when they exist: TeslaMate's, bridged over MQTT
+# (docs/PLANNER.md, "TeslaMate"). TeslaMate streams them for free, so Tesla Fleet's polling
+# can stay off; the commands still go through Tesla Fleet.
+CAR_ENTITY_PREFERRED: dict[str, dict[str, str]] = {
+    "tesla": {
+        "soc": "sensor.teslamate_roxxo_battery_level",
+        "limit": "sensor.teslamate_roxxo_charge_limit",
+        "plugged": "binary_sensor.teslamate_roxxo_plugged_in",
+        "location": "device_tracker.teslamate_roxxo_location",
+        "charging_state": "sensor.teslamate_roxxo_charging",  # Tesla Fleet's states, lowercased
+        "status": "binary_sensor.teslamate_roxxo_status",  # on while online, charging, driving
+    },
+}
+
 # The custom tesla_custom integration's names. Never suggested: on the 2020 Model Y it cannot
 # command without its proxy add-on, and it takes Tesla Fleet's IDs (the limit is the same), so
 # Tesla Fleet's own entities would get a _2 suffix. tools/check.py names leftovers to remove.

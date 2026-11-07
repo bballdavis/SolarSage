@@ -90,13 +90,13 @@ On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a 
 | Name | `R1S` | `Roxxo` |
 | Charge switch | `switch.r1s_schedule_control_solar_charging` (Rivian schedule control) | `switch.roxxo_charge` |
 | Charge current | `number.r1s_schedule_control_solar_current` (Rivian schedule control) | `number.roxxo_charge_current` |
-| Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.roxxo_battery_level` |
-| Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `number.roxxo_charge_limit` |
-| Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.roxxo_charge_cable` |
-| Location | `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install (the form suggests whichever exists) | `device_tracker.roxxo_location` |
+| Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.teslamate_roxxo_battery_level` (from [TeslaMate](#the-tesla-spending-guard); without it `sensor.roxxo_battery_level`) |
+| Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `sensor.teslamate_roxxo_charge_limit` (or `number.roxxo_charge_limit`) |
+| Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.teslamate_roxxo_plugged_in` (or `binary_sensor.roxxo_charge_cable`) |
+| Location | `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install (the form suggests whichever exists) | `device_tracker.teslamate_roxxo_location` (or `device_tracker.roxxo_location`) |
 | Schedule control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
-| Charging state | — | `sensor.roxxo_charging` (optional, recommended: the [Tesla guard](#the-tesla-guard) reads it) |
-| Status | — | `binary_sensor.roxxo_status` (optional, recommended: on while the car is online; the [spending guard](#the-tesla-spending-guard) counts a wake only while it is not on, and without it counts one for every command) |
+| Charging state | — | `sensor.teslamate_roxxo_charging` (or `sensor.roxxo_charging`; optional, recommended: the [Tesla guard](#the-tesla-guard) reads it) |
+| Status | — | `binary_sensor.teslamate_roxxo_status` (or `binary_sensor.roxxo_status`; optional, recommended: on while the car is online; the [spending guard](#the-tesla-spending-guard) counts a wake only while it is not on, and without it counts one for every command) |
 | Minimum, maximum, step | 8 A, 48 A, 2 A | 6 A, 48 A, 1 A |
 | Usable pack energy | 135 kWh | 75 kWh |
 
@@ -228,13 +228,27 @@ Tesla's Fleet API bills every request below status 500 (2026 prices, USD): a com
 - **At the cap less the cost of one more send: nothing.** No start, current change or refresh until the first of the next month. A stop to a Tesla that is charging still goes out: it is awake, so the stop costs one command, far less than paid-hours charging. A car that is not charging keeps its last state: set a Tesla charging schedule or a Wall Connector schedule as a backstop for paid hours. The reason says so, and the car's planned-current sensor says why its command waits.
 - **The Rivian is never counted:** its commands are not billed.
 
-**Tesla Fleet's polling.** Tesla Fleet polls an awake car every 10 minutes: its state, then vehicle_data, $5 or more a month (more if Tesla bills the state check, which HA calls free). The planner's refreshes cost less, so turn that polling off: Settings → Devices & services → Tesla Fleet → ⋮ → System options → "Enable polling for updates" off. The guard reads that option. While it is off, the planner calls `homeassistant.update_entity` on the Tesla's battery level:
+**Tesla Fleet's polling.** Tesla Fleet polls an awake car every 10 minutes: its state, then vehicle_data, $5 or more a month (more if Tesla bills the state check, which HA calls free). The planner's refreshes cost less, so turn that polling off: Settings → Devices & services → Tesla Fleet → ⋮ → System options → "Enable polling for updates" off. The guard reads that option. While it is off, the planner calls `homeassistant.update_entity` on a Tesla Fleet entity of the car (its charge switch):
 
-- once when the Wall Connector reports a car connected (is it the Tesla?) and once when the Tesla leaves it, so its plug reading changes;
-- every `number.solar_ev_planner_tesla_refresh_interval` (60 minutes) while the Tesla is on the Wall Connector, never while it is off the charger;
+- once when the Wall Connector reports a car connected (is it the Tesla?) and once when the Tesla leaves it, so its plug reading changes (not with TeslaMate's readings, below);
+- every `number.solar_ev_planner_tesla_refresh_interval` (60 minutes) while the Tesla is on the Wall Connector, never while it is off the charger (not with TeslaMate's readings);
 - before a command when its data is more than 10 minutes old, so Tesla Fleet neither wakes an awake car (its status would read asleep) nor commands an asleep one.
 
 The refreshes run while Planning is on, also in shadow mode, and never while Tesla Fleet polls. At about 14 hours a day on the charger, hourly refreshes cost about $1.70 a month. Keep `binary_sensor.roxxo_status` enabled and mapped, Sentry Mode off at home, and check the developer dashboard weekly: the guard counts only the planner's calls, not the Tesla app's or other automations'.
+
+**TeslaMate for the Tesla's readings.** TeslaMate already follows the car through Tesla's streaming API, outside the developer app, so its readings cost nothing. The Mosquitto add-on bridges the few topics the planner needs from TeslaMate's broker on turbonas (`/share/mosquitto/teslamate.conf`, kept in [`deploy/mosquitto/teslamate.conf`](../deploy/mosquitto/teslamate.conf); read-only, no GPS), and an MQTT discovery message (`homeassistant/device/teslamate_car_1/config`, retained) makes the device "Roxxo (TeslaMate)":
+
+| Entity | From TeslaMate | Notes |
+| --- | --- | --- |
+| `sensor.teslamate_roxxo_battery_level` | `battery_level` | % |
+| `sensor.teslamate_roxxo_charge_limit` | `charge_limit_soc` | % |
+| `binary_sensor.teslamate_roxxo_plugged_in` | `plugged_in` | |
+| `sensor.teslamate_roxxo_charging` | `charging_state` | lowercased as Tesla Fleet's (`no_power` for NoPower) |
+| `binary_sensor.teslamate_roxxo_status` | `state` | on while online, charging, driving, updating or suspended; off asleep or offline |
+| `device_tracker.teslamate_roxxo_location` | `geofence` | home inside TeslaMate's home geofence (its name is in the discovery message) |
+| `sensor.teslamate_roxxo_charger_current`, `…_charger_power`, `…_charge_current_request`, `…_state` | | for the dashboard |
+
+All of them are unavailable while the bridge is down (`bridge/teslamate/state` 0). Mapped on the car (the form suggests them when they exist), they replace the timed refreshes: the planner refreshes Tesla Fleet only before a command whose data is more than 10 minutes old, on a Tesla Fleet entity of the car (the charge switch), because Tesla Fleet still decides from its own last read whether to wake the car. The guard reads Tesla Fleet's polling option from that entity too. The charge switch and current stay Tesla Fleet's: every command still goes through it.
 
 **Tesla's account.** Add no payment method and leave the billing limit at $0. Tesla suspends an app that goes past its limit until the next billing cycle, so a mistake should cost a suspended API, not money (Tesla's billing page was read through search extracts only; confirm it once on developer.tesla.com). The whole plan for staying inside the free credit, Sentry Mode off at home included, is in [the plan](PLAN.md#phase-0-staying-inside-the-free-credit).
 
