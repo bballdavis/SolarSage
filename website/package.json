@@ -19,6 +19,11 @@
     "react-dom": "^19.0.0"
   },
   "engines": {
-    "node": ">=22.0"
+    "node": ">=22.12.0"
+  },
+  "overrides": {
+    "@docusaurus/theme-mermaid": {
+      "@mermaid-js/layout-elk": "$@mermaid-js/layout-elk"
+    }
   }
 }

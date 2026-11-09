@@ -29,7 +29,7 @@ The suite uses simulated vehicles and blocks external network connections. Do no
 
 ## Documentation
 
-Use Node.js 22 or later:
+Use Node.js 22.12 or later:
 
 ```sh
 cd website
@@ -38,7 +38,7 @@ npm start
 npm run build
 ```
 
-Edit Markdown in `docs/`. Docusaurus reads it directly; there is no generated copy to keep synchronized. Use `website/sidebars.js` when adding a guide. Production builds fail on broken internal links. Markdown is parsed as Markdown, so ordinary configuration examples do not need MDX escaping. Mermaid diagrams are supported.
+Edit Markdown in `docs/`. Docusaurus reads it directly; there is no generated copy to keep synchronized. Use `website/sidebars.js` when adding a guide. Production builds fail on broken internal links. Markdown is parsed as Markdown, so ordinary configuration examples do not need MDX escaping. Mermaid diagrams are supported. The npm override for `@docusaurus/theme-mermaid` aligns its optional ELK peer with the directly installed ELK package: Docusaurus 3.10.2 declares the older `^0.1.9` range, while this site uses ELK 1.x with Mermaid 12. Keep a clean `npm ci`, a production build, and a rendered-diagram check as upgrade gates; remove the override when the theme supports ELK 1.x upstream.
 
 GitHub Pages builds the same content with [the Pages workflow](https://github.com/bballdavis/SolarSage/blob/main/.github/workflows/docs.yml) on pushes to `main`. Pull requests build without deploying.
 
