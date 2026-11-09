@@ -113,9 +113,7 @@ def _number(
 
 
 UNIT_SELECTOR = SelectSelector(
-    SelectSelectorConfig(
-        options=list(POWER_UNITS), mode=SelectSelectorMode.DROPDOWN, translation_key="power_unit"
-    )
+    SelectSelectorConfig(options=list(POWER_UNITS), mode=SelectSelectorMode.DROPDOWN)
 )
 
 # Step "user": solar, grid and the home battery. Each power has a unit (the sensor's own

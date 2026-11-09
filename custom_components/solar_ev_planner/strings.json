@@ -425,12 +425,6 @@
     }
   },
   "selector": {
-    "power_unit": {
-      "options": {
-        "W": "W",
-        "kW": "kW"
-      }
-    },
     "car_kind": {
       "options": {
         "rivian": "Rivian (through Rivian schedule control)",
