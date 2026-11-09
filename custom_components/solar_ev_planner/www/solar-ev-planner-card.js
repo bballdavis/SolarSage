@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.2.3';
+  const VERSION = '0.2.4';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -152,13 +152,21 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .title h1 { margin: 0; font-size: 30px; font-weight: 500; line-height: 1.1; }
 .title .sub { font-size: 14px; color: var(--ink-2); }
 .title { margin-right: 6px; }
-.pill { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; font-size: 15px; font-weight: 600; color: var(--chip-ink); background: var(--ink-3); }
+/* status chips: icon-only tiles in the toggles' dark glass, the border and icon in the status colour */
+.pill { --on: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 14px;
+  border: 1.5px solid var(--on); color: var(--on);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--on) 16%, rgba(14,30,34,0.52)) 0%, color-mix(in srgb, var(--on) 6%, rgba(6,16,20,0.68)) 100%);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--on) 30%, transparent), 0 0 12px color-mix(in srgb, var(--on) 22%, transparent); }
+.pill .ic { width: 20px; height: 20px; }
+.pill .ptxt { display: none; }
+.pill[aria-expanded="true"] { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--on) 30%, transparent), 0 0 0 3px color-mix(in srgb, var(--on) 28%, transparent); }
 .hp { position: relative; display: inline-flex; }
 .tipbox { position: absolute; top: calc(100% + 8px); left: 0; z-index: 6; width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--hair); box-shadow: 0 8px 24px rgba(0,0,0,0.28); font-size: 14px; line-height: 1.4; color: var(--ink-2); }
 .tipbox b { display: block; margin-bottom: 4px; font-weight: 600; color: var(--ink); }
 .tipbox .why { display: block; margin-top: 6px; color: var(--ink-3); }
-.pill.green { background: var(--green); } .pill.indigo { background: var(--indigo); } .pill.amber { background: var(--amber); }
-.pill.red { background: var(--red); } .pill.cyan { background: var(--cyan); } .pill.grey { background: rgba(255,255,255,0.78); }
+.pill.green { --on: var(--green); } .pill.indigo { --on: var(--indigo); } .pill.amber { --on: var(--amber); }
+.pill.red { --on: var(--red); } .pill.cyan { --on: var(--cyan); } .pill.grey { --on: rgba(255,255,255,0.62); }
 .grow { flex: 1 1 auto; }
 .toggles { display: flex; gap: 10px; flex-wrap: wrap; }
 /* toggles: dark glass; the border is the indicator (the accent when on, grey when off) */
@@ -184,9 +192,6 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
   .app { padding: 18px 14px 22px; }
   .title { flex: 1 1 0; min-width: 0; margin-right: 0; }
   .top .grow { display: none; }
-  .pill { width: 40px; height: 40px; padding: 0; justify-content: center; }
-  .pill .ptxt { display: none; }
-  .pill .ic { width: 20px; height: 20px; }
   .hp .tipbox { left: auto; right: 0; }
   .toggles { width: 100%; }
   .tog { flex: 1 1 0; padding: 0 6px; font-size: 14px; white-space: nowrap; }
