@@ -21,7 +21,7 @@ jobs:
       - run: ruff format --check custom_components tests tools scripts
       - run: python -m pytest tests -q
       - run: python scripts/build-release.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: solarsage-integration
           path: dist/solar_ev_planner.zip
