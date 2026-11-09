@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -32,6 +32,15 @@
     off: ['Planner off', 'grey'], empty: ['Charger empty', 'grey'], stale: ['Car data stale', 'amber'],
     full: ['Car at its limit', 'grey'], day: ['Solar charging', 'green'], night: ['Free hours', 'indigo'],
     no_data: ['Cannot decide', 'red'],
+  };
+  const MODE_TIP = {
+    off: 'The planner is switched off: it plans nothing and sends nothing.',
+    empty: 'No car is on the Wall Connector, so there is nothing to charge.',
+    stale: "A car's readings are missing or too old, so the planner does not command it.",
+    full: 'The car on the charger has reached its charge limit.',
+    day: 'Charging from the solar surplus, kept above the home battery floor.',
+    night: "In the free hours: charging until the car's plan is met.",
+    no_data: 'Readings the planner needs are missing, so it cannot decide.',
   };
   const CAUTION = [
     ['near_certain', 'Near-certain'], ['conservative', 'Conservative'],
@@ -144,16 +153,17 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .title .sub { font-size: 14px; color: var(--ink-2); }
 .title { margin-right: 6px; }
 .pill { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; font-size: 15px; font-weight: 600; color: var(--chip-ink); background: var(--ink-3); }
+.hp { position: relative; display: inline-flex; }
+.tipbox { position: absolute; top: calc(100% + 8px); left: 0; z-index: 6; width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--hair); box-shadow: 0 8px 24px rgba(0,0,0,0.28); font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+.tipbox b { display: block; margin-bottom: 4px; font-weight: 600; color: var(--ink); }
+.tipbox .why { display: block; margin-top: 6px; color: var(--ink-3); }
 .pill.green { background: var(--green); } .pill.indigo { background: var(--indigo); } .pill.amber { background: var(--amber); }
 .pill.red { background: var(--red); } .pill.cyan { background: var(--cyan); } .pill.grey { background: rgba(255,255,255,0.78); }
 .grow { flex: 1 1 auto; }
 .toggles { display: flex; gap: 10px; flex-wrap: wrap; }
-.tog { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px 0 16px; border-radius: 14px; border: 1px solid var(--hair); background: var(--surface); font-size: 15px; font-weight: 500; }
-.sw { width: 36px; height: 22px; border-radius: 999px; background: var(--hair); position: relative; flex: none; transition: background 0.2s; }
-.sw::after { content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); transition: transform 0.2s; }
-[aria-pressed="true"] .sw { background: var(--green); }
-[aria-pressed="true"] .sw::after { transform: translateX(14px); background: var(--chip-ink); }
-.tog.shadow[aria-pressed="true"] .sw { background: var(--amber); }
+.tog { --on: var(--green); display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; border-radius: 14px; border: 1.5px solid var(--hair); background: var(--surface); color: var(--ink-2); font-size: 15px; font-weight: 500; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+.tog.shadow { --on: var(--amber); }
+.tog[aria-pressed="true"] { background: var(--on); border-color: var(--on); color: var(--chip-ink); font-weight: 600; }
 
 .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; container: cockpit / inline-size; }
 @media (max-width: 1100px) {
@@ -164,8 +174,14 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 @media (max-width: 720px) {
   .grid { grid-template-columns: minmax(0, 1fr); }
   .app { padding: 18px 14px 22px; }
+  .title { flex: 1 1 0; min-width: 0; margin-right: 0; }
+  .top .grow { display: none; }
+  .pill { width: 40px; height: 40px; padding: 0; justify-content: center; }
+  .pill .ptxt { display: none; }
+  .pill .ic { width: 20px; height: 20px; }
+  .hp .tipbox { left: auto; right: 0; }
   .toggles { width: 100%; }
-  .tog { flex: 1 1 0; justify-content: space-between; padding: 0 12px; }
+  .tog { flex: 1 1 0; padding: 0 6px; font-size: 14px; white-space: nowrap; }
 }
 
 .car-h { display: flex; align-items: center; gap: 10px; }
@@ -265,7 +281,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .dialog .btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .dialog .btns button { height: 44px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--hair); }
 .dialog .btns button.go { background: var(--amber); color: #1A0E02; border-color: var(--amber); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tog { transition: none; } }
 `;
 
   // ---------------------------------------------------------------- series helpers
@@ -526,9 +542,12 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       if (this._bound) return; this._bound = true;
       const root = this.shadowRoot;
       root.addEventListener('click', ev => {
-        const el = ev.target.closest('[data-act]'); if (!el) return;
-        const [kind, a, b] = el.getAttribute('data-act').split(':');
-        if (kind === 'toggle') this._toggle(a);
+        const el = ev.target.closest('[data-act]');
+        const [kind, a, b] = el ? el.getAttribute('data-act').split(':') : [];
+        if (this._tip && kind !== 'tip' && !ev.target.closest('.tipbox')) { this._tip = null; this._render(); }
+        if (!el) return;
+        if (kind === 'tip') { this._tip = this._tip === a ? null : a; this._render(); }
+        else if (kind === 'toggle') this._toggle(a);
         else if (kind === 'caution') this._select('caution', a);
         else if (kind === 'override') this._select('charger_car_override', a);
         else if (kind === 'step') { const [lo, hi] = el.getAttribute('data-range').split(',').map(Number); this._step(a, Number(b), lo, hi); }
@@ -554,7 +573,10 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => root.addEventListener(n, () => clearTimeout(hold)));
       root.addEventListener('pointermove', ev => { if (ev.pointerType === 'touch') clearTimeout(hold); this._hover(ev); });
       root.addEventListener('pointerout', ev => { const c = ev.target.closest?.('.chart'); if (c && !c.contains(ev.relatedTarget)) this._unhover(c); });
-      root.addEventListener('keydown', ev => { if (ev.key === 'Escape' && this._confirm) { this._confirm = null; this._render(); } });
+      root.addEventListener('keydown', ev => {
+        if (ev.key !== 'Escape') return;
+        if (this._confirm) { this._confirm = null; this._render(); } else if (this._tip) { this._tip = null; this._render(); }
+      });
     }
 
     _editing() { const ae = this.shadowRoot?.activeElement; return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT'); }
@@ -628,15 +650,22 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const date = new Date(now).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
       const [modeText, modeKind] = MODE[s.mode] || [cap1(s.mode || 'unknown'), 'grey'];
       const modeIcon = s.mode === 'night' ? 'moon' : s.mode === 'day' ? 'sun' : s.mode === 'no_data' || s.mode === 'stale' ? 'alert' : 'pause';
-      let state;
-      if (!s.enabled) state = `<span class="pill red">${icon('pause')}Planner off: nothing planned or sent</span>`;
-      else if (s.shadow) state = `<span class="pill amber">${icon('eye')}Shadow mode: planning only, nothing sent</span>`;
-      else state = `<span class="pill cyan">${icon('bolt')}Live: commands go to the car</span>`;
-      const tog = (key, label, on, cls = '') => `<button type="button" class="tog ${cls}" aria-pressed="${on ? 'true' : 'false'}" data-act="toggle:${key}" data-more="${esc(this._ent(key) || '')}">${label}<span class="sw" aria-hidden="true"></span></button>`;
+      const [stKind, stIcon, stText, stTip] = !s.enabled
+        ? ['red', 'pause', 'Planner off: nothing planned or sent', 'Nothing is planned or sent to the cars. Turn Planning on to start again.']
+        : s.shadow
+          ? ['amber', 'eye', 'Shadow mode: planning only, nothing sent', 'The planner makes and logs every decision, but sends nothing to the cars. Turn Shadow off to go live.']
+          : ['cyan', 'bolt', 'Live: commands go to the car', "The planner's commands go to the cars: charge on or off, and the current."];
+      // a status pill: icon and text, icon only on a phone; a tap shows what it means
+      const pill = (key, kind, ic, text, tip, more) => {
+        const open = this._tip === key;
+        return `<span class="hp"><button type="button" class="pill ${kind}" data-act="tip:${key}" aria-expanded="${open}" aria-label="${esc(text)}" data-more="${esc(more || '')}">${icon(ic)}<span class="ptxt">${esc(text)}</span></button>${open ? `<span class="tipbox" role="tooltip"><b>${esc(text)}</b>${tip}</span>` : ''}</span>`;
+      };
+      const modeTip = `${esc(MODE_TIP[s.mode] || '')}${s.reason ? `<span class="why">Now: ${esc(s.reason)}</span>` : ''}`;
+      const tog = (key, label, on, cls = '') => `<button type="button" class="tog ${cls}" aria-pressed="${on ? 'true' : 'false'}" data-act="toggle:${key}" data-more="${esc(this._ent(key) || '')}">${label}</button>`;
       return `<div class="top">
         <div class="title"><h1>Solar EV</h1><div class="sub num">${esc(date)} · ${esc(clock(now))} · planned ${esc(ago(ts(s.planned_at)))}</div></div>
-        <span class="pill ${modeKind}" data-more="${esc(this._ent('mode') || '')}">${icon(modeIcon)}${esc(modeText)}</span>
-        ${state}
+        ${pill('mode', modeKind, modeIcon, modeText, modeTip, this._ent('mode'))}
+        ${pill('state', stKind, stIcon, stText, esc(stTip), this._ent(s.enabled ? 'shadow_mode' : 'planning'))}
         <div class="grow"></div>
         <div class="toggles">${tog('planning', 'Planning', s.enabled)}${tog('shadow_mode', 'Shadow', s.shadow, 'shadow')}${tog('daytime_solar_charging', 'Daytime solar', !!s.settings?.daytime_solar)}</div>
       </div>`;
