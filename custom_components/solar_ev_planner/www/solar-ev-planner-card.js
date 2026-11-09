@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.2.4';
+  const VERSION = '0.2.5';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -162,7 +162,10 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .pill .ptxt { display: none; }
 .pill[aria-expanded="true"] { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--on) 30%, transparent), 0 0 0 3px color-mix(in srgb, var(--on) 28%, transparent); }
 .hp { position: relative; display: inline-flex; }
-.tipbox { position: absolute; top: calc(100% + 8px); left: 0; z-index: 6; width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--hair); box-shadow: 0 8px 24px rgba(0,0,0,0.28); font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+.tipbox { display: none; position: absolute; top: calc(100% + 8px); left: 0; z-index: 6; width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--hair); box-shadow: 0 8px 24px rgba(0,0,0,0.28); font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+/* shown on hover (mouse), keyboard focus, or a tap (open) */
+.hp.open .tipbox, .hp:has(.pill:focus-visible) .tipbox { display: block; }
+@media (hover: hover) { .hp:hover .tipbox { display: block; } }
 .tipbox b { display: block; margin-bottom: 4px; font-weight: 600; color: var(--ink); }
 .tipbox .why { display: block; margin-top: 6px; color: var(--ink-3); }
 .pill.green { --on: var(--green); } .pill.indigo { --on: var(--indigo); } .pill.amber { --on: var(--amber); }
@@ -559,7 +562,10 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
         const [kind, a, b] = el ? el.getAttribute('data-act').split(':') : [];
         if (this._tip && kind !== 'tip' && !ev.target.closest('.tipbox')) { this._tip = null; this._render(); }
         if (!el) return;
-        if (kind === 'tip') { this._tip = this._tip === a ? null : a; this._render(); }
+        if (kind === 'tip') {
+          // a mouse shows the tooltip on hover; a tap (no hover) opens and closes it
+          if (!window.matchMedia?.('(hover: hover)').matches) { this._tip = this._tip === a ? null : a; this._render(); }
+        }
         else if (kind === 'toggle') this._toggle(a);
         else if (kind === 'caution') this._select('caution', a);
         else if (kind === 'override') this._select('charger_car_override', a);
@@ -671,7 +677,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       // a status pill: icon and text, icon only on a phone; a tap shows what it means
       const pill = (key, kind, ic, text, tip, more) => {
         const open = this._tip === key;
-        return `<span class="hp"><button type="button" class="pill ${kind}" data-act="tip:${key}" aria-expanded="${open}" aria-label="${esc(text)}" data-more="${esc(more || '')}">${icon(ic)}<span class="ptxt">${esc(text)}</span></button>${open ? `<span class="tipbox" role="tooltip"><b>${esc(text)}</b>${tip}</span>` : ''}</span>`;
+        return `<span class="hp${open ? ' open' : ''}"><button type="button" class="pill ${kind}" data-act="tip:${key}" aria-expanded="${open}" aria-label="${esc(text)}" data-more="${esc(more || '')}">${icon(ic)}<span class="ptxt">${esc(text)}</span></button><span class="tipbox" role="tooltip"><b>${esc(text)}</b>${tip}</span></span>`;
       };
       const modeTip = `${esc(MODE_TIP[s.mode] || '')}${s.reason ? `<span class="why">Now: ${esc(s.reason)}</span>` : ''}`;
       const tog = (key, label, on, cls = '') => `<button type="button" class="tog ${cls}" aria-pressed="${on ? 'true' : 'false'}" data-act="toggle:${key}" data-more="${esc(this._ent(key) || '')}">${label}</button>`;
