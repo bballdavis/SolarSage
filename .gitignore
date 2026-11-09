@@ -13,3 +13,22 @@ tools/out/
 tools/config.json
 tools/config.yaml
 tools/config.yml
+
+# Local editor, environment, and generated files
+.DS_Store
+*.code-workspace
+.vscode/
+.idea/
+.venv/
+.env
+.env.*
+!.env.example
+node_modules/
+website/build/
+website/.docusaurus/
+coverage/
+.coverage
+htmlcov/
+dist/
+.code-review-graph/
+.local/

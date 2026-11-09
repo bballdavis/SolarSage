@@ -25,7 +25,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from rivian.exceptions import RivianInvalidOTP
 from yarl import URL
 
-from custom_components.rivian_schedule_control.const import (
+from custom_components.solar_ev_planner.rivian.const import (
     CONF_ACCESS_TOKEN,
     CONF_CHARGER_STATE_ENTITY,
     CONF_DRY_RUN,
@@ -204,8 +204,8 @@ def mock_rivian() -> Generator[FakeRivian]:
     """Replace the Rivian client wherever the integration creates one."""
     fake = FakeRivian()
     with (
-        patch("custom_components.rivian_schedule_control.Rivian", new=fake),
-        patch("custom_components.rivian_schedule_control.config_flow.Rivian", new=fake),
+        patch("custom_components.solar_ev_planner.rivian.Rivian", new=fake),
+        patch("custom_components.solar_ev_planner.rivian.config_flow.Rivian", new=fake),
     ):
         yield fake
 
@@ -257,7 +257,7 @@ def hass_config_dir(hass_tmp_config_dir: str) -> str:
 @pytest.fixture
 def fast_restore() -> Generator[None]:
     """Do not wait for a restore to settle when disabling or removing."""
-    with patch("custom_components.rivian_schedule_control.RESTORE_SETTLE_WAIT", new=timedelta(0)):
+    with patch("custom_components.solar_ev_planner.rivian.RESTORE_SETTLE_WAIT", new=timedelta(0)):
         yield
 
 

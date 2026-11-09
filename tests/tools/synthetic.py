@@ -44,13 +44,13 @@ E = {
     "r_renewal": "switch.r1s_schedule_control_lease_renewal",
     "r_restore": "button.r1s_schedule_control_restore_owner_schedule",
     "r_read": "button.r1s_schedule_control_read_schedules",
-    "t_soc": "sensor.roxxo_battery_level",
-    "t_limit": "number.roxxo_charge_limit",
-    "t_plugged": "binary_sensor.roxxo_charge_cable",
-    "t_location": "device_tracker.roxxo_location",
-    "t_switch": "switch.roxxo_charge",
-    "t_current": "number.roxxo_charge_current",
-    "t_charging": "sensor.roxxo_charging",
+    "t_soc": "sensor.tesla_battery_level",
+    "t_limit": "number.tesla_charge_limit",
+    "t_plugged": "binary_sensor.tesla_charge_cable",
+    "t_location": "device_tracker.tesla_location",
+    "t_switch": "switch.tesla_charge",
+    "t_current": "number.tesla_charge_current",
+    "t_charging": "sensor.tesla_charging",
 }
 
 
@@ -255,7 +255,7 @@ def _static(fake: FakeHass, now: datetime, hist_from: datetime, dry_run: bool) -
     loc = {"latitude": 32.87341, "longitude": -117.22749, "gps_accuracy": 5, "source_type": "gps"}
     fake.set_state(E["r_location"], "home", dict(loc, friendly_name="R1S"), when=hist_from)
     fake.set_state(E["r_limit"], 80, {"unit_of_measurement": "%"}, when=hist_from)
-    fake.set_state(E["t_location"], "Office", dict(loc, friendly_name="Roxxo"), when=hist_from)
+    fake.set_state(E["t_location"], "Office", dict(loc, friendly_name="Tesla"), when=hist_from)
     fake.set_state(E["t_soc"], 63, {"unit_of_measurement": "%"}, when=hist_from)
     fake.set_state(
         E["t_limit"], 90, {"unit_of_measurement": "%", "min": 50, "max": 100}, when=hist_from
@@ -283,7 +283,7 @@ def _static(fake: FakeHass, now: datetime, hist_from: datetime, dry_run: bool) -
         E["r_state"], "dry_run" if dry_run else "idle", schedule_control_attrs(dry_run=dry_run)
     )
     for key in ("r_switch", "r_current", "r_state", "r_status", "r_renewal", "r_restore", "r_read"):
-        fake.register(E[key], "rivian_schedule_control", f"test-vehicle-0001_{key}")
+        fake.register(E[key], "solar_ev_planner", f"test-vehicle-0001_{key}")
     # the free-hours Schedule helper
     week = {
         name: [{"from": "00:00:00", "to": "06:00:00"}, {"from": "20:00:00", "to": "23:59:59"}]

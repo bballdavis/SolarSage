@@ -1,8 +1,9 @@
 [project]
-name = "hass-solar-rivian"
-version = "0.1.0"
-description = "Smart solar charging for a Tesla and a Rivian in Home Assistant"
+name = "solarsage"
+version = "0.2.0"
+description = "Forecast-aware solar EV charging for Home Assistant"
 requires-python = ">=3.14"
+license = "MIT"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

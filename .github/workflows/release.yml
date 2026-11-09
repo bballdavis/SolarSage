@@ -1,0 +1,23 @@
+name: Prepare release archive
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Check version and package
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: python scripts/build-release.py --tag "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solarsage-release
+          path: dist/solar_ev_planner.zip

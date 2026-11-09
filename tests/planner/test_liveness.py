@@ -15,10 +15,10 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from .conftest import RIVIAN, TESLA, FakeCars, cycle, make_entry, set_rivian, setup_entry, turn
 
-HEARTBEAT = "sensor.solar_ev_planner_heartbeat"
+HEARTBEAT = "sensor.solarsage_heartbeat"
 WANTED = "binary_sensor.r1s_planner_charging_wanted"
-SHADOW = "switch.solar_ev_planner_shadow_mode"
-PLANNING = "switch.solar_ev_planner_planning"
+SHADOW = "switch.solarsage_shadow_mode"
+PLANNING = "switch.solarsage_planning"
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ async def test_heartbeat_follows_the_planner(
     # planner off: stopped, and the reason says what that means for each car
     await turn(hass, PLANNING, False)
     assert hass.states.get(HEARTBEAT).state == STATE_UNAVAILABLE
-    reason = hass.states.get("sensor.solar_ev_planner_reason").state
+    reason = hass.states.get("sensor.solarsage_reason").state
     assert "sends nothing" in reason and "parks" in reason
     await turn(hass, PLANNING, True)
     assert hass.states.get(HEARTBEAT).state == "active"
@@ -72,12 +72,12 @@ async def test_charging_wanted_follows_the_commands(
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA), fake_cars)
     # shadow mode: unknown, so the schedule control neither confirms nor drops requests
     assert hass.states.get(WANTED).state == "unknown"
-    assert hass.states.get("binary_sensor.roxxo_planner_charging_wanted").state == "unknown"
+    assert hass.states.get("binary_sensor.tesla_planner_charging_wanted").state == "unknown"
     await turn(hass, SHADOW, False)
     assert hass.states.get(WANTED).state == "on"
     assert hass.states.get("switch.r1s_schedule_control_solar_charging").state == "on"
     # daytime solar charging off: the car pauses, in step with the schedule control's switch
-    await turn(hass, "switch.solar_ev_planner_daytime_solar_charging", False)
+    await turn(hass, "switch.solarsage_daytime_solar_charging", False)
     await cycle(hass, coordinator, freezer, minutes=16)
     assert hass.states.get("switch.r1s_schedule_control_solar_charging").state == "off"
     assert hass.states.get(WANTED).state == "off"

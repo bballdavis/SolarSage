@@ -109,12 +109,12 @@ CAR_EXPECT = {
     "restore_button": Expect("button", required=False),
     "read_schedules_button": Expect("button", required=False),
 }
-PLATFORMS = {"rivian_schedule_control": "rivian_schedule_control"}
+PLATFORMS = {"rivian_schedule_control": "solar_ev_planner"}
 # The integrations that give the Tesla the planner's entity IDs, and what a command costs.
 TESLA_PLATFORMS = {
     "tesla_fleet": (
         "every command, wake and data request is billed by Tesla's Fleet API; add no card, keep "
-        "the billing limit at $0, and see sensor.solar_ev_planner_tesla_api_spend"
+        "the billing limit at $0, and see sensor.solarsage_tesla_api_spend"
     ),
     "teslemetry": "commands use Teslemetry credits (1 per command, 20 per wake)",
     "tessie": "commands are included in the Tessie subscription",
@@ -673,7 +673,7 @@ async def schedule_control_rows(
                 f"{car_id} schedule control",
                 cs["entity_id"],
                 platform,
-                "this comes from another integration, not rivian_schedule_control",
+                "this comes from another integration, not bundled SolarSage Rivian control",
             )
         )
     status, detail = OK, "the schedule control is running"

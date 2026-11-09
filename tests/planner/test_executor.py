@@ -37,8 +37,8 @@ from .conftest import (
     turn,
 )
 
-SHADOW = "switch.solar_ev_planner_shadow_mode"
-PLANNING = "switch.solar_ev_planner_planning"
+SHADOW = "switch.solarsage_shadow_mode"
+PLANNING = "switch.solarsage_planning"
 UNTIL = "sensor.r1s_planner_charging_until"
 # 06:00 on Tuesday 16 June (UTC-7): the end of Monday night's free hours (20:00-06:00)
 MONDAY_NIGHT_END = datetime(2026, 6, 16, 13, 0, tzinfo=dt_util.UTC)
@@ -100,7 +100,7 @@ async def test_rivian_gets_the_current_then_the_switch(
     assert control.attributes["desired_charge"] is True
     assert control.attributes["requested_amps"] == amps
     assert hass.states.get("binary_sensor.r1s_planner_charging_wanted").state == "on"
-    assert hass.states.get("sensor.solar_ev_planner_heartbeat").state == "active"
+    assert hass.states.get("sensor.solarsage_heartbeat").state == "active"
     # the Tesla is not on the charger: never commanded
     assert not [c for c in fake_cars.calls if c[2] in (TES["switch"], TES["current"])]
 
@@ -128,11 +128,11 @@ async def test_changes_wait_for_the_minimum_interval(
     set_site(hass, soc=25, pv_w=1500, grid_w=0, battery_w=-1500, forecast_ratio=0.3)
     await cycle(hass, coordinator, freezer, minutes=0)
     assert fake_cars.calls == []
-    reason = hass.states.get("sensor.solar_ev_planner_reason").state
+    reason = hass.states.get("sensor.solarsage_reason").state
     assert reason.startswith(f"Holding {first} A until 12:15")
     want = coordinator.data.cars["rivian"].want_a
     assert want is not None and want < first
-    nxt = hass.states.get("sensor.solar_ev_planner_next_change")
+    nxt = hass.states.get("sensor.solarsage_next_change")
     assert nxt.attributes["amps"] == want
     # after the interval: a pause at once (the switch, never 0 A)
     assert want == 0
@@ -235,7 +235,7 @@ async def test_tesla_restore_can_be_turned_off_and_never_runs_in_shadow(
     await hass.services.async_call(
         "number",
         "set_value",
-        {"entity_id": "number.roxxo_planner_restore_current_at_unplug", "value": 0},
+        {"entity_id": "number.tesla_planner_restore_current_at_unplug", "value": 0},
         blocking=True,
     )
     fake_cars.clear()

@@ -1,7 +1,7 @@
-"""Config flow for the Solar EV planner.
+"""Config flow for the SolarSage.
 
 The main entry maps the site in three steps (solar, grid and battery; the Wall Connector;
-the forecast and the free hours), prefilled with the owner's entity IDs where they exist
+the forecast and the free hours), prefilled with the example entity IDs where they exist
 (``core.entities``). Cars and extra price windows are subentries: one per car (kind, the
 entities it is read and commanded through, its currents and pack size) and one per Schedule
 helper painted with a price. Every mapping can be changed later (options, reconfigure).
@@ -14,13 +14,13 @@ from typing import Any
 
 from homeassistant.config_entries import (
     ConfigEntry,
-    ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
     OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
     BooleanSelector,
     EntitySelector,
@@ -93,6 +93,10 @@ from .core.entities import (
     CAR_ENTITY_PREFERRED,
     SITE_ENTITIES,
 )
+from .rivian.config_flow import (
+    RivianScheduleControlConfigFlow,
+    RivianScheduleControlOptionsFlow,
+)
 
 
 def _entity(domain: str | list[str]) -> EntitySelector:
@@ -152,7 +156,12 @@ TARIFF_FIELDS: dict[str, tuple[bool, Any]] = {
     CONF_FORECAST_POLLED: (False, _entity("sensor")),
     CONF_FREE_HOURS: (False, _entity("schedule")),
 }
-STEPS = {"user": SITE_FIELDS, "charger": CHARGER_FIELDS, "tariff": TARIFF_FIELDS}
+STEPS = {
+    "site": SITE_FIELDS,
+    "user": SITE_FIELDS,
+    "charger": CHARGER_FIELDS,
+    "tariff": TARIFF_FIELDS,
+}
 
 
 def _schema(fields: Mapping[str, tuple[bool, Any]]) -> vol.Schema:
@@ -170,7 +179,7 @@ def _existing(hass: HomeAssistant, candidates: Mapping[str, str]) -> dict[str, s
 
 
 def site_suggestions(hass: HomeAssistant) -> dict[str, Any]:
-    """Defaults plus the owner's entity IDs that exist in this Home Assistant."""
+    """Defaults plus the example entity IDs that exist in this Home Assistant."""
     return DEFAULT_SITE_OPTIONS | _existing(hass, SITE_ENTITIES)
 
 
@@ -193,18 +202,21 @@ def _site_errors(options: Mapping[str, Any]) -> dict[str, str]:
     return errors
 
 
-class SolarEvPlannerConfigFlow(ConfigFlow, domain=DOMAIN):
+class SolarEvPlannerConfigFlow(RivianScheduleControlConfigFlow, domain=DOMAIN):
     """Map the site; cars and price windows are added as subentries."""
 
     VERSION = 1
     MINOR_VERSION = 1
 
     def __init__(self) -> None:
+        super().__init__()
         self._options: dict[str, Any] = {}
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> SolarEvPlannerOptionsFlow:
+        if "vehicle_id" in config_entry.data:
+            return RivianScheduleControlOptionsFlow()
         return SolarEvPlannerOptionsFlow()
 
     @classmethod
@@ -212,13 +224,25 @@ class SolarEvPlannerConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
+        if "vehicle_id" in config_entry.data:
+            return {}
         return {SUBENTRY_CAR: CarSubentryFlow, SUBENTRY_PRICE: PriceWindowSubentryFlow}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Choose the part of SolarSage to configure."""
+        return self.async_show_menu(step_id="user", menu_options=["site", "rivian"])
+
+    async def async_step_rivian(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Prevent two controllers from owning one vehicle schedule."""
+        if self.hass.config_entries.async_entries("rivian_schedule_control"):
+            return self.async_abort(reason="legacy_rivian_installed")
+        return await super().async_step_rivian(user_input)
+
+    async def async_step_site(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Solar, grid and the home battery."""
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
-        return await self._async_step("user", "charger", user_input)
+        return await self._async_step("site", "charger", user_input)
 
     async def async_step_charger(
         self, user_input: dict[str, Any] | None = None
@@ -334,7 +358,7 @@ def car_fields(kind: str) -> dict[str, tuple[bool, Any]]:
 
 
 def car_suggestions(hass: HomeAssistant, kind: str) -> dict[str, Any]:
-    """The kind's defaults and the owner's entity IDs for it that exist."""
+    """The kind's defaults and the example entity IDs for it that exist."""
     found = _existing(hass, CAR_ENTITIES.get(kind, {}))
     for key, others in CAR_ENTITY_ALTERNATIVES.get(kind, {}).items():
         existing = [eid for eid in others if hass.states.get(eid) is not None]
@@ -344,14 +368,21 @@ def car_suggestions(hass: HomeAssistant, kind: str) -> dict[str, Any]:
     return CAR_DEFAULTS[kind] | found
 
 
-def _car_errors(data: Mapping[str, Any]) -> dict[str, str]:
+def _car_errors(hass: HomeAssistant, data: Mapping[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
     if int(data[CONF_MIN_A]) > int(data[CONF_MAX_A]):
         errors[CONF_MAX_A] = "max_below_min"
-    if data[CONF_SWITCH].startswith(f"switch.{DOMAIN}") or data[CONF_CURRENT].startswith(
-        f"number.{DOMAIN}"
-    ):
-        errors["base"] = "own_entity"
+    registry = er.async_get(hass)
+    for entity_id in (data[CONF_SWITCH], data[CONF_CURRENT]):
+        registered = registry.async_get(entity_id)
+        if registered is not None and registered.platform == DOMAIN:
+            owner = hass.config_entries.async_get_entry(registered.config_entry_id)
+            if owner is None or "vehicle_id" not in owner.data:
+                errors["base"] = "own_entity"
+        elif registered is None and entity_id.split(".", 1)[-1].startswith(
+            ("solar_ev_planner_", "solarsage_")
+        ):
+            errors["base"] = "own_entity"
     return errors
 
 
@@ -395,7 +426,7 @@ class CarSubentryFlow(ConfigSubentryFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             data = _car_data(self._kind, user_input)
-            if not (errors := _car_errors(data)):
+            if not (errors := _car_errors(self.hass, data)):
                 car_id = self._new_car_id()
                 return self.async_create_entry(
                     title=data[CONF_NAME],
@@ -421,7 +452,7 @@ class CarSubentryFlow(ConfigSubentryFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             data = _car_data(kind, user_input)
-            if not (errors := _car_errors(data)):
+            if not (errors := _car_errors(self.hass, data)):
                 return self.async_update_and_abort(
                     self._get_entry(),
                     subentry,

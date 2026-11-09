@@ -24,33 +24,33 @@ from .conftest import (
 )
 
 PLANNER_ENTITIES = {
-    "switch.solar_ev_planner_planning",
-    "switch.solar_ev_planner_shadow_mode",
-    "switch.solar_ev_planner_daytime_solar_charging",
-    "select.solar_ev_planner_caution",
-    "select.solar_ev_planner_night_charging_start",
-    "number.solar_ev_planner_battery_floor",
-    "number.solar_ev_planner_battery_wanted_at_free_hours",
-    "number.solar_ev_planner_minimum_time_between_changes",
-    "number.solar_ev_planner_largest_change",
-    "number.solar_ev_planner_paid_grid_tolerance",
-    "number.solar_ev_planner_import_price",
-    "number.solar_ev_planner_solar_buyback",
-    "select.solar_ev_planner_charger_car_override",
-    "sensor.solar_ev_planner_mode",
-    "sensor.solar_ev_planner_reason",
-    "sensor.solar_ev_planner_next_change",
-    "sensor.solar_ev_planner_battery_minimum",
-    "sensor.solar_ev_planner_battery_minimum_time",
-    "sensor.solar_ev_planner_forecast_correction",
-    "sensor.solar_ev_planner_car_on_charger",
-    "sensor.solar_ev_planner_heartbeat",
+    "switch.solarsage_planning",
+    "switch.solarsage_shadow_mode",
+    "switch.solarsage_daytime_solar_charging",
+    "select.solarsage_caution",
+    "select.solarsage_night_charging_start",
+    "number.solarsage_battery_floor",
+    "number.solarsage_battery_wanted_at_free_hours",
+    "number.solarsage_minimum_time_between_changes",
+    "number.solarsage_largest_change",
+    "number.solarsage_paid_grid_tolerance",
+    "number.solarsage_import_price",
+    "number.solarsage_solar_buyback",
+    "select.solarsage_charger_car_override",
+    "sensor.solarsage_mode",
+    "sensor.solarsage_reason",
+    "sensor.solarsage_next_change",
+    "sensor.solarsage_battery_minimum",
+    "sensor.solarsage_battery_minimum_time",
+    "sensor.solarsage_forecast_correction",
+    "sensor.solarsage_car_on_charger",
+    "sensor.solarsage_heartbeat",
 }
 TESLA_SPEND_ENTITIES = {
-    "sensor.solar_ev_planner_tesla_api_spend",
-    "number.solar_ev_planner_tesla_api_budget",
-    "number.solar_ev_planner_tesla_fleet_polling_estimate",
-    "number.solar_ev_planner_tesla_refresh_interval",
+    "sensor.solarsage_tesla_api_spend",
+    "number.solarsage_tesla_api_budget",
+    "number.solarsage_tesla_fleet_polling_estimate",
+    "number.solarsage_tesla_refresh_interval",
 }
 CAR_ENTITIES = {
     "binary_sensor.{car}_planner_charging_wanted",
@@ -77,9 +77,9 @@ async def test_entity_ids(site: HomeAssistant, fake_cars: FakeCars) -> None:
     registry = er.async_get(hass)
     ids = {e.entity_id for e in registry.entities.values() if e.platform == DOMAIN}
     expected = set(PLANNER_ENTITIES)
-    for car in ("r1s", "roxxo"):
+    for car in ("r1s", "tesla"):
         expected |= {e.format(car=car) for e in CAR_ENTITIES}
-    expected.add("number.roxxo_planner_restore_current_at_unplug")  # the Tesla only
+    expected.add("number.tesla_planner_restore_current_at_unplug")  # the Tesla only
     expected.add("sensor.r1s_planner_charging_until")  # the Rivian only
     expected |= TESLA_SPEND_ENTITIES  # with a Tesla only
     assert ids == expected
@@ -108,17 +108,15 @@ async def test_settings_reach_the_core_and_persist(
             domain, service, {"entity_id": entity_id, **data}, blocking=True
         )
 
-    await call("select", "select_option", "select.solar_ev_planner_caution", option="near_certain")
-    await call("number", "set_value", "number.solar_ev_planner_battery_floor", value=25)
-    await call(
-        "number", "set_value", "number.solar_ev_planner_battery_wanted_at_free_hours", value=50
-    )
-    await call("number", "set_value", "number.solar_ev_planner_import_price", value=0.4)
+    await call("select", "select_option", "select.solarsage_caution", option="near_certain")
+    await call("number", "set_value", "number.solarsage_battery_floor", value=25)
+    await call("number", "set_value", "number.solarsage_battery_wanted_at_free_hours", value=50)
+    await call("number", "set_value", "number.solarsage_import_price", value=0.4)
     core = coordinator.core_settings()
     assert core.caution == "near-certain" and core.caution_p() == 0.97
     assert core.floor_pct == 25 and core.wanted_at_free_start_pct == 50
-    assert hass.states.get("select.solar_ev_planner_caution").state == "near_certain"
-    price = hass.states.get("number.solar_ev_planner_import_price")
+    assert hass.states.get("select.solarsage_caution").state == "near_certain"
+    price = hass.states.get("number.solarsage_import_price")
     assert price.state == "0.4"
     assert price.attributes["unit_of_measurement"] == f"{hass.config.currency}/kWh"
 
@@ -139,13 +137,13 @@ async def test_car_plans(
     await hass.services.async_call(
         "select",
         "select_option",
-        {"entity_id": "select.roxxo_planner_plan_days", "option": "weekdays"},
+        {"entity_id": "select.tesla_planner_plan_days", "option": "weekdays"},
         blocking=True,
     )
     await hass.services.async_call(
         "number",
         "set_value",
-        {"entity_id": "number.roxxo_planner_plan_target", "value": 70},
+        {"entity_id": "number.tesla_planner_plan_target", "value": 70},
         blocking=True,
     )
     await cycle(hass, coordinator, freezer)
@@ -153,7 +151,7 @@ async def test_car_plans(
     tomorrow = dt_util.now().date() + timedelta(days=1)
     assert plans[0].target_pct == 70
     assert plans[0].deadline == datetime.combine(tomorrow, time(7, 30), dt_util.now().tzinfo)
-    outlook = hass.states.get("sensor.roxxo_planner_outlook")
+    outlook = hass.states.get("sensor.tesla_planner_outlook")
     assert outlook.attributes["target"] == 70 and outlook.attributes["by"].startswith(
         tomorrow.isoformat()
     )
@@ -161,20 +159,20 @@ async def test_car_plans(
     await hass.services.async_call(
         "time",
         "set_value",
-        {"entity_id": "time.roxxo_planner_plan_time", "time": "13:00:00"},
+        {"entity_id": "time.tesla_planner_plan_time", "time": "13:00:00"},
         blocking=True,
     )
     await hass.services.async_call(
         "select",
         "select_option",
-        {"entity_id": "select.roxxo_planner_plan_days", "option": "once"},
+        {"entity_id": "select.tesla_planner_plan_days", "option": "once"},
         blocking=True,
     )
     await cycle(hass, coordinator, freezer)
     (plan,) = coordinator._plans("tesla", dt_util.now())
     assert plan.deadline.hour == 13 and plan.deadline.date() == dt_util.now().date()
     await cycle(hass, coordinator, freezer, minutes=60)
-    assert hass.states.get("select.roxxo_planner_plan_days").state == "off"
+    assert hass.states.get("select.tesla_planner_plan_days").state == "off"
     # the planner's own limit, below the car's
     await hass.services.async_call(
         "number",
@@ -203,7 +201,7 @@ async def test_price_window_entity_and_tariff(
         ),
     )
     coordinator = await setup_entry(hass, entry, fake_cars)
-    state = hass.states.get("number.solar_ev_planner_peak_price")
+    state = hass.states.get("number.solarsage_peak_price")
     assert state is not None and state.state == "0.45"
     tariff, problem = coordinator._tariff()
     assert problem is None
@@ -211,7 +209,7 @@ async def test_price_window_entity_and_tariff(
     await hass.services.async_call(
         "number",
         "set_value",
-        {"entity_id": "number.solar_ev_planner_peak_price", "value": 0.5},
+        {"entity_id": "number.solarsage_peak_price", "value": 0.5},
         blocking=True,
     )
     tariff, _ = coordinator._tariff()
@@ -222,14 +220,35 @@ async def test_adding_a_car_reloads_the_planner(site: HomeAssistant, fake_cars: 
     hass = site
     entry = make_entry(RIVIAN)
     await setup_entry(hass, entry, fake_cars)
-    assert hass.states.get("sensor.roxxo_planner_planned_current") is None
+    assert hass.states.get("sensor.tesla_planner_planned_current") is None
     hass.config_entries.async_add_subentry(
         entry,
-        ConfigSubentry(data=TESLA, subentry_type=SUBENTRY_CAR, title="Roxxo", unique_id="tesla"),
+        ConfigSubentry(data=TESLA, subentry_type=SUBENTRY_CAR, title="Tesla", unique_id="tesla"),
     )
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert hass.states.get("sensor.roxxo_planner_planned_current") is not None
+    assert hass.states.get("sensor.tesla_planner_planned_current") is not None
     assert set(entry.runtime_data.cars) == {"rivian", "tesla"}
-    assert hass.states.get("select.solar_ev_planner_charger_car_override").attributes[
-        "options"
-    ] == ["auto", "rivian", "tesla"]
+    assert hass.states.get("select.solarsage_charger_car_override").attributes["options"] == [
+        "auto",
+        "rivian",
+        "tesla",
+    ]
+
+
+async def test_rebranding_preserves_existing_registered_ids(site, fake_cars) -> None:
+    """An existing installation must keep automations referencing pre-branding entities."""
+    entry = make_entry(RIVIAN)
+    entry.add_to_hass(site)
+    registry = er.async_get(site)
+    registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_heartbeat",
+        suggested_object_id="solar_ev_planner_heartbeat",
+        config_entry=entry,
+    )
+    # setup_entry normally adds the entry; this one is already registered.
+    assert await site.config_entries.async_setup(entry.entry_id)
+    await site.async_block_till_done(wait_background_tasks=True)
+    assert site.states.get("sensor.solar_ev_planner_heartbeat") is not None
+    assert site.states.get("sensor.solarsage_heartbeat") is None

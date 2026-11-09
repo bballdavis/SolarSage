@@ -74,7 +74,7 @@ async def test_snapshot_contents(client: HassClient, fake: FakeHass) -> None:
         {"from": "20:00:00", "to": "23:59:59"},
     ]
     assert any("no recorded forecast issues" in n for n in snap["notes"])
-    assert not any("roxxo_charger" in n for n in snap["notes"])  # legacy names are optional
+    assert not any("tesla_charger" in n for n in snap["notes"])  # legacy names are optional
     assert fake.service_calls == []
 
 

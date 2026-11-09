@@ -38,7 +38,7 @@ async def test_snapshot_describes_the_cycle(
     assert (first_free.hour, first_free.minute) == (20, 0)
     # every setting the card changes has its entity
     planner = snap["entities"]["planner"]
-    assert planner["shadow_mode"] == "switch.solar_ev_planner_shadow_mode"
+    assert planner["shadow_mode"] == "switch.solarsage_shadow_mode"
     assert planner["caution"].startswith("select.")
     assert planner["battery_floor"].startswith("number.")
     rivian = snap["entities"]["cars"]["rivian"]
@@ -70,7 +70,7 @@ async def test_subscription_pushes_after_a_setting_changes(
     msg = await client.receive_json()
     assert msg["type"] == "event" and msg["event"]["shadow"] is True
 
-    await turn(hass, "switch.solar_ev_planner_shadow_mode", False)
+    await turn(hass, "switch.solarsage_shadow_mode", False)
     await hass.async_block_till_done()
     while True:
         msg = await client.receive_json()

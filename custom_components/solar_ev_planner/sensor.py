@@ -47,6 +47,11 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the planner's and each car's sensors."""
+    if "vehicle_id" in entry.data:
+        from .rivian.sensor import async_setup_entry as setup_rivian  # noqa: PLC0415
+
+        await setup_rivian(hass, entry, async_add_entities)
+        return
     coordinator = entry.runtime_data
     async_add_entities(
         [

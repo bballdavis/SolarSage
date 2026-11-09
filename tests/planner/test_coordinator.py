@@ -36,8 +36,8 @@ from .conftest import (
     turn,
 )
 
-SHADOW = "switch.solar_ev_planner_shadow_mode"
-PLANNING = "switch.solar_ev_planner_planning"
+SHADOW = "switch.solarsage_shadow_mode"
+PLANNING = "switch.solarsage_planning"
 UNTIL = "sensor.r1s_planner_charging_until"
 WANTED = "binary_sensor.r1s_planner_charging_wanted"
 # 06:00 on Tuesday 16 June (UTC-7): the end of Monday night's free hours (20:00-06:00)
@@ -79,24 +79,24 @@ async def test_run_reads_history_forecast_and_tariff(site: HomeAssistant) -> Non
     assert data.site.house_kw == pytest.approx(7.8 - 0.15 - 2.9)
 
     # the dashboard
-    assert hass.states.get("sensor.solar_ev_planner_mode").state == "day"
-    reason = hass.states.get("sensor.solar_ev_planner_reason").state
+    assert hass.states.get("sensor.solarsage_mode").state == "day"
+    reason = hass.states.get("sensor.solarsage_reason").state
     assert reason.startswith("Solar charging at") and len(reason) <= 255
-    assert hass.states.get("sensor.solar_ev_planner_car_on_charger").state == "rivian"
+    assert hass.states.get("sensor.solarsage_car_on_charger").state == "rivian"
     planned = hass.states.get("sensor.r1s_planner_planned_current")
     assert int(planned.state) >= 8 and int(planned.state) % 2 == 0
-    assert hass.states.get("sensor.roxxo_planner_planned_current").state == "0"
-    low = hass.states.get("sensor.solar_ev_planner_battery_minimum")
+    assert hass.states.get("sensor.tesla_planner_planned_current").state == "0"
+    low = hass.states.get("sensor.solarsage_battery_minimum")
     assert 0 < float(low.state) <= 100 and low.attributes["trajectory"]
-    assert hass.states.get("sensor.solar_ev_planner_battery_minimum_time").state != "unknown"
-    assert hass.states.get("sensor.solar_ev_planner_next_change").state != "unknown"
-    correction = hass.states.get("sensor.solar_ev_planner_forecast_correction")
+    assert hass.states.get("sensor.solarsage_battery_minimum_time").state != "unknown"
+    assert hass.states.get("sensor.solarsage_next_change").state != "unknown"
+    correction = hass.states.get("sensor.solarsage_forecast_correction")
     assert 0.3 < float(correction.state) < 1.8
     assert correction.attributes["remaining_p50_kwh"] > 0
     outlook = hass.states.get("sensor.r1s_planner_outlook")
     assert outlook.state and outlook.attributes["need_kwh"] > 0
     assert float(hass.states.get("sensor.r1s_planner_energy_from_sun").state) >= 0
-    assert hass.states.get("sensor.roxxo_planner_energy_in_free_hours") is not None
+    assert hass.states.get("sensor.tesla_planner_energy_in_free_hours") is not None
     assert hass.states.get("sensor.r1s_planner_energy_paid") is not None
 
 
@@ -113,9 +113,9 @@ async def test_free_hours_charge_at_the_cars_maximum(
     set_rivian(hass, soc=60)
     await cycle(hass, coordinator, freezer)
     assert coordinator.data.mode == "night"
-    assert hass.states.get("sensor.solar_ev_planner_mode").state == "night"
+    assert hass.states.get("sensor.solarsage_mode").state == "night"
     assert hass.states.get("sensor.r1s_planner_planned_current").state == "48"
-    nxt = hass.states.get("sensor.solar_ev_planner_next_change")
+    nxt = hass.states.get("sensor.solarsage_next_change")
     assert nxt.attributes["amps"] == 0  # at the limit, before the free hours end
 
 
@@ -128,8 +128,8 @@ async def test_missing_site_readings_mean_no_plan(
     await cycle(hass, coordinator, freezer)
     assert coordinator.data.mode == MODE_NO_DATA
     assert "battery_soc" in coordinator.data.reason
-    assert hass.states.get("sensor.solar_ev_planner_mode").state == MODE_NO_DATA
-    assert hass.states.get("sensor.solar_ev_planner_heartbeat").state == STATE_UNAVAILABLE
+    assert hass.states.get("sensor.solarsage_mode").state == MODE_NO_DATA
+    assert hass.states.get("sensor.solarsage_heartbeat").state == STATE_UNAVAILABLE
 
 
 async def test_site_sensors_that_went_quiet_are_stale(
@@ -182,7 +182,7 @@ async def test_memory_and_settings_survive_a_reload(
     coordinator = entry.runtime_data
     assert coordinator.settings["floor_pct"] == 35.0
     assert coordinator.runtime["rivian"].plugged_since == since
-    assert hass.states.get("number.solar_ev_planner_battery_floor").state == "35.0"
+    assert hass.states.get("number.solarsage_battery_floor").state == "35.0"
 
 
 async def test_new_day_records_yesterdays_solar(
@@ -410,7 +410,7 @@ async def test_the_tesla_has_no_charging_until(
     assert coordinator.data.mode == "night"
     assert coordinator.data.identification.car_id == "tesla"
     assert coordinator.runtime["tesla"].commanded_a == 48
-    assert hass.states.get("sensor.roxxo_planner_charging_until") is None
+    assert hass.states.get("sensor.tesla_planner_charging_until") is None
     registry = er.async_get(hass)
     until = {
         e.entity_id

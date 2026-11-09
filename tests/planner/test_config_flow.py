@@ -76,12 +76,20 @@ def suggested(result: dict[str, Any], key: str) -> Any:
     raise KeyError(key)
 
 
+async def start_site(hass: HomeAssistant) -> dict[str, Any]:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "site"}
+    )
+
+
 async def test_site_flow_suggests_the_owners_entities(planner_hass: HomeAssistant) -> None:
     hass = planner_hass
     set_site(hass)
     hass.states.async_set("schedule.free_hours", "off")
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
-    assert result["type"] is FlowResultType.FORM and result["step_id"] == "user"
+    result = await start_site(hass)
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "site"
     assert suggested(result, "pv_power") == "sensor.sol_ark_inverter_pv_power"
     assert suggested(result, "grid_power") == "sensor.sol_ark_inverter_grid_power"
     assert suggested(result, "battery_soc") == "sensor.sol_ark_inverter_battery_state_of_charge"
@@ -98,7 +106,7 @@ async def test_site_flow_suggests_the_owners_entities(planner_hass: HomeAssistan
     assert suggested(result, "free_hours") == "schedule.free_hours"
     result = await hass.config_entries.flow.async_configure(result["flow_id"], TARIFF_INPUT)
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Solar EV planner"
+    assert result["title"] == "SolarSage"
     options = result["options"]
     assert options["pv_power"] == E["pv_power"] and options["wall_power_unit"] == "kW"
     assert options["free_hours"] == "schedule.free_hours"
@@ -106,24 +114,20 @@ async def test_site_flow_suggests_the_owners_entities(planner_hass: HomeAssistan
 
 
 async def test_missing_entities_are_not_suggested(planner_hass: HomeAssistant) -> None:
-    result = await planner_hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await start_site(planner_hass)
     assert suggested(result, "pv_power") is None
     assert suggested(result, "battery_capacity_kwh") == 31.0
 
 
 async def test_only_one_planner(planner_hass: HomeAssistant) -> None:
     MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS).add_to_hass(planner_hass)
-    result = await planner_hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await start_site(planner_hass)
     assert result["type"] is FlowResultType.ABORT
 
 
 async def test_the_same_forecast_twice_is_refused(planner_hass: HomeAssistant) -> None:
     hass = planner_hass
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await start_site(hass)
     result = await hass.config_entries.flow.async_configure(result["flow_id"], SITE_INPUT)
     result = await hass.config_entries.flow.async_configure(result["flow_id"], CHARGER_INPUT)
     result = await hass.config_entries.flow.async_configure(
@@ -180,8 +184,8 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
     # the Tesla on Tesla Fleet, with its charging sensor; leftover tesla_custom entities are
     # never suggested
     set_tesla(hass)
-    hass.states.async_set("sensor.roxxo_charging", "stopped")
-    hass.states.async_set("binary_sensor.roxxo_status", "off")
+    hass.states.async_set("sensor.tesla_charging", "stopped")
+    hass.states.async_set("binary_sensor.tesla_status", "off")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["switch"], "off")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["current"], "32")
     entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
@@ -202,12 +206,12 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
 
     result = await _add_car(hass, entry, "tesla")
     data = _car_input(result)
-    assert data["switch"] == "switch.roxxo_charge"
-    assert data["current"] == "number.roxxo_charge_current"
-    assert data["limit"] == "number.roxxo_charge_limit"
-    assert data["charging_state"] == "sensor.roxxo_charging"
-    assert data["status"] == "binary_sensor.roxxo_status"  # the spending guard's wakes
-    assert data["soc"] == "sensor.roxxo_battery_level"
+    assert data["switch"] == "switch.tesla_charge"
+    assert data["current"] == "number.tesla_charge_current"
+    assert data["limit"] == "number.tesla_charge_limit"
+    assert data["charging_state"] == "sensor.tesla_charging"
+    assert data["status"] == "binary_sensor.tesla_status"  # the spending guard's wakes
+    assert data["soc"] == "sensor.tesla_battery_level"
     assert "control_state" not in data
     assert (data["min_a"], data["step_a"]) == (6, 1)
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], data)
@@ -215,10 +219,10 @@ async def test_add_cars_with_the_owners_entities(planner_hass: HomeAssistant) ->
 
     cars = {s.data[CONF_CAR_ID]: s for s in entry.subentries.values()}
     assert set(cars) == {"rivian", "tesla"}
-    assert cars["rivian"].title == "R1S" and cars["tesla"].title == "Roxxo"
+    assert cars["rivian"].title == "R1S" and cars["tesla"].title == "Tesla"
     assert cars["tesla"].data["kind"] == "tesla"
-    assert cars["tesla"].data["charging_state"] == "sensor.roxxo_charging"
-    assert cars["tesla"].data["status"] == "binary_sensor.roxxo_status"
+    assert cars["tesla"].data["charging_state"] == "sensor.tesla_charging"
+    assert cars["tesla"].data["status"] == "binary_sensor.tesla_status"
 
     # a second Rivian gets its own id
     result = await _add_car(hass, entry, "rivian")
@@ -238,8 +242,8 @@ async def test_tesla_custom_is_never_suggested(planner_hass: HomeAssistant) -> N
     Tesla Fleet's (tesla_custom cannot command the car without its proxy)."""
     hass = planner_hass
     set_tesla(hass)
-    hass.states.async_remove("switch.roxxo_charge")
-    hass.states.async_remove("number.roxxo_charge_current")
+    hass.states.async_remove("switch.tesla_charge")
+    hass.states.async_remove("number.tesla_charge_current")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["switch"], "off")
     hass.states.async_set(TESLA_CUSTOM_ENTITIES["current"], "32")
     entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, options=OPTIONS)
@@ -247,7 +251,7 @@ async def test_tesla_custom_is_never_suggested(planner_hass: HomeAssistant) -> N
     data = _car_input(await _add_car(hass, entry, "tesla"))
     assert "switch" not in data and "current" not in data
     assert "charging_state" not in data  # optional, and absent here
-    assert data["limit"] == "number.roxxo_charge_limit"
+    assert data["limit"] == "number.tesla_charge_limit"
 
 
 async def test_teslamate_readings_are_suggested_over_tesla_fleets(
@@ -264,8 +268,8 @@ async def test_teslamate_readings_are_suggested_over_tesla_fleets(
     entry.add_to_hass(hass)
     data = _car_input(await _add_car(hass, entry, "tesla"))
     assert {key: data.get(key) for key in preferred} == preferred
-    assert data["switch"] == "switch.roxxo_charge"
-    assert data["current"] == "number.roxxo_charge_current"
+    assert data["switch"] == "switch.tesla_charge"
+    assert data["current"] == "number.tesla_charge_current"
 
 
 @pytest.mark.parametrize(
@@ -303,12 +307,12 @@ async def test_car_errors_and_reconfigure(planner_hass: HomeAssistant) -> None:
     entry.add_to_hass(hass)
     result = await _add_car(hass, entry, "tesla")
     bad = {
-        "name": "Roxxo",
-        "switch": "switch.roxxo_charge",
-        "current": "number.roxxo_charge_current",
-        "soc": "sensor.roxxo_battery_level",
-        "limit": "number.roxxo_charge_limit",
-        "plugged": "binary_sensor.roxxo_charge_cable",
+        "name": "Tesla",
+        "switch": "switch.tesla_charge",
+        "current": "number.tesla_charge_current",
+        "soc": "sensor.tesla_battery_level",
+        "limit": "number.tesla_charge_limit",
+        "plugged": "binary_sensor.tesla_charge_cable",
         "min_a": 20,
         "max_a": 10,
         "step_a": 1,
@@ -316,7 +320,7 @@ async def test_car_errors_and_reconfigure(planner_hass: HomeAssistant) -> None:
     }
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], bad)
     assert result["errors"] == {"max_a": "max_below_min"}
-    own = bad | {"max_a": 48, "switch": "switch.solar_ev_planner_planning"}
+    own = bad | {"max_a": 48, "switch": "switch.solarsage_planning"}
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], own)
     assert result["errors"] == {"base": "own_entity"}
 

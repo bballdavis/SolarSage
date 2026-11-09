@@ -58,11 +58,11 @@ from .conftest import (
     turn,
 )
 
-STATUS = "binary_sensor.roxxo_status"
+STATUS = "binary_sensor.tesla_status"
 CAR: dict[str, Any] = TESLA | {CONF_STATUS: STATUS}
-SPEND = "sensor.solar_ev_planner_tesla_api_spend"
-BUDGET = "number.solar_ev_planner_tesla_api_budget"
-SHADOW = "switch.solar_ev_planner_shadow_mode"
+SPEND = "sensor.solarsage_tesla_api_spend"
+BUDGET = "number.solarsage_tesla_api_budget"
+SHADOW = "switch.solarsage_shadow_mode"
 NOV = datetime(2026, 11, 5, 12, 0, tzinfo=dt_util.get_default_time_zone())
 # With the defaults and Tesla Fleet polling: min($5 budget, $10 - $1 margin - $5.20 polling)
 CAP_POLLING = TESLA_CREDIT - TESLA_MARGIN - DEFAULT_SETTINGS[S_TESLA_POLLING]
@@ -567,7 +567,7 @@ async def test_the_reason_says_when_the_guard_holds_back(
     assert fake_cars.calls == []
     assert "Tesla API spend" in coordinator.data.reason
     assert "only started in the free hours" in coordinator.data.reason
-    waiting = hass.states.get("sensor.roxxo_planner_planned_current").attributes["waiting"]
+    waiting = hass.states.get("sensor.tesla_planner_planned_current").attributes["waiting"]
     assert "nearly used" in waiting
     # at the cap: the night's free hours start nothing either
     spend.counts.wakes = wakes_worth(CAP_POLLING - TESLA_WORST_SEND)
@@ -601,7 +601,7 @@ async def test_the_planner_refreshes_a_plugged_in_tesla(
     assert len(refreshes.calls) == 2
     assert hass.states.get(SPEND).attributes["tesla_fleet_polling"] == {"tesla": "off"}
     # planning off: no refresh
-    await turn(hass, "switch.solar_ev_planner_planning", False)
+    await turn(hass, "switch.solarsage_planning", False)
     count = len(refreshes.calls)
     await cycle(hass, coordinator, freezer, minutes=2 * interval)
     assert len(refreshes.calls) == count

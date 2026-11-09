@@ -25,7 +25,7 @@ NOT_LOADED = "not_loaded"
 
 def _coordinator(hass: HomeAssistant) -> PlannerCoordinator | None:
     entries = hass.config_entries.async_loaded_entries(DOMAIN)
-    return entries[0].runtime_data if entries else None
+    return next((entry.runtime_data for entry in entries if "vehicle_id" not in entry.data), None)
 
 
 @callback
@@ -44,7 +44,7 @@ def ws_dashboard(
     """The planner's state now."""
     coordinator = _coordinator(hass)
     if coordinator is None:
-        connection.send_error(msg["id"], NOT_LOADED, "The Solar EV planner is not loaded")
+        connection.send_error(msg["id"], NOT_LOADED, "The SolarSage is not loaded")
         return
     connection.send_result(msg["id"], snapshot(hass, coordinator))
 
@@ -57,7 +57,7 @@ def ws_subscribe(
     """The planner's state now and after every cycle or settings change."""
     coordinator = _coordinator(hass)
     if coordinator is None:
-        connection.send_error(msg["id"], NOT_LOADED, "The Solar EV planner is not loaded")
+        connection.send_error(msg["id"], NOT_LOADED, "The SolarSage is not loaded")
         return
 
     @callback
@@ -78,7 +78,7 @@ async def ws_refresh_schedules(
     """Re-read the free hours and price windows now, rather than within 15 minutes."""
     coordinator = _coordinator(hass)
     if coordinator is None:
-        connection.send_error(msg["id"], NOT_LOADED, "The Solar EV planner is not loaded")
+        connection.send_error(msg["id"], NOT_LOADED, "The SolarSage is not loaded")
         return
     await coordinator.async_refresh_schedules()
     connection.send_result(msg["id"])

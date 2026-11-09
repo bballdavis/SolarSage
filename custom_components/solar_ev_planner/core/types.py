@@ -177,7 +177,7 @@ class CarState:
 
     car_id: str  # "rivian" / "tesla" (any stable id)
     spec: CarSpec
-    soc_pct: float  # sensor.r1s_battery_state_of_charge / sensor.roxxo_battery_level
+    soc_pct: float  # sensor.r1s_battery_state_of_charge / sensor.tesla_battery_level
     limit_pct: float  # the car's own charge limit
     plugged: bool  # on the Wall Connector now (connected + this car's cable / location)
     plugged_since: datetime | None = None  # start of this plug session (a new value = plug-in)

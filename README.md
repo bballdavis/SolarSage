@@ -1,46 +1,45 @@
-# HASS Solar Rivian
+<p align="center">
+  <img src="docs/assets/solarsage-wordmark.png" alt="SolarSage" width="640">
+</p>
 
-Smart solar charging in Home Assistant for **both** household EVs, a Tesla and a 2025 Gen 2 Rivian R1S. They share one Tesla Wall Connector Gen 3 and run on a Sol-Ark solar and battery system. Despite the name, this project covers both cars.
+<p align="center">Forecast-aware solar EV charging for Home Assistant.</p>
+<p align="center">
+  <a href="https://bballdavis.github.io/SolarSage/">Documentation</a> ·
+  <a href="docs/installation.md">Installation</a> ·
+  <a href="https://github.com/bballdavis/SolarSage/issues">Issues</a>
+</p>
 
-**Start with the [working plan](docs/PLAN.md).** It records the decisions, how the system works, the planner, electricity plans, the dashboard, the phases and what is still needed.
+SolarSage plans charging for a Tesla or Rivian on a shared charger, using solar forecasts, household demand, home battery reserves, electricity prices, and per-car targets. It explains the current it chooses and the battery path it expects, so you can understand a plan before enabling vehicle commands.
 
-In short:
+- **Use more daytime solar.** Plan steady charging currents around the energy available, with the home battery absorbing short-term swings.
+- **Make use of free hours.** Charge at the vehicle's allowed full current during your configured free electricity windows.
+- **See why.** One Home Assistant dashboard shows the plan, forecasts, battery outlook, car status and settings.
+- **Start in shadow mode.** Inspect plans without sending commands. Bundled Rivian schedule control also starts in dry run.
 
-- **Existing hardware only:** Home Assistant OS, the Sol-Ark, the Tesla Wall Connector (measurement only) and the two cars.
-- **The cars through their own APIs:** the Tesla through HA core Tesla Fleet, the Rivian through this repository's Rivian schedule control, software in Home Assistant that writes the car's charging schedule through Rivian's API. The schedule's amperage is the only way to set a Rivian's current. Both cars plug into the same Wall Connector.
-- **A planner in Home Assistant** decides each car's current: full current in the free tariff hours up to the car's charge limit, and smooth daytime solar charging planned from the Solcast forecast and recent usage, with the home battery absorbing swings.
-- **One dashboard** in Home Assistant to see and steer it.
+## A look inside
 
-## What is here
+<!-- Screenshots below use synthetic data, not a household recording. -->
+![SolarSage dashboard with illustrative data](docs/assets/dashboard-desktop.jpg)
 
-| Path | What it is |
-| --- | --- |
-| [`docs/PLAN.md`](docs/PLAN.md) | The working plan: decisions, phases, open items, information needed |
-| [`docs/PLANNER.md`](docs/PLANNER.md) | Guide to the planner: install, configure, entities, settings, shadow mode, pointing Rivian schedule control at it |
-| [`docs/PLANNER_DESIGN.md`](docs/PLANNER_DESIGN.md) | How the planner decides, and how an earlier version compared in simulation |
-| [`docs/TESTING.md`](docs/TESTING.md) | The step-by-step path to test with real data and real connections (plan phases 1–6) |
-| [`docs/RIVIAN_SCHEDULE_CONTROL.md`](docs/RIVIAN_SCHEDULE_CONTROL.md) | Guide to Rivian schedule control: how it works, install, entities, the attended trial, faults |
-| [`custom_components/solar_ev_planner/`](custom_components/solar_ev_planner/) | The Solar EV planner (HA integration; copy it into Home Assistant) |
-| [`custom_components/rivian_schedule_control/`](custom_components/rivian_schedule_control/) | Rivian schedule control (HA integration, installable through HACS) |
-| [`tools/`](tools/README.md) | Real-data tools, run from a computer: a read-only check, snapshots, a replay of the planner, and the attended car tests |
-| [`tests/`](tests/) | Tests of Rivian schedule control (`tests/`), the planner (`tests/planner/`) and the tools (`tests/tools/`), against fakes only |
+<details>
+<summary>Phone layout</summary>
 
-Earlier designs, research notes and prototype snapshots are in git history.
+<img src="docs/assets/dashboard-mobile.jpg" alt="SolarSage on a phone, with illustrative test data" width="375">
 
-**Nothing here has been run against the real cars, charger or Home Assistant instance yet.** The planner installs in shadow mode and sends nothing until shadow mode is turned off; Rivian schedule control installs in dry run and writes nothing until dry run is turned off. The owner's first steps are the plan's [phase 0 checklists](docs/PLAN.md#phase-0-the-tesla-checklist) and [decisions](docs/PLAN.md#information-needed); then [TESTING.md](docs/TESTING.md) is the way in. The attended Rivian trial (T0–T8) is the gate before the planner commands the Rivian.
+</details>
 
-## Installing
+The planner runs in Home Assistant. It reads your configured sensors and Solcast forecast, models household demand and the home battery, and selects a charging current. Tesla commands go through Tesla Fleet; the bundled Rivian controller manages charging schedules with leases, fault handling and restoration of the original schedules. The charger provides measurement; SolarSage commands the car.
 
-HACS installs one integration per repository: from this one, Rivian schedule control ([`hacs.json`](hacs.json)). The planner is copied into `/config/custom_components/` by hand; [PLANNER.md](docs/PLANNER.md#install) gives the commands, and the same copy works for Rivian schedule control.
+## Get started
 
-## Checks
+You need Home Assistant 2026.10+, recorder history, solar/grid/battery sensors, charger power measurement, Solcast, and vehicle telemetry. The reference setup uses a Sol-Ark inverter, a Tesla Wall Connector and one shared charger. Review the [requirements](docs/installation.md#requirements) for your setup.
 
-There is no CI yet. Before committing, run these locally in a Python 3.14 environment with `pytest-homeassistant-custom-component` and `rivian-python-client` installed:
+Install **SolarSage** as a HACS custom integration, then add the site planner and, for a Rivian, its bundled schedule controller. [Installation and upgrades →](docs/installation.md)
 
-```sh
-ruff check custom_components tests tools
-ruff format --check custom_components tests tools
-python -m pytest tests -q
-```
+**Experimental:** automated tests use simulated systems. Real-system commissioning is still required. Follow the [staged testing guide](docs/TESTING.md) before turning off shadow mode or dry run. SolarSage is not yet listed in the HACS default catalog.
 
-The tests never reach a real system: Home Assistant's test plugin allows only local connections, and the cars, Rivian's API and Home Assistant itself (for the tools) are fakes.
+## Read more
+
+[Full documentation](https://bballdavis.github.io/SolarSage/) · [Configuration](docs/PLANNER.md) · [How it works](docs/PLAN.md) · [Rivian control](docs/RIVIAN_SCHEDULE_CONTROL.md) · [Contributing](CONTRIBUTING.md)
+
+Documentation is built directly from `docs/` with Docusaurus and deployed to GitHub Pages on `main`. The internal integration ID remains `solar_ev_planner` for compatibility. Licensed under [MIT](LICENSE).

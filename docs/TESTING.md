@@ -1,3 +1,7 @@
+---
+sidebar_label: Commissioning
+---
+
 # Testing with real data and real connections
 
 This is the path from "the software passes its tests" to "the planner charges both cars unattended". Each stage maps to a phase of the [plan](PLAN.md#phases) and ends with a check that must pass before the next. Nothing in the repository has touched the real Home Assistant, cars, charger or Solcast yet; every stage below is done by the owner.
@@ -18,16 +22,16 @@ This is the path from "the software passes its tests" to "the planner charges bo
 
 First do the plan's phase 0 checklists, for [the Tesla](PLAN.md#phase-0-the-tesla-checklist) and [the Rivian app](PLAN.md#phase-0-the-rivian-app), and make the [owner's decisions](PLAN.md#information-needed). Stage 1 needs Tesla Fleet working.
 
-The [tools](../tools/README.md) run on any computer that reaches Home Assistant (a laptop, or an always-on machine for the forecast recorder), not inside Home Assistant.
+The [tools](TOOLS.md) run on any computer that reaches Home Assistant (a laptop, or an always-on machine for the forecast recorder), not inside Home Assistant.
 
 1. Clone this repository and make a Python 3.14 environment with aiohttp:
 
    ```sh
-   git clone https://github.com/bballdavis/HASS-Solar-Rivian.git && cd HASS-Solar-Rivian
+   git clone https://github.com/bballdavis/SolarSage.git && cd SolarSage
    python3.14 -m venv .venv && .venv/bin/pip install aiohttp
    ```
 
-   Use `git clone --branch <branch>` while the planner and tools are only on a branch other than `main`.
+   The default branch contains the current source.
 
 2. In Home Assistant, create a long-lived access token: your profile → Security → Long-lived access tokens → Create token.
 3. Copy `tools/.env.example` to `tools/.env` and fill in `HASS_URL` and `HASS_TOKEN`. The file is git-ignored; never commit it.
@@ -41,7 +45,7 @@ Run every tool from the repository root, for example `.venv/bin/python -m tools.
 
 Plan phase 1: every planner input is present and fresh, with no control yet.
 
-1. **Tesla Fleet, and no tesla_custom.** Add the HA core Tesla Fleet integration with your Tesla developer app, host its public key at home ([plan, key hosting](PLAN.md#phase-0-hosting-the-key-through-traefik)), and approve its virtual key in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)). From outside your network, `curl -sSI https://tslakey.davisho.me/.well-known/appspecific/com.tesla.3p.public-key.pem` answers 200 and `https://tslakey.davisho.me/` answers 404. In Tesla's developer dashboard, check there is no payment method and the billing limit is $0 ([plan, free credit](PLAN.md#phase-0-staying-inside-the-free-credit)). Leave Tesla Fleet's polling on for now, so this stage sees the car's data. Confirm its entities work, then remove the tesla_custom integration and its tesla-http-proxy add-on, and rename any `*_2` entities. The Tesla's entities should become `switch.roxxo_charge`, `number.roxxo_charge_current`, `number.roxxo_charge_limit`, `sensor.roxxo_battery_level`, `binary_sensor.roxxo_charge_cable`, `device_tracker.roxxo_location`, `sensor.roxxo_charging` and `binary_sensor.roxxo_status`; if they are named differently, put the real names in `tools/config.json`. Turn Sentry Mode off at home.
+1. **Tesla Fleet, and no tesla_custom.** Add the HA core Tesla Fleet integration with your Tesla developer app, host its public key at home ([plan, key hosting](PLAN.md#phase-0-hosting-the-key-through-traefik)), and approve its virtual key in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)). From outside your network, `curl -sSI https://tesla-key.example.com/.well-known/appspecific/com.tesla.3p.public-key.pem` answers 200 and `https://tesla-key.example.com/` answers 404. In Tesla's developer dashboard, check there is no payment method and the billing limit is $0 ([plan, free credit](PLAN.md#phase-0-staying-inside-the-free-credit)). Leave Tesla Fleet's polling on for now, so this stage sees the car's data. Confirm its entities work, then remove the tesla_custom integration and its tesla-http-proxy add-on, and rename any `*_2` entities. The Tesla's entities should become `switch.tesla_charge`, `number.tesla_charge_current`, `number.tesla_charge_limit`, `sensor.tesla_battery_level`, `binary_sensor.tesla_charge_cable`, `device_tracker.tesla_location`, `sensor.tesla_charging` and `binary_sensor.tesla_status`; if they are named differently, put the real names in `tools/config.json`. Turn Sentry Mode off at home.
 2. **The Rivian app and upstream Rivian.** Turn off Smart Charging and its schedule recommendation, keep one home schedule with no shared weekdays, and check its pin in the car ([plan, the Rivian app](PLAN.md#phase-0-the-rivian-app)). In upstream Rivian, disable its four schedule entities, and set the `rivian` logger to `error` ([guide, step 2](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)).
 3. **Rivian schedule control, in dry run.** Install and configure it ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). Map the plug, location and Wall Connector entities; leave the three controller options empty until stage 3. Keep **dry run on**. Press **Read schedules** to inventory the owner's list: one schedule, no shared weekdays, and no "Owner's Rivian schedules share weekdays" repair issue later.
 4. **The free-hours Schedule helper.** Settings → Devices & services → Helpers → Create helper → Schedule, named "Free hours" (`schedule.free_hours`), painted 00:00–06:00 and 20:00–24:00 every day.
@@ -93,7 +97,7 @@ Open the `.html` page it writes in `tools/out/`. For each day, look at:
 - **Car current:** a smooth daytime current, a few changes a day, each with a reason that makes sense, and the car's full current from the start of the free hours (or from plug-in) until it reaches its limit;
 - **Home battery:** in `--whatif`, it stays above the floor (30%) by day, nears the wanted level (30% by default) at the free start only on days a car took the battery's spare energy, and refills to 100% overnight;
 - **Paid import** in the summary: near zero for the car on the free-nights tariff;
-- **The forecast source** in the notes: `totals` days are an approximation until `record-forecasts` has run for a while (the [tools guide](../tools/README.md#replaypy-what-would-the-planner-have-done) explains).
+- **The forecast source** in the notes: `totals` days are an approximation until `record-forecasts` has run for a while (the [tools guide](TOOLS.md#replaypy-what-would-the-planner-have-done) explains).
 
 **Done when** the replayed days look sensible to you. Try other settings with `--set` before you decide on them.
 
@@ -102,17 +106,17 @@ Open the `.html` page it writes in `tools/out/`. For each day, look at:
 Plan phase 3: the planner runs in Home Assistant, plans and explains, and sends nothing.
 
 1. **Install the planner** by copying its folder ([PLANNER.md, install](PLANNER.md#install)) and restart Home Assistant.
-2. **Add it:** Settings → Devices & services → Add integration → Solar EV Planner. Check the prefilled entities in the three steps.
+2. **Add it:** Settings → Devices & services → Add integration → SolarSage. Check the prefilled entities in the three steps.
 3. **Add both cars** (Add car → Rivian, then Add car → Tesla) with the entities in [PLANNER.md, cars](PLANNER.md#cars).
-4. **Check that it is in shadow mode:** `switch.solar_ev_planner_shadow_mode` on, and `sensor.solar_ev_planner_heartbeat` showing `shadow`.
-5. **Point Rivian schedule control at the planner:** in its Configure, set controller liveness to `sensor.solar_ev_planner_heartbeat`, controller wants charging to `binary_sensor.r1s_planner_charging_wanted`, controller charging until to `sensor.r1s_planner_charging_until` and the vehicle override to `select.solar_ev_planner_charger_car_override`. Keep its dry run on. The until option gives the Rivian one charging window per free night once the planner commands it (stage 6).
+4. **Check that it is in shadow mode:** `switch.solarsage_shadow_mode` on, and `sensor.solarsage_heartbeat` showing `shadow`.
+5. **Point Rivian schedule control at the planner:** in its Configure, set controller liveness to `sensor.solarsage_heartbeat`, controller wants charging to `binary_sensor.r1s_planner_charging_wanted`, controller charging until to `sensor.r1s_planner_charging_until` and the vehicle override to `select.solarsage_charger_car_override`. Keep its dry run on. The until option gives the Rivian one charging window per free night once the planner commands it (stage 6).
 6. **Add the dashboard** from [PLANNER.md](PLANNER.md#a-starting-dashboard), if you like.
 7. **Run the check:** the planner rows show the heartbeat `shadow` and shadow mode on, and **rivian controller liveness** is OK. **rivian controller charging** stays INFO ("unknown") in shadow mode. `sensor.r1s_planner_charging_until` stays unknown in shadow mode too; the check has no row for it.
 8. **For a week, every day:**
    - Look at the mode, the reason and the planned current of the car on the charger. In shadow mode the planned current is the planner's virtual car, not what the car draws.
    - Nothing is written to the Rivian this week: the planner sends nothing, and Rivian schedule control is in dry run. The one write per free night starts in [stage 6](#6-the-rivian-under-the-planner).
    - Each evening, replay the day to see it charted against what happened: `python -m tools.replay --live --days 1`.
-   - Note the predicted battery when the free hours start (`at_free_hours_start` on `sensor.solar_ev_planner_battery_minimum`, recorded in its history) against the real level at 20:00. These pairs recalibrate the caution level later ([PLANNER_DESIGN.md, known limits](PLANNER_DESIGN.md#11-known-limits)).
+   - Note the predicted battery when the free hours start (`at_free_hours_start` on `sensor.solarsage_battery_minimum`, recorded in its history) against the real level at 20:00. These pairs recalibrate the caution level later ([PLANNER_DESIGN.md, known limits](PLANNER_DESIGN.md#11-known-limits)).
    - If something looks wrong, download the planner's diagnostics (its entry → ⋮ → Download diagnostics; coordinates and identifiers are redacted).
 9. **Try the settings:** change the caution, the floor or the battery wanted at free hours and watch the reason change at once.
 
@@ -148,10 +152,10 @@ Also confirm, in Tesla Fleet's diagnostics or entities, that the car needs signe
 Every day with the Tesla on the charger, look at:
 
 - **Paid import:** the Energy dashboard's grid import during paid hours while the Tesla charges should be near zero; `python -m tools.replay --live --days 1` shows grid power with the car's current.
-- **Changes:** a few a day in the history of `number.roxxo_charge_current`.
-- **Each change confirmed:** the Wall Connector current follows the planned current (`sensor.roxxo_planner_planned_current`, attributes `car_current` and `waiting`).
-- **Plans met**, if you set one (`sensor.roxxo_planner_outlook`).
-- **Tesla's developer dashboard:** check it weekly. The billed commands, data requests and wakes should stay well inside the $10 monthly credit, still with no payment method and a $0 limit. Compare it with `sensor.solar_ev_planner_tesla_api_spend`: the dashboard also counts the Tesla app, other automations and Tesla Fleet's own polling, so it reads higher. If Tesla emails about 80% of the limit, or the sensor's `level` leaves `normal` early in the month, find the extra calls (Sentry Mode on at home, polling back on, a Wake button in an automation).
+- **Changes:** a few a day in the history of `number.tesla_charge_current`.
+- **Each change confirmed:** the Wall Connector current follows the planned current (`sensor.tesla_planner_planned_current`, attributes `car_current` and `waiting`).
+- **Plans met**, if you set one (`sensor.tesla_planner_outlook`).
+- **Tesla's developer dashboard:** check it weekly. The billed commands, data requests and wakes should stay well inside the $10 monthly credit, still with no payment method and a $0 limit. Compare it with `sensor.solarsage_tesla_api_spend`: the dashboard also counts the Tesla app, other automations and Tesla Fleet's own polling, so it reads higher. If Tesla emails about 80% of the limit, or the sensor's `level` leaves `normal` early in the month, find the extra calls (Sentry Mode on at home, polling back on, a Wake button in an automation).
 - **The spending guard** ([PLANNER.md](PLANNER.md#the-tesla-spending-guard)), once: Tesla Fleet's polling is off (its System options), the spend sensor's `tesla_fleet_polling` attribute shows `off` for the Tesla and its `cap` is $5, `refreshes` grows about once an hour while the Tesla is plugged in and not at all while it is away, and the count carries over a restart.
 - **The Tesla guard** ([PLANNER.md](PLANNER.md#the-tesla-guard)), once: with the Tesla plugged in at its charge limit, the planner sends no repeated "on" and causes no wakes; the car's planned-current sensor says why a command waits. Restart Home Assistant once and check that the hourly command count carries over (the planner's diagnostics).
 - **At unplug,** the Tesla's current goes back to 48 A (the restore current).
@@ -223,7 +227,7 @@ Before you do it:
 - the car you want commanded is plugged in, or you are happy for whichever car is plugged in to be commanded;
 - Rivian schedule control is in dry run (stage 4) or has passed the trial (stage 6).
 
-Then turn `switch.solar_ev_planner_shadow_mode` off. The heartbeat changes to `active`, and the planner sends its first decision to the car on the charger at once. From then on it sends only changes, at most one per car per minute and a few an hour.
+Then turn `switch.solarsage_shadow_mode` off. The heartbeat changes to `active`, and the planner sends its first decision to the car on the charger at once. From then on it sends only changes, at most one per car per minute and a few an hour.
 
 **Going back to shadow mode** sends nothing: each car keeps its last command, and Rivian schedule control keeps renewing it while the heartbeat is up. In the free hours the Rivian's window runs to their end, and then short leases continue the same request into paid hours. Stop the car as well if you want it to stop (below).
 
@@ -240,4 +244,4 @@ If Home Assistant itself is down, the Rivian's charging window lapses on its own
 
 ## The software tests
 
-The repository's own tests (Rivian schedule control, planner and tools, against fakes only) are run before any of this; the commands are in the [README](../README.md#checks).
+The repository's own tests (Rivian schedule control, planner and tools, against fakes only) are run before any of this; the commands are in the [README](https://github.com/bballdavis/SolarSage/blob/main/README.md#checks).

@@ -1,0 +1,40 @@
+name: Checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: ruff check custom_components tests tools scripts
+      - run: ruff format --check custom_components tests tools scripts
+      - run: python -m pytest tests -q
+      - run: python scripts/build-release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solarsage-integration
+          path: dist/solar_ev_planner.zip
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master

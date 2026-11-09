@@ -61,16 +61,16 @@ from pytest_homeassistant_custom_component.common import (
 )
 from rivian.exceptions import RivianApiException, RivianBadRequestError, RivianUnauthenticated
 
-from custom_components.rivian_schedule_control.const import (
+from custom_components.solar_ev_planner.rivian.const import (
     DOMAIN,
     TICK_INTERVAL,
     journal_key,
 )
-from custom_components.rivian_schedule_control.controller import Observation
-from custom_components.rivian_schedule_control.diagnostics import (
+from custom_components.solar_ev_planner.rivian.controller import Observation
+from custom_components.solar_ev_planner.rivian.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from custom_components.rivian_schedule_control.runtime import (
+from custom_components.solar_ev_planner.rivian.runtime import (
     restore_failed_issue_id,
     restore_failed_notification_id,
     setup_failed_issue_id,
@@ -189,9 +189,9 @@ async def test_setup_creates_entities(
     [device] = dr.async_entries_for_config_entry(dr.async_get(hass), loaded_entry.entry_id)
     assert device.identifiers == {(DOMAIN, VEHICLE_ID)}
     assert device.name == f"{VEHICLE_NAME} schedule control"
-    assert device.manufacturer == "HASS-Solar-Rivian"
+    assert device.manufacturer == "SolarSage"
     assert device.model == "Rivian schedule control"
-    assert device.sw_version == "0.1.0"
+    assert device.sw_version == "0.2.0"
     entities = er.async_entries_for_config_entry(er.async_get(hass), loaded_entry.entry_id)
     assert len(entities) == 8
     assert {entity.device_id for entity in entities} == {device.id}
@@ -1081,7 +1081,7 @@ async def test_unexpected_tick_error_logged_once(
 
     runtime = loaded_entry.runtime_data
     mock_rivian.get_charging_schedules = broken
-    caplog.set_level(logging.DEBUG, logger="custom_components.rivian_schedule_control")
+    caplog.set_level(logging.DEBUG, logger="custom_components.solar_ev_planner.rivian")
     await start_charging(hass)
     for _ in range(3):
         await advance(hass, freezer, TICK_INTERVAL)

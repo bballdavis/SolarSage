@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.rivian_schedule_control.schedule import (
+from custom_components.solar_ev_planner.rivian.schedule import (
     MINUTES_PER_DAY,
     WEEK_DAYS,
     all_week_window,

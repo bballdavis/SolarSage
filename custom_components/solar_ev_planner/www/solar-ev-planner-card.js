@@ -1,5 +1,5 @@
 /*
- * Solar EV planner card: the planner's cockpit, in the Daylight look.
+ * SolarSage card: the planner's cockpit, in the Daylight look.
  *
  * Served and loaded by the solar_ev_planner integration (no Lovelace resource needed):
  *
@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.2.5';
+  const VERSION = '0.2.6';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -108,7 +108,7 @@
   const key = (color, kind, text, opacity) => `<span>${swatch(color, kind, opacity)}${text}</span>`;
   const title = (ic, text) => `<h2>${icon(ic, 22)}<span>${text}</span></h2>`;
 
-  const FONT_CSS = '@font-face { font-family: "Jost"; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/local/daylight-tablet/jost.woff2) format("woff2"), url(https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2) format("woff2"); }';
+  const FONT_CSS = '@font-face { font-family: "Jost"; font-style: normal; font-weight: 100 900; font-display: swap; src: url(https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2) format("woff2"); }';
 
   const CSS = `:host {
   --sky-a: #07162B; --sky-b: #0D2A4A; --sky-c: #123F63; --glow: rgba(96,170,230,0.22);
@@ -149,6 +149,8 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .muted { color: var(--ink-3); }
 
 .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand-logo { flex: none; width: 54px; height: 54px; object-fit: contain; border-radius: 10px; }
 .title h1 { margin: 0; font-size: 30px; font-weight: 500; line-height: 1.1; }
 .title .sub { font-size: 14px; color: var(--ink-2); }
 .title { margin-right: 6px; }
@@ -193,6 +195,8 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 @media (max-width: 720px) {
   .grid { grid-template-columns: minmax(0, 1fr); }
   .app { padding: 18px 14px 22px; }
+  .brand { flex: 1 1 0; min-width: 0; }
+  .brand-logo { width: 44px; height: 44px; }
   .title { flex: 1 1 0; min-width: 0; margin-right: 0; }
   .top .grow { display: none; }
   .hp .tipbox { left: auto; right: 0; }
@@ -646,7 +650,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       let body;
       if (!s) {
         body = this._error === 'not_loaded'
-          ? '<div class="empty"><b>The Solar EV planner is not running</b>Add or enable it under Settings → Devices &amp; services, then this page fills in.</div>'
+          ? '<div class="empty"><b>The SolarSage is not running</b>Add or enable it under Settings → Devices &amp; services, then this page fills in.</div>'
           : this._error ? `<div class="empty"><b>Cannot reach the planner</b>${esc(this._error)}. Trying again every 30 seconds.</div>`
             : '<div class="empty"><b>Connecting to the planner…</b></div>';
       } else {
@@ -682,7 +686,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const modeTip = `${esc(MODE_TIP[s.mode] || '')}${s.reason ? `<span class="why">Now: ${esc(s.reason)}</span>` : ''}`;
       const tog = (key, label, on, cls = '') => `<button type="button" class="tog ${cls}" aria-pressed="${on ? 'true' : 'false'}" data-act="toggle:${key}" data-more="${esc(this._ent(key) || '')}">${label}</button>`;
       return `<div class="top">
-        <div class="title"><h1>Solar EV</h1><div class="sub num">${esc(date)} · ${esc(clock(now))} · planned ${esc(ago(ts(s.planned_at)))}</div></div>
+        <div class="brand"><img class="brand-logo" src="/solar_ev_planner/solarsage-logo.png" alt="" width="54" height="54"><div class="title"><h1>SolarSage</h1><div class="sub num">${esc(date)} · ${esc(clock(now))} · planned ${esc(ago(ts(s.planned_at)))}</div></div></div>
         ${pill('mode', modeKind, modeIcon, modeText, modeTip, this._ent('mode'))}
         ${pill('state', stKind, stIcon, stText, esc(stTip), this._ent(s.enabled ? 'shadow_mode' : 'planning'))}
         <div class="grow"></div>
@@ -711,7 +715,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       if (!c) {
         return `<section class="panel car"><div class="ptitle">${title('plug', 'On the charger')}</div>
           <p class="reason">No cars are set up yet.</p>
-          <p class="cap">Add one under Settings → Devices &amp; services → Solar EV Planner → <b>Add car</b>. The Rivian needs Rivian schedule control set up first; the Tesla needs Tesla Fleet.</p></section>`;
+          <p class="cap">Add one under Settings → Devices &amp; services → SolarSage → <b>Add car</b>. The Rivian needs Rivian schedule control set up first; the Tesla needs Tesla Fleet.</p></section>`;
       }
       const color = this._carColor(c);
       const site = s.site || {};
@@ -1115,6 +1119,6 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 
   customElements.define(TAG, SolarEvPlannerCard);
   window.customCards = window.customCards || [];
-  window.customCards.push({ type: TAG, name: 'Solar EV planner', description: 'The Solar EV planner\'s cockpit: what it plans, why, and its settings.', preview: false });
+  window.customCards.push({ type: TAG, name: 'SolarSage', description: 'The SolarSage\'s cockpit: what it plans, why, and its settings.', preview: false });
   console.info(`%c SOLAR-EV-PLANNER-CARD %c ${VERSION} `, 'background:#F6A04D;color:#07162B;font-weight:600', 'background:#07162B;color:#F2F7FC');
 })();

@@ -1,6 +1,6 @@
 """The tools' entity mapping: ``tools/config.example.json`` overlaid with the owner's file.
 
-The example holds the owner's real entity ids, so the tools work without a config file.
+The example holds generic entity IDs. Map them to your installation before using the tools.
 A config file (``--config``, else ``tools/config.json`` / ``config.yaml`` if present) only
 needs the keys that differ; nested mappings are merged key by key. JSON always works; YAML
 needs PyYAML, which Home Assistant's own Python has but a plain Python may not.

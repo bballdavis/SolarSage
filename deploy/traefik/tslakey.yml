@@ -1,7 +1,7 @@
 # Tesla Fleet public key for Home Assistant's Tesla Fleet integration.
-# Lives on turbonas at /share/Containers/Traefik/rules/tslakey.yml (Traefik file provider).
+# Lives on your server at /share/Containers/Traefik/rules/tslakey.yml (Traefik file provider).
 #
-# Serves exactly one public file: GET/HEAD of the Tesla key path on tslakey.davisho.me.
+# Serves exactly one public file: GET/HEAD of the Tesla key path on tesla-key.example.com.
 # The request is rewritten to that one file in Home Assistant's /config/www, so no other
 # Home Assistant path is reachable through this host. Anything else here gets Traefik's 404.
 # The private key (/config/tesla_fleet.key) is never in /config/www.
@@ -10,7 +10,7 @@ http:
     tslakey:
       entryPoints:
         - websecure
-      rule: "Host(`tslakey.davisho.me`) && Path(`/.well-known/appspecific/com.tesla.3p.public-key.pem`) && (Method(`GET`) || Method(`HEAD`))"
+      rule: "Host(`tesla-key.example.com`) && Path(`/.well-known/appspecific/com.tesla.3p.public-key.pem`) && (Method(`GET`) || Method(`HEAD`))"
       service: tslakey-hass
       middlewares:
         - tslakey-path
@@ -23,7 +23,7 @@ http:
     tslakey-headers:
       headers:
         # Home Assistant answers 400 to proxied requests unless it trusts the proxy;
-        # dropping the forwarding headers keeps this a plain request from turbonas.
+        # dropping the forwarding headers keeps this a plain request from your server.
         customRequestHeaders:
           X-Forwarded-For: ""
           X-Forwarded-Host: ""
@@ -38,4 +38,4 @@ http:
     tslakey-hass:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.80:8123"
+          - url: "http://homeassistant.example.internal:8123"

@@ -27,14 +27,14 @@ from homeassistant.util.file import WriteError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.rivian_schedule_control import store as store_module
-from custom_components.rivian_schedule_control.const import (
+from custom_components.solar_ev_planner.rivian import store as store_module
+from custom_components.solar_ev_planner.rivian.const import (
     DOMAIN,
     journal_key,
     legacy_storage_key,
 )
-from custom_components.rivian_schedule_control.runtime import restore_failed_notification_id
-from custom_components.rivian_schedule_control.store import JournalFileStore
+from custom_components.solar_ev_planner.rivian.runtime import restore_failed_notification_id
+from custom_components.solar_ev_planner.rivian.store import JournalFileStore
 
 
 @pytest.fixture(autouse=True)
@@ -51,8 +51,8 @@ async def _set_up(hass: HomeAssistant, entry: MockConfigEntry) -> None:
 def test_journal_key_hashes_the_vehicle_id() -> None:
     """The file name identifies the vehicle without containing its ID."""
     key = journal_key(VEHICLE_ID)
-    assert key.startswith(f"{DOMAIN}.")
-    assert len(key.removeprefix(f"{DOMAIN}.")) == 16
+    assert key.startswith("rivian_schedule_control.")
+    assert len(key.removeprefix("rivian_schedule_control.")) == 16
     assert VEHICLE_ID not in key
     assert journal_key(VEHICLE_ID) == key
     assert journal_key("another-vehicle") != key
@@ -125,7 +125,7 @@ async def test_failed_save_rejects_the_request(
     )
     with (
         patch(
-            "custom_components.rivian_schedule_control.store.write_utf8_file_atomic",
+            "custom_components.solar_ev_planner.rivian.store.write_utf8_file_atomic",
             side_effect=WriteError("No space left on device"),
         ),
         pytest.raises(HomeAssistantError) as err,

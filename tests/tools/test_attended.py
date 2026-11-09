@@ -162,11 +162,11 @@ async def test_connection_from_the_environment(url, fake, tmp_path, monkeypatch)
 async def test_refuses_while_the_planner_commands(live, fake, tmp_path) -> None:
     build_site(fake, NOW)
     tesla_on_charger(fake)
-    fake.set_state("sensor.solar_ev_planner_heartbeat", "active", {})
+    fake.set_state("sensor.solarsage_heartbeat", "active", {})
     owner = Owner()
     code = await run(live, owner, Clock(), "tesla", "--i-am-at-the-car", tmp=tmp_path)
     assert code == 3 and "shadow mode is off" in owner.text
-    fake.set_state("sensor.solar_ev_planner_heartbeat", "shadow", {})
+    fake.set_state("sensor.solarsage_heartbeat", "shadow", {})
     owner = Owner([("run this step", "q")])
     assert await run(live, owner, Clock(), "tesla", "--i-am-at-the-car", tmp=tmp_path) == 1
     assert fake.service_calls == []
@@ -208,7 +208,7 @@ async def test_tesla_steps_and_restore(live, fake, tmp_path) -> None:
         ("turn_off", None),  # restored: it was not charging
     ]
     assert all(
-        c["target"]["entity_id"].startswith(("switch.roxxo", "number.roxxo"))
+        c["target"]["entity_id"].startswith(("switch.tesla", "number.tesla"))
         for c in fake.service_calls
     )
     assert "[PASS] step 3: 6 A" in owner.text and "6 command(s) sent" in owner.text

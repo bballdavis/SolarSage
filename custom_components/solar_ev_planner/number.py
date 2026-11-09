@@ -86,6 +86,11 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the setting numbers, the price windows' prices and the per-car numbers."""
+    if "vehicle_id" in entry.data:
+        from .rivian.number import async_setup_entry as setup_rivian  # noqa: PLC0415
+
+        await setup_rivian(hass, entry, async_add_entities)
+        return
     coordinator = entry.runtime_data
     async_add_entities(SettingNumber(coordinator, r) for r in SETTINGS)
     if coordinator.spend.teslas:
@@ -157,7 +162,7 @@ class WindowPriceNumber(SettingEntity, NumberEntity):
         label = str(coordinator.windows[subentry_id].get(CONF_LABEL) or "window")
         self._attr_unique_id = f"{entry_id}_{subentry_id}_price"
         # A device belongs to one config subentry: each price window has its own, named
-        # "Solar EV planner <label>", so the entity is number.solar_ev_planner_<label>_price.
+        # "SolarSage <label>", so the entity is number.solar_ev_planner_<label>_price.
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry_id}_{subentry_id}")},
             name=f"{ENTRY_TITLE} {label}",

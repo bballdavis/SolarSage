@@ -113,7 +113,7 @@ RIVIAN: dict[str, Any] = {
 TESLA: dict[str, Any] = {
     CONF_CAR_ID: "tesla",
     CONF_KIND: "tesla",
-    CONF_NAME: "Roxxo",
+    CONF_NAME: "Tesla",
     CONF_SWITCH: TES["switch"],
     CONF_CURRENT: TES["current"],
     CONF_SOC: TES["soc"],
@@ -248,7 +248,7 @@ def set_tesla(
     charging: bool = False,
     amps: float = 32,
 ) -> None:
-    """The Tesla as Tesla Fleet shows it (the car is named Roxxo)."""
+    """The Tesla as Tesla Fleet shows it (the car is named Tesla)."""
     hass.states.async_set(TES["soc"], str(soc), {"unit_of_measurement": "%"})
     hass.states.async_set(TES["limit"], str(limit), {"min": 50, "max": 100})
     hass.states.async_set(TES["plugged"], plugged)

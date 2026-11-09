@@ -8,7 +8,8 @@ from typing import Any, Final
 
 from homeassistant.const import Platform
 
-DOMAIN: Final = "rivian_schedule_control"
+DOMAIN: Final = "solar_ev_planner"
+LEGACY_DOMAIN: Final = "rivian_schedule_control"
 PLATFORMS: Final = [Platform.BUTTON, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 TICK_INTERVAL: Final = timedelta(seconds=15)
@@ -36,12 +37,12 @@ def journal_key(vehicle_id: str) -> str:
     and re-added entry inherits an unfinished journal. The vehicle ID is
     hashed so it does not appear in a file name.
     """
-    return f"{DOMAIN}.{hashlib.sha256(vehicle_id.encode()).hexdigest()[:16]}"
+    return f"{LEGACY_DOMAIN}.{hashlib.sha256(vehicle_id.encode()).hexdigest()[:16]}"
 
 
 def legacy_storage_key(entry_id: str) -> str:
     """Return the storage key journals had when they were keyed by config entry."""
-    return f"{DOMAIN}.{entry_id}"
+    return f"{LEGACY_DOMAIN}.{entry_id}"
 
 
 # Config entry data
@@ -170,5 +171,5 @@ SERVICE_ABANDON_OWNERSHIP: Final = "abandon_ownership"
 SERVICE_FORCE_RESTORE: Final = "force_restore"
 SERVICE_READ_SCHEDULES: Final = "read_schedules"
 
-DEVICE_MANUFACTURER: Final = "HASS-Solar-Rivian"
+DEVICE_MANUFACTURER: Final = "SolarSage"
 DEVICE_MODEL: Final = "Rivian schedule control"

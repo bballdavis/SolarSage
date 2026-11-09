@@ -102,6 +102,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: RivianScheduleControlConfigEntry) -> bool:
     """Set up schedule control for one vehicle."""
+    if hass.config_entries.async_entries("rivian_schedule_control"):
+        raise ConfigEntryError(translation_domain=DOMAIN, translation_key="legacy_rivian_installed")
     vehicle_id: str = entry.data[CONF_VEHICLE_ID]
     _async_warn_if_utc(hass)
     if legacy := await async_check_legacy_journal(hass, entry.entry_id):
@@ -401,7 +403,7 @@ def _async_notify_restore_failed(
 def _async_get_runtime(hass: HomeAssistant, call: ServiceCall) -> ScheduleControlRuntime:
     entry_id: str = call.data[ATTR_CONFIG_ENTRY_ID]
     entry = hass.config_entries.async_get_entry(entry_id)
-    if entry is None or entry.domain != DOMAIN:
+    if entry is None or entry.domain != DOMAIN or CONF_VEHICLE_ID not in entry.data:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="entry_not_found",

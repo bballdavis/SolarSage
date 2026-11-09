@@ -36,7 +36,7 @@ async def async_register_card(hass: HomeAssistant) -> None:
         frontend.add_extra_js_url(hass, f"{URL_BASE}/{CARD_FILE}?v={version}")
         hass.data[_REGISTERED] = True
     except Exception:  # noqa: BLE001 - the planner runs without its card
-        _LOGGER.exception("Could not register the Solar EV planner card")
+        _LOGGER.exception("Could not register the SolarSage card")
 
 
 def card_version(path: Path) -> str:

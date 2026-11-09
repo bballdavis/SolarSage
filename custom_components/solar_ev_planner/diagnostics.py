@@ -1,4 +1,4 @@
-"""Diagnostics for the Solar EV planner.
+"""Diagnostics for the SolarSage.
 
 Entity IDs, settings, readings and decisions are included; coordinates and identifiers
 (VIN, email, tokens) are redacted at any depth. The planner never reads a device tracker's
@@ -32,6 +32,12 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: PlannerConfigEntry
 ) -> dict[str, Any]:
     """The mapping, settings, the last cycle and the planner's memory."""
+    if "vehicle_id" in entry.data:
+        from .rivian.diagnostics import (  # noqa: PLC0415
+            async_get_config_entry_diagnostics as rivian_diagnostics,
+        )
+
+        return await rivian_diagnostics(hass, entry)
     coordinator = entry.runtime_data
     data = coordinator.data
     decision = data.decision if data else None

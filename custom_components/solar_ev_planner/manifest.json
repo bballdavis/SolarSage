@@ -1,16 +1,27 @@
 {
   "domain": "solar_ev_planner",
-  "name": "Solar EV Planner",
-  "after_dependencies": ["frontend", "http", "schedule"],
-  "codeowners": ["@bballdavis"],
+  "name": "SolarSage",
+  "after_dependencies": [
+    "frontend",
+    "http",
+    "recorder",
+    "schedule"
+  ],
+  "codeowners": [
+    "@bballdavis"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
-  "documentation": "https://github.com/bballdavis/HASS-Solar-Rivian",
+  "documentation": "https://bballdavis.github.io/SolarSage/",
   "integration_type": "service",
-  "iot_class": "calculated",
-  "issue_tracker": "https://github.com/bballdavis/HASS-Solar-Rivian/issues",
-  "loggers": ["custom_components.solar_ev_planner"],
-  "requirements": [],
-  "single_config_entry": true,
-  "version": "0.1.0"
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/bballdavis/SolarSage/issues",
+  "loggers": [
+    "custom_components.solar_ev_planner",
+    "rivian"
+  ],
+  "requirements": [
+    "rivian-python-client==2.3.1"
+  ],
+  "single_config_entry": false,
+  "version": "0.2.0"
 }

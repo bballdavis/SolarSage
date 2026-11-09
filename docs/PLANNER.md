@@ -1,8 +1,12 @@
-# Solar EV planner
+---
+sidebar_label: Configuration
+---
 
-**What it is.** The Solar EV planner (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [Rivian schedule control](RIVIAN_SCHEDULE_CONTROL.md), which writes the Rivian's charging schedule through Rivian's API. How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
+# SolarSage
 
-**Status: software-tested only.** Its tests run against Home Assistant 2026.10.3, with made-up states, a real recorder and Schedule helper, and the real Rivian schedule control over a simulated Rivian account. It has not been run against the owner's Home Assistant. **It starts in shadow mode: it plans and explains, but sends nothing until you turn shadow mode off.**
+**What it is.** The SolarSage (`custom_components/solar_ev_planner`) is the Home Assistant integration that decides each car's charging current. It plans from the Solcast forecast, the house's recent use and the home battery's predicted level, and commands the car on the Wall Connector: the Tesla through HA core Tesla Fleet, the Rivian through this repository's [Rivian schedule control](RIVIAN_SCHEDULE_CONTROL.md), which writes the Rivian's charging schedule through Rivian's API. How it decides, and how an earlier version did in simulation, is in [PLANNER_DESIGN.md](PLANNER_DESIGN.md). Testing it with real data, step by step, is in [TESTING.md](TESTING.md).
+
+**Status: software-tested only.** Its tests run against Home Assistant 2026.10.3, with made-up states, a real recorder and Schedule helper, and the real Rivian schedule control over a simulated Rivian account. It has not been run against a real Home Assistant installation. **It starts in shadow mode: it plans and explains, but sends nothing until you turn shadow mode off.**
 
 ## What it does
 
@@ -15,53 +19,26 @@
 
 ## Install
 
-### Both integrations come from this repository
+Follow [Installation and upgrades](installation.md). HACS and manual installation both install the complete SolarSage integration, including bundled Rivian schedule control.
 
-HACS installs one integration per repository: the first folder under `custom_components/`, which here is Rivian schedule control. [`hacs.json`](../hacs.json) names it for that reason. So:
-
-| Integration | Install with |
-| --- | --- |
-| Rivian schedule control (`rivian_schedule_control`) | HACS (custom repository `https://github.com/bballdavis/HASS-Solar-Rivian`, category Integration), or the copy below |
-| Solar EV planner (`solar_ev_planner`) | **The copy below.** HACS does not install it. |
-
-**Copying an integration into Home Assistant OS.** Use a terminal add-on (Terminal & SSH, or Advanced SSH & Web Terminal):
-
-```sh
-cd /tmp
-git clone --depth 1 https://github.com/bballdavis/HASS-Solar-Rivian.git
-mkdir -p /config/custom_components
-rm -rf /config/custom_components/solar_ev_planner
-cp -r HASS-Solar-Rivian/custom_components/solar_ev_planner /config/custom_components/
-# Only if Rivian schedule control is not installed through HACS:
-# rm -rf /config/custom_components/rivian_schedule_control
-# cp -r HASS-Solar-Rivian/custom_components/rivian_schedule_control /config/custom_components/
-rm -rf HASS-Solar-Rivian
-```
-
-`git clone` takes the default branch (`main`). While the planner is only on another branch, add `--branch <that branch>`.
-
-Without a terminal, download the repository as a ZIP from GitHub and copy the `custom_components/solar_ev_planner` folder into `config/custom_components/` through the Samba share add-on. Then restart Home Assistant.
-
-**Updating** is the same copy followed by a restart. The planner's settings and memory are in Home Assistant's `.storage` (`solar_ev_planner.<entry id>`), not in the folder, so they survive an update. Removing the integration deletes them.
-
-**Requirements:** Home Assistant 2026.10 or later, the recorder (on by default) and the Schedule helper (built in).
+The site planner starts in shadow mode. For Rivian, configure its bundled controller from the SolarSage setup menu and leave dry run enabled while validating inputs.
 
 ### Before adding it
 
 1. **Solcast** ([BJReplay/ha-solcast-solar](https://github.com/BJReplay/ha-solcast-solar)) with its forecast-today and forecast-tomorrow sensors. Their `detailedForecast` attribute gives the half hours with `pv_estimate10`, `pv_estimate` and `pv_estimate90`.
 2. **A Schedule helper for the free hours.** Settings → Devices & services → Helpers → Create helper → Schedule. Name it "Free hours" (it becomes `schedule.free_hours`) and paint 00:00–06:00 and 20:00–24:00 on every day. Repaint it when the electricity plan changes. Leave it out for a flat or time-of-use plan.
 3. **Tesla Fleet** set up for the Tesla, with its public key hosted at home ([plan, key hosting](PLAN.md#phase-0-hosting-the-key-through-traefik)), the virtual key approved in the car ([plan, the Tesla checklist](PLAN.md#phase-0-the-tesla-checklist)), and tesla_custom removed. The planner does not use tesla_custom: on a 2020 Model Y it cannot command without its proxy add-on, and its entities take Tesla Fleet's IDs. Teslemetry, the fallback, has the same entity IDs.
-4. **Rivian schedule control** installed and configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
+4. **Bundled Rivian schedule control** configured ([guide](RIVIAN_SCHEDULE_CONTROL.md#install-and-configure)). It can stay in dry run until the attended trial.
 
 ## Configure
 
-Settings → Devices & services → Add integration → **Solar EV Planner**. There is one planner per Home Assistant.
+Settings → Devices & services → Add integration → **SolarSage → Site planner**. There is one site planner per Home Assistant.
 
 ### The site: three steps
 
-The form is prefilled with the owner's entity IDs wherever they exist. Change any of them later with **Configure** on the planner's entry; saving reloads it and keeps its memory.
+The form suggests example entity IDs only when those entities exist. Map every input to your own installation. Change any of them later with **Configure** on the planner's entry; saving reloads it and keeps its memory.
 
-| Step | Field | Owner's entity or default |
+| Step | Field | Example entity or default |
 | --- | --- | --- |
 | Solar and home battery | Solar power | `sensor.sol_ark_inverter_pv_power` (W) |
 | | Grid power | `sensor.sol_ark_inverter_grid_power` (W). The planner needs import positive and export negative; turn on **Invert** if yours is the other way. |
@@ -85,30 +62,30 @@ Each power has a unit (W or kW). A sensor's own unit always wins; the configured
 
 On the planner's entry, choose **Add car**, then Rivian or Tesla. Each car is a subentry; **Reconfigure** changes it later.
 
-| Field | Rivian (R1S) | Tesla (Roxxo, Tesla Fleet) |
+| Field | Rivian (R1S) | Tesla (Tesla Fleet) |
 | --- | --- | --- |
-| Name | `R1S` | `Roxxo` |
-| Charge switch | `switch.r1s_schedule_control_solar_charging` (Rivian schedule control) | `switch.roxxo_charge` |
-| Charge current | `number.r1s_schedule_control_solar_current` (Rivian schedule control) | `number.roxxo_charge_current` |
-| Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.teslamate_roxxo_battery_level` (from [TeslaMate](#the-tesla-spending-guard); without it `sensor.roxxo_battery_level`) |
-| Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `sensor.teslamate_roxxo_charge_limit` (or `number.roxxo_charge_limit`) |
-| Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.teslamate_roxxo_plugged_in` (or `binary_sensor.roxxo_charge_cable`) |
-| Location | `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install (the form suggests whichever exists) | `device_tracker.teslamate_roxxo_location` (or `device_tracker.roxxo_location`) |
+| Name | `R1S` | `Tesla` |
+| Charge switch | `switch.r1s_schedule_control_solar_charging` (Rivian schedule control) | `switch.tesla_charge` |
+| Charge current | `number.r1s_schedule_control_solar_current` (Rivian schedule control) | `number.tesla_charge_current` |
+| Battery level | `sensor.r1s_battery_state_of_charge` | `sensor.teslamate_tesla_battery_level` (from [TeslaMate](#the-tesla-spending-guard); without it `sensor.tesla_battery_level`) |
+| Charge limit | `sensor.r1s_battery_state_of_charge_limit` | `sensor.teslamate_tesla_charge_limit` (or `number.tesla_charge_limit`) |
+| Charge cable connected | `binary_sensor.r1s_charger_connection` | `binary_sensor.teslamate_tesla_plugged_in` (or `binary_sensor.tesla_charge_cable`) |
+| Location | `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install (the form suggests whichever exists) | `device_tracker.teslamate_tesla_location` (or `device_tracker.tesla_location`) |
 | Schedule control state | `sensor.r1s_schedule_control_control_state` (recommended: it tells a pause from no request) | — |
-| Charging state | — | `sensor.teslamate_roxxo_charging` (or `sensor.roxxo_charging`; optional, recommended: the [Tesla guard](#the-tesla-guard) reads it) |
-| Status | — | `binary_sensor.teslamate_roxxo_status` (or `binary_sensor.roxxo_status`; optional, recommended: on while the car is online; the [spending guard](#the-tesla-spending-guard) counts a wake only while it is not on, and without it counts one for every command) |
+| Charging state | — | `sensor.teslamate_tesla_charging` (or `sensor.tesla_charging`; optional, recommended: the [Tesla guard](#the-tesla-guard) reads it) |
+| Status | — | `binary_sensor.teslamate_tesla_status` (or `binary_sensor.tesla_status`; optional, recommended: on while the car is online; the [spending guard](#the-tesla-spending-guard) counts a wake only while it is not on, and without it counts one for every command) |
 | Minimum, maximum, step | 8 A, 48 A, 2 A | 6 A, 48 A, 1 A |
 | Usable pack energy | 135 kWh | 75 kWh |
 
-- **The name sets the car's entity IDs:** R1S gives `…r1s_planner_…`, Roxxo gives `…roxxo_planner_…`.
+- **The name sets the car's entity IDs:** R1S gives `…r1s_planner_…`, Tesla gives `…tesla_planner_…`.
 - **The car's own current number caps the maximum:** Tesla Fleet's says what the car accepts on this charger.
 - **Car ids** are `rivian` and `tesla` (a second car of a kind becomes `rivian_2`). The charger car override uses them, and Rivian schedule control's vehicle override treats `rivian` as its own car.
 - **Never map the planner's own entities** as a car's switch or current; the form refuses them.
-- **tesla_custom's entities are never suggested.** If its names (`switch.roxxo_charger`, `number.roxxo_charging_amps`) still exist, remove tesla_custom; `python -m tools.check` warns about them.
+- **tesla_custom's entities are never suggested.** If its names (`switch.tesla_charger`, `number.tesla_charging_amps`) still exist, remove tesla_custom; `python -m tools.check` warns about them.
 
 ### Electricity plans
 
-The free hours are the main entry's Schedule helper, at $0. In them, by night or by day, the car on the charger charges at its full current to its limit. Every other price level is a **price window**: on the planner's entry choose **Add price window**, pick a Schedule helper painted for that level, a name and a price (and optionally an export price). The price is then a number entity, `number.solar_ev_planner_<name>_price`, on its own device. The free hours apply first, then the price windows in the order they were added; outside all of them the planner's **Import price** applies, and the **Solar buyback** for export.
+The free hours are the main entry's Schedule helper, at $0. In them, by night or by day, the car on the charger charges at its full current to its limit. Every other price level is a **price window**: on the planner's entry choose **Add price window**, pick a Schedule helper painted for that level, a name and a price (and optionally an export price). The price is then a number entity, `number.solarsage_<name>_price`, on its own device. The free hours apply first, then the price windows in the order they were added; outside all of them the planner's **Import price** applies, and the **Solar buyback** for export.
 
 | Plan | Set up |
 | --- | --- |
@@ -123,10 +100,10 @@ Through three entities the planner provides, Rivian schedule control parks the R
 
 | Schedule control option | Set it to | What the planner's entity does |
 | --- | --- | --- |
-| Controller liveness (`controller_liveness_entity`) | `sensor.solar_ev_planner_heartbeat` | `shadow` or `active` while the planner is on and has decided within the last 3 minutes; unavailable while Planning is off, while it cannot plan (missing site readings, an unreadable schedule, an error) or once it has stopped deciding. It re-checks itself every 30 seconds. |
+| Controller liveness (`controller_liveness_entity`) | `sensor.solarsage_heartbeat` | `shadow` or `active` while the planner is on and has decided within the last 3 minutes; unavailable while Planning is off, while it cannot plan (missing site readings, an unreadable schedule, an error) or once it has stopped deciding. It re-checks itself every 30 seconds. |
 | Controller wants charging (`controller_charging_entity`) | `binary_sensor.r1s_planner_charging_wanted` | On while the last command the car accepted was a current, off while it was a pause; unknown in shadow mode, while Planning is off, and before the first command of a plug-in. It survives restarts. |
 | Controller charging until (`controller_until_entity`) | `sensor.r1s_planner_charging_until` | The end of the free hours (06:00 on today's plan) while the planner charges the Rivian through them. It is set before the command it belongs to, so the schedule control writes that command once, as one window at full current to that time, and does not renew it. Unknown otherwise: by day, in shadow mode, while Planning is off, while the car is unplugged or at its limit. It survives restarts. |
-| Wall Connector vehicle override (`vehicle_override_entity`) | `select.solar_ev_planner_charger_car_override` | `auto`, `rivian` or `tesla`; the schedule control treats `auto` and `rivian` as no override |
+| Wall Connector vehicle override (`vehicle_override_entity`) | `select.solarsage_charger_car_override` | `auto`, `rivian` or `tesla`; the schedule control treats `auto` and `rivian` as no override |
 | Wall Connector vehicle connected (`wall_connector_entity`) | `binary_sensor.tesla_wall_connector_vehicle_connected` | The same sensor the planner reads |
 
 - **Leave the increase margin and the ceiling hold at 0**, their defaults; the planner asks for exact currents and paces itself.
@@ -138,21 +115,21 @@ What the planner sends the schedule control, and the schedule control's rules fo
 
 ## Entities
 
-### The planner (device "Solar EV planner")
+### The planner (device "SolarSage")
 
 | Entity | What it shows |
 | --- | --- |
-| `sensor.solar_ev_planner_mode` | `day` (solar charging), `night` (shown as "Free hours": the car charges at its full current), `full` (car at its limit), `stale` (car data stale), `empty` (charger empty), `off`, or `no_data` (cannot plan). Attributes: shadow, commanding, the car, the safety rule that acted. |
-| `sensor.solar_ev_planner_reason` | The decision in one sentence; `full_reason` holds all of it |
-| `sensor.solar_ev_planner_next_change` | When the current is expected to change next; attributes: the current and why |
-| `sensor.solar_ev_planner_battery_minimum` | The home battery's predicted lowest level (at the caution level) until tomorrow's free hours (tomorrow's sunset when there are none). Attributes: when, the expected-day and no-car minimums, the floor, the level when free hours start, and the half-hourly path (not recorded). |
-| `sensor.solar_ev_planner_battery_minimum_time` | When that minimum is reached |
-| `sensor.solar_ev_planner_forecast_correction` | The factor today's production so far puts on the rest of today's forecast; attributes: the evidence weight, the multi-day bias, the forecast's age, and p10/p50/p90 left today |
-| `sensor.solar_ev_planner_car_on_charger` | `none`, `rivian` or `tesla`, with why, the candidates, the Wall Connector readings and `tonight_car`: the car that should be on the charger in the coming free hours |
-| `sensor.solar_ev_planner_heartbeat` | Rivian schedule control's liveness entity (above) |
-| `sensor.solar_ev_planner_tesla_api_spend` | With a Tesla only: what the planner's own Tesla Fleet calls cost this calendar month, in USD at Tesla's prices. Attributes: the counts (`commands`, `wakes`, `data_requests`, `refreshes`), the `level` (`normal`, `essential_only`, `stopped`), the budget, Tesla Fleet's polling (`on`, `off`, `unknown`) and its estimate, the `cap`, where essential-only starts and where it stops, what is `left`, how wakes are counted, the last refresh, and last month's total. See [the spending guard](#the-tesla-spending-guard). |
+| `sensor.solarsage_mode` | `day` (solar charging), `night` (shown as "Free hours": the car charges at its full current), `full` (car at its limit), `stale` (car data stale), `empty` (charger empty), `off`, or `no_data` (cannot plan). Attributes: shadow, commanding, the car, the safety rule that acted. |
+| `sensor.solarsage_reason` | The decision in one sentence; `full_reason` holds all of it |
+| `sensor.solarsage_next_change` | When the current is expected to change next; attributes: the current and why |
+| `sensor.solarsage_battery_minimum` | The home battery's predicted lowest level (at the caution level) until tomorrow's free hours (tomorrow's sunset when there are none). Attributes: when, the expected-day and no-car minimums, the floor, the level when free hours start, and the half-hourly path (not recorded). |
+| `sensor.solarsage_battery_minimum_time` | When that minimum is reached |
+| `sensor.solarsage_forecast_correction` | The factor today's production so far puts on the rest of today's forecast; attributes: the evidence weight, the multi-day bias, the forecast's age, and p10/p50/p90 left today |
+| `sensor.solarsage_car_on_charger` | `none`, `rivian` or `tesla`, with why, the candidates, the Wall Connector readings and `tonight_car`: the car that should be on the charger in the coming free hours |
+| `sensor.solarsage_heartbeat` | Rivian schedule control's liveness entity (above) |
+| `sensor.solarsage_tesla_api_spend` | With a Tesla only: what the planner's own Tesla Fleet calls cost this calendar month, in USD at Tesla's prices. Attributes: the counts (`commands`, `wakes`, `data_requests`, `refreshes`), the `level` (`normal`, `essential_only`, `stopped`), the budget, Tesla Fleet's polling (`on`, `off`, `unknown`) and its estimate, the `cap`, where essential-only starts and where it stops, what is `left`, how wakes are counted, the last refresh, and last month's total. See [the spending guard](#the-tesla-spending-guard). |
 
-### Each car (device "R1S planner", "Roxxo planner")
+### Each car (device "R1S planner", "Tesla planner")
 
 | Entity | What it shows or sets |
 | --- | --- |
@@ -163,7 +140,7 @@ What the planner sends the schedule control, and the schedule control's rules fo
 | `sensor.r1s_planner_energy_from_sun`, `_energy_in_free_hours`, `_energy_paid` | The same in kWh |
 | `number.r1s_planner_charge_limit` | The limit the planner charges to; 0 uses the car's own (default) |
 | `number.r1s_planner_plan_target`, `time.r1s_planner_plan_time`, `select.r1s_planner_plan_days` | A plan: "target % by time", on `off` (default), `once`, `weekdays`, `daily` or `weekends`. `once` is for the next such time and turns itself off afterwards. |
-| `number.roxxo_planner_restore_current_at_unplug` | Tesla only: the current set back when the Tesla is unplugged at home after the planner changed it (default 48 A; 0 turns it off). Rivian schedule control restores the owner's schedule itself. |
+| `number.tesla_planner_restore_current_at_unplug` | Tesla only: the current set back when the Tesla is unplugged at home after the planner changed it (default 48 A; 0 turns it off). Rivian schedule control restores the owner's schedule itself. |
 
 ## Settings
 
@@ -171,22 +148,22 @@ All settings are entities on the planner's device. They are kept in the planner'
 
 | Entity | Default | Range | Meaning |
 | --- | --- | --- | --- |
-| `switch.solar_ev_planner_planning` | on | | Off: no plans and nothing sent; see [Planning off and shadow mode](#planning-off-and-shadow-mode) |
-| `switch.solar_ev_planner_shadow_mode` | **on** | | Plan and explain, send nothing |
-| `switch.solar_ev_planner_daytime_solar_charging` | on | | Off: a car plugged in by day waits for the free hours |
-| `select.solar_ev_planner_caution` | conservative | near-certain, conservative, balanced, typical day | How much of the forecast to count on (97%, 90%, 75%, 50%) |
-| `select.solar_ev_planner_night_charging_start` | with the free hours | with the free hours, or a half hour from 18:00 to 05:30 | In free hours the car waits until this time, then charges at its full current. Outside the free hours and without sun the car stays paused either way, unless a car's plan needs paid hours to make its deadline. A time outside the free period means its start. While the car waits, the Rivian gets no free-hours window yet |
-| `number.solar_ev_planner_battery_floor` | 30% | 5–95% | The predicted battery must stay above it |
-| `number.solar_ev_planner_battery_wanted_at_free_hours` | 30% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours). With free hours ahead, the car may use the battery down to it by day, since the Sol-Ark refills it from the grid in them; raise it to keep more in the battery |
-| `number.solar_ev_planner_minimum_time_between_changes` | 15 min | 1–120 min | |
-| `number.solar_ev_planner_largest_change` | 6 A | 1–48 A | |
-| `number.solar_ev_planner_paid_grid_tolerance` | 5 min | 0–60 min | How long paid import is accepted before the safety rule cuts the car |
-| `number.solar_ev_planner_import_price` | 0.32 | 0–5 per kWh | Price outside the free hours and price windows |
-| `number.solar_ev_planner_solar_buyback` | 0.00 | 0–5 per kWh | What exported solar earns |
-| `select.solar_ev_planner_charger_car_override` | auto | auto, rivian, tesla | Names the car on the charger when both report being plugged in at home |
-| `number.solar_ev_planner_tesla_api_budget` | $5.00 | $0–10 | With a Tesla only: what the planner's own Tesla calls may cost a month ([spending guard](#the-tesla-spending-guard)) |
-| `number.solar_ev_planner_tesla_fleet_polling_estimate` | $5.20 | $0–30 | With a Tesla only: what Tesla Fleet's own polling may cost a month, kept free of the credit while that polling is on (not counted once it is off) |
-| `number.solar_ev_planner_tesla_refresh_interval` | 60 min | 0–240 min | With a Tesla only: how often the planner refreshes a plugged-in Tesla while Tesla Fleet's polling is off; 0 turns the planner's refreshes off |
+| `switch.solarsage_planning` | on | | Off: no plans and nothing sent; see [Planning off and shadow mode](#planning-off-and-shadow-mode) |
+| `switch.solarsage_shadow_mode` | **on** | | Plan and explain, send nothing |
+| `switch.solarsage_daytime_solar_charging` | on | | Off: a car plugged in by day waits for the free hours |
+| `select.solarsage_caution` | conservative | near-certain, conservative, balanced, typical day | How much of the forecast to count on (97%, 90%, 75%, 50%) |
+| `select.solarsage_night_charging_start` | with the free hours | with the free hours, or a half hour from 18:00 to 05:30 | In free hours the car waits until this time, then charges at its full current. Outside the free hours and without sun the car stays paused either way, unless a car's plan needs paid hours to make its deadline. A time outside the free period means its start. While the car waits, the Rivian gets no free-hours window yet |
+| `number.solarsage_battery_floor` | 30% | 5–95% | The predicted battery must stay above it |
+| `number.solarsage_battery_wanted_at_free_hours` | 30% | 0–100% | What the battery should still hold when free hours start (at sunset without free hours). With free hours ahead, the car may use the battery down to it by day, since the Sol-Ark refills it from the grid in them; raise it to keep more in the battery |
+| `number.solarsage_minimum_time_between_changes` | 15 min | 1–120 min | |
+| `number.solarsage_largest_change` | 6 A | 1–48 A | |
+| `number.solarsage_paid_grid_tolerance` | 5 min | 0–60 min | How long paid import is accepted before the safety rule cuts the car |
+| `number.solarsage_import_price` | 0.32 | 0–5 per kWh | Price outside the free hours and price windows |
+| `number.solarsage_solar_buyback` | 0.00 | 0–5 per kWh | What exported solar earns |
+| `select.solarsage_charger_car_override` | auto | auto, rivian, tesla | Names the car on the charger when both report being plugged in at home |
+| `number.solarsage_tesla_api_budget` | $5.00 | $0–10 | With a Tesla only: what the planner's own Tesla calls may cost a month ([spending guard](#the-tesla-spending-guard)) |
+| `number.solarsage_tesla_fleet_polling_estimate` | $5.20 | $0–30 | With a Tesla only: what Tesla Fleet's own polling may cost a month, kept free of the credit while that polling is on (not counted once it is off) |
+| `number.solarsage_tesla_refresh_interval` | 60 min | 0–240 min | With a Tesla only: how often the planner refreshes a plugged-in Tesla while Tesla Fleet's polling is off; 0 turns the planner's refreshes off |
 
 ## Shadow mode and commanding
 
@@ -199,7 +176,7 @@ All settings are entities on the planner's device. They are kept in the planner'
 
 ### Turning shadow mode off
 
-Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
+Turn `switch.solarsage_shadow_mode` off. From the next cycle:
 
 1. The planner starts a fresh session and sends its first decision at once to the car on the charger, and only to that car.
 2. **Tesla:** the charge current, then the charge switch. Every command is billed by Tesla's API, so a command is never repeated on the planner's own initiative.
@@ -211,7 +188,7 @@ Turn `switch.solar_ev_planner_shadow_mode` off. From the next cycle:
 
 Each Tesla command is billed and may wake the car. A start refused because the car is at its limit, retried every 15 minutes with a wake, would cost about $2 a day. So for the Tesla:
 
-- **No start while the car cannot start.** Nothing is sent, not even the current, while its charging state (`sensor.roxxo_charging`, if mapped) reads complete, disconnected or no power, while its level is at or above its own limit, or after it answered a start with "complete" and its plug, level and limit have not changed since. The command waits and is checked again each cycle, which costs nothing.
+- **No start while the car cannot start.** Nothing is sent, not even the current, while its charging state (`sensor.tesla_charging`, if mapped) reads complete, disconnected or no power, while its level is at or above its own limit, or after it answered a start with "complete" and its plug, level and limit have not changed since. The command waits and is checked again each cycle, which costs nothing.
 - **"Already there" is success.** A refusal that says the car already is where the command would take it counts as done: "complete" or "is_charging" for a start, "not_charging" for a pause.
 - **Three failures in a row stall it.** No more starts or current changes for 3 hours, or until its plug, level or limit takes a new known value; then it tries at once. A value going unavailable does not count. A pause keeps the short back-off.
 - **It survives restarts:** the hourly command count, the "complete" answer and the stall are saved.
@@ -222,7 +199,7 @@ The car's planned-current sensor shows why a command waits. The Rivian has no gu
 
 Tesla's Fleet API bills every request below status 500 (2026 prices, USD): a command $0.001, a data request $0.002, a wake $0.02, with a $10 discount per account and month. The guard makes sure the planner's own calls, with Tesla Fleet's polling, stay inside that discount, so the owner is never charged.
 
-- **It counts every billable call the planner causes**, per calendar month, kept across restarts: each charge switch or charge current call (also when refused or failed), a wake for each send to a Tesla whose status (`binary_sensor.roxxo_status`, mapped on the car) does not read online, with its three follow-up state checks as data requests, and each refresh as two data requests. Without the status sensor every send counts a wake. `sensor.solar_ev_planner_tesla_api_spend` shows the total and the counts.
+- **It counts every billable call the planner causes**, per calendar month, kept across restarts: each charge switch or charge current call (also when refused or failed), a wake for each send to a Tesla whose status (`binary_sensor.tesla_status`, mapped on the car) does not read online, with its three follow-up state checks as data requests, and each refresh as two data requests. Without the status sensor every send counts a wake. `sensor.solarsage_tesla_api_spend` shows the total and the counts.
 - **Its cap** is the smaller of the budget (default $5) and $10 less a $1 margin less Tesla Fleet's polling estimate (default $5.20: about 84 reads a day with the car awake 14 hours). With Tesla Fleet polling the cap is $3.80; once its polling is off, the estimate is not counted and the cap is the budget.
 - **From 70% of the cap: essential commands only.** The Tesla is started only in the free hours, and by day a decrease becomes a stop, so the car never draws paid power the planner did not want: the free hours' end and the paid-import and battery-floor safety rules stop it. Daytime starts and current changes, timed refreshes and the restore at unplug wait. The reason says so.
 - **At the cap less the cost of one more send: nothing.** No start, current change or refresh until the first of the next month. A stop to a Tesla that is charging still goes out: it is awake, so the stop costs one command, far less than paid-hours charging. A car that is not charging keeps its last state: set a Tesla charging schedule or a Wall Connector schedule as a backstop for paid hours. The reason says so, and the car's planned-current sensor says why its command waits.
@@ -231,28 +208,28 @@ Tesla's Fleet API bills every request below status 500 (2026 prices, USD): a com
 **Tesla Fleet's polling.** Tesla Fleet polls an awake car every 10 minutes: its state, then vehicle_data, $5 or more a month (more if Tesla bills the state check, which HA calls free). The planner's refreshes cost less, so turn that polling off: Settings → Devices & services → Tesla Fleet → ⋮ → System options → "Enable polling for updates" off. The guard reads that option. While it is off, the planner calls `homeassistant.update_entity` on a Tesla Fleet entity of the car (its charge switch):
 
 - once when the Wall Connector reports a car connected (is it the Tesla?) and once when the Tesla leaves it, so its plug reading changes (not with TeslaMate's readings, below);
-- every `number.solar_ev_planner_tesla_refresh_interval` (60 minutes) while the Tesla is on the Wall Connector, never while it is off the charger (not with TeslaMate's readings);
+- every `number.solarsage_tesla_refresh_interval` (60 minutes) while the Tesla is on the Wall Connector, never while it is off the charger (not with TeslaMate's readings);
 - before a command when its data is more than 10 minutes old, so Tesla Fleet neither wakes an awake car (its status would read asleep) nor commands an asleep one.
 
-The refreshes run while Planning is on, also in shadow mode, and never while Tesla Fleet polls. At about 14 hours a day on the charger, hourly refreshes cost about $1.70 a month. Keep `binary_sensor.roxxo_status` enabled and mapped, Sentry Mode off at home, and check the developer dashboard weekly: the guard counts only the planner's calls, not the Tesla app's or other automations'.
+The refreshes run while Planning is on, also in shadow mode, and never while Tesla Fleet polls. At about 14 hours a day on the charger, hourly refreshes cost about $1.70 a month. Keep `binary_sensor.tesla_status` enabled and mapped, Sentry Mode off at home, and check the developer dashboard weekly: the guard counts only the planner's calls, not the Tesla app's or other automations'.
 
-**TeslaMate for the Tesla's readings.** TeslaMate already follows the car through Tesla's streaming API, outside the developer app, so its readings cost nothing. The Mosquitto add-on bridges the few topics the planner needs from TeslaMate's broker on turbonas (`/share/mosquitto/teslamate.conf`, kept in [`deploy/mosquitto/teslamate.conf`](../deploy/mosquitto/teslamate.conf); read-only, no GPS), and an MQTT discovery message (`homeassistant/device/teslamate_car_1/config`, retained) makes the device "Roxxo (TeslaMate)":
+**TeslaMate for the Tesla's readings.** TeslaMate already follows the car through Tesla's streaming API, outside the developer app, so its readings cost nothing. For an optional TeslaMate setup, a Mosquitto add-on can bridge the topics the planner needs from your TeslaMate broker (`/share/mosquitto/teslamate.conf`, kept in [`deploy/mosquitto/teslamate.conf`](https://github.com/bballdavis/SolarSage/blob/main/deploy/mosquitto/teslamate.conf); read-only, no GPS), and an MQTT discovery message (`homeassistant/device/teslamate_car_1/config`, retained) makes the device "Tesla (TeslaMate)":
 
 | Entity | From TeslaMate | Notes |
 | --- | --- | --- |
-| `sensor.teslamate_roxxo_battery_level` | `battery_level` | % |
-| `sensor.teslamate_roxxo_charge_limit` | `charge_limit_soc` | % |
-| `binary_sensor.teslamate_roxxo_plugged_in` | `plugged_in` | |
-| `sensor.teslamate_roxxo_charging` | `charging_state` | lowercased as Tesla Fleet's (`no_power` for NoPower) |
-| `binary_sensor.teslamate_roxxo_status` | `state` | on while online, charging, driving, updating or suspended; off asleep or offline |
-| `device_tracker.teslamate_roxxo_location` | `geofence` | home inside TeslaMate's home geofence (its name is in the discovery message) |
-| `sensor.teslamate_roxxo_charger_current`, `…_charger_power`, `…_charge_current_request`, `…_state` | | for the dashboard |
+| `sensor.teslamate_tesla_battery_level` | `battery_level` | % |
+| `sensor.teslamate_tesla_charge_limit` | `charge_limit_soc` | % |
+| `binary_sensor.teslamate_tesla_plugged_in` | `plugged_in` | |
+| `sensor.teslamate_tesla_charging` | `charging_state` | lowercased as Tesla Fleet's (`no_power` for NoPower) |
+| `binary_sensor.teslamate_tesla_status` | `state` | on while online, charging, driving, updating or suspended; off asleep or offline |
+| `device_tracker.teslamate_tesla_location` | `geofence` | home inside TeslaMate's home geofence (its name is in the discovery message) |
+| `sensor.teslamate_tesla_charger_current`, `…_charger_power`, `…_charge_current_request`, `…_state` | | for the dashboard |
 
 All of them are unavailable while the bridge is down (`bridge/teslamate/state` 0). Mapped on the car (the form suggests them when they exist), they replace the timed refreshes: the planner refreshes Tesla Fleet only before a command whose data is more than 10 minutes old, on a Tesla Fleet entity of the car (the charge switch), because Tesla Fleet still decides from its own last read whether to wake the car. The guard reads Tesla Fleet's polling option from that entity too. The charge switch and current stay Tesla Fleet's: every command still goes through it.
 
 **Tesla's account.** Add no payment method and leave the billing limit at $0. Tesla suspends an app that goes past its limit until the next billing cycle, so a mistake should cost a suspended API, not money (Tesla's billing page was read through search extracts only; confirm it once on developer.tesla.com). The whole plan for staying inside the free credit, Sentry Mode off at home included, is in [the plan](PLAN.md#phase-0-staying-inside-the-free-credit).
 
-**Settings.** Keep the defaults: a $5 budget (`number.solar_ev_planner_tesla_api_budget`), a $5.20 polling estimate (`number.solar_ev_planner_tesla_fleet_polling_estimate`, counted only while Tesla Fleet polls) and a 60-minute refresh interval (`number.solar_ev_planner_tesla_refresh_interval`). Lower the budget for more room under the credit. Raise the polling estimate if you leave Tesla Fleet's polling on and the dashboard shows more. A longer refresh interval saves a little but plans on older battery levels.
+**Settings.** Keep the defaults: a $5 budget (`number.solarsage_tesla_api_budget`), a $5.20 polling estimate (`number.solarsage_tesla_fleet_polling_estimate`, counted only while Tesla Fleet polls) and a 60-minute refresh interval (`number.solarsage_tesla_refresh_interval`). Lower the budget for more room under the credit. Raise the polling estimate if you leave Tesla Fleet's polling on and the dashboard shows more. A longer refresh interval saves a little but plans on older battery levels.
 
 **Hosting the key costs nothing.** Tesla reads the public key at registration and pairing, not through the Fleet API, so it is never billed ([key hosting](PLAN.md#phase-0-hosting-the-key-through-traefik)).
 
@@ -311,29 +288,29 @@ In shadow mode, compare the planned car area with the "Car drew" line: the gap i
 
 ## A starting dashboard
 
-Built-in cards only, if you'd rather not use the card above; add it as a new dashboard (raw configuration editor) and adjust. It has not been tried in the owner's Home Assistant yet.
+Built-in cards only, if you'd rather not use the card above; add it as a new dashboard (raw configuration editor) and adjust. It has not been tried in a real Home Assistant installation yet.
 
 ```yaml
-title: Solar EV
+title: SolarSage
 views:
   - title: Charging
     cards:
       - type: markdown
         title: Planner
         content: >-
-          **{{ states('sensor.solar_ev_planner_mode') }}**:
-          {{ state_attr('sensor.solar_ev_planner_reason', 'full_reason') }}
+          **{{ states('sensor.solarsage_mode') }}**:
+          {{ state_attr('sensor.solarsage_reason', 'full_reason') }}
       - type: entities
         title: Now
         entities:
-          - sensor.solar_ev_planner_car_on_charger
-          - sensor.solar_ev_planner_next_change
-          - sensor.solar_ev_planner_battery_minimum
-          - sensor.solar_ev_planner_battery_minimum_time
-          - sensor.solar_ev_planner_forecast_correction
+          - sensor.solarsage_car_on_charger
+          - sensor.solarsage_next_change
+          - sensor.solarsage_battery_minimum
+          - sensor.solarsage_battery_minimum_time
+          - sensor.solarsage_forecast_correction
           - sensor.sol_ark_inverter_battery_state_of_charge
           - sensor.tesla_wall_connector_total_power
-          - sensor.solar_ev_planner_heartbeat
+          - sensor.solarsage_heartbeat
       - type: entities
         title: R1S
         entities:
@@ -347,39 +324,39 @@ views:
           - select.r1s_planner_plan_days
           - sensor.r1s_schedule_control_control_state
       - type: entities
-        title: Roxxo
+        title: Tesla
         entities:
-          - sensor.roxxo_planner_planned_current
-          - sensor.roxxo_planner_outlook
-          - sensor.roxxo_battery_level
-          - number.roxxo_planner_charge_limit
-          - number.roxxo_planner_plan_target
-          - time.roxxo_planner_plan_time
-          - select.roxxo_planner_plan_days
+          - sensor.tesla_planner_planned_current
+          - sensor.tesla_planner_outlook
+          - sensor.tesla_battery_level
+          - number.tesla_planner_charge_limit
+          - number.tesla_planner_plan_target
+          - time.tesla_planner_plan_time
+          - select.tesla_planner_plan_days
       - type: history-graph
         title: Today
         hours_to_show: 24
         entities:
           - sensor.sol_ark_inverter_battery_state_of_charge
-          - sensor.solar_ev_planner_battery_minimum
+          - sensor.solarsage_battery_minimum
           - sensor.r1s_planner_planned_current
-          - sensor.roxxo_planner_planned_current
+          - sensor.tesla_planner_planned_current
           - sensor.garage_tesla_wall_connector_vehicle_current
       - type: entities
         title: Settings
         entities:
-          - switch.solar_ev_planner_planning
-          - switch.solar_ev_planner_shadow_mode
-          - switch.solar_ev_planner_daytime_solar_charging
-          - select.solar_ev_planner_caution
-          - number.solar_ev_planner_battery_floor
-          - number.solar_ev_planner_battery_wanted_at_free_hours
-          - number.solar_ev_planner_minimum_time_between_changes
-          - number.solar_ev_planner_largest_change
-          - number.solar_ev_planner_paid_grid_tolerance
-          - number.solar_ev_planner_import_price
-          - number.solar_ev_planner_solar_buyback
-          - select.solar_ev_planner_charger_car_override
+          - switch.solarsage_planning
+          - switch.solarsage_shadow_mode
+          - switch.solarsage_daytime_solar_charging
+          - select.solarsage_caution
+          - number.solarsage_battery_floor
+          - number.solarsage_battery_wanted_at_free_hours
+          - number.solarsage_minimum_time_between_changes
+          - number.solarsage_largest_change
+          - number.solarsage_paid_grid_tolerance
+          - number.solarsage_import_price
+          - number.solarsage_solar_buyback
+          - select.solarsage_charger_car_override
           - schedule.free_hours
 ```
 

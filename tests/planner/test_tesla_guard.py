@@ -23,7 +23,7 @@ from custom_components.solar_ev_planner.executor import CarExecutor, CarRuntime,
 
 from .conftest import RIV, RIVIAN, TES, TESLA, FakeCars, set_rivian, set_tesla
 
-CHARGING = "sensor.roxxo_charging"
+CHARGING = "sensor.tesla_charging"
 CAR: dict[str, Any] = TESLA | {CONF_CHARGING_STATE: CHARGING}
 ON = [("number", "set_value", 16), ("switch", "turn_on", TES["switch"])]
 

@@ -1,8 +1,12 @@
-# Solar EV charging planner: design
+---
+sidebar_label: Planner design
+---
+
+# SolarSage charging planner: design
 
 October 25, 2026. This is the design that [PLAN.md](PLAN.md) phase 2 asks for: how the planner decides, its settings, how it uses Home Assistant, what it cannot do, and how it compares with an evcc-like surplus follower in simulation.
 
-- **The code** is the pure-Python package [`custom_components/solar_ev_planner/core/`](../custom_components/solar_ev_planner/core/): standard library only, no Home Assistant imports. Its unit tests are in [`tests/planner/core/`](../tests/planner/core/). The real-data tools load the same folder as the package `planner_core`, which is the name used below.
+- **The code** is the pure-Python package [`custom_components/solar_ev_planner/core/`](https://github.com/bballdavis/SolarSage/blob/main/custom_components/solar_ev_planner/core/): standard library only, no Home Assistant imports. Its unit tests are in [`tests/planner/core/`](https://github.com/bballdavis/SolarSage/blob/main/tests/planner/core/). The real-data tools load the same folder as the package `planner_core`, which is the name used below.
 - **The Home Assistant integration** around it (entities, settings, commands) is described in [PLANNER.md](PLANNER.md), and testing it with real data in [TESTING.md](TESTING.md).
 - **The simulation results** below come from a design run whose harness and comparison tools are not part of this repository ([section 13](#13-where-things-are)).
 - **The free hours changed after the simulation.** The simulated planner charged the car in a 10 PM to 6 AM night window, and the simulated site held its battery in free hours and wanted 40% when they began. The planner now charges the car at its full current from the moment the free hours begin. In those hours the owner's Sol-Ark refills the battery to 100% from the grid on its own settings, so the planner models the refill and adds a fourth power, Spread (section 2). Full-current free hours, Spread, the refill and the 30% default are covered by unit tests, not by the simulation; the shadow week and `tools/replay.py --whatif` on real days are their check.
@@ -234,7 +238,7 @@ The rows below are from the simulation, with its earlier setup (see the top of t
 
 ### Entities
 
-Config-flow suggestions are in [`core/entities.py`](../custom_components/solar_ev_planner/core/entities.py), and every mapping stays configurable.
+Config-flow suggestions are in [`core/entities.py`](https://github.com/bballdavis/SolarSage/blob/main/custom_components/solar_ev_planner/core/entities.py), and every mapping stays configurable.
 
 | Input | Entity | Unit |
 | --- | --- | --- |
@@ -251,8 +255,8 @@ Config-flow suggestions are in [`core/entities.py`](../custom_components/solar_e
 | Free hours | the Schedule helper (weekly config via `schedule.get_schedule`) | |
 | Rivian | `sensor.r1s_battery_state_of_charge`, `sensor.r1s_battery_state_of_charge_limit`, `binary_sensor.r1s_charger_connection`, `device_tracker.r1s_location` (or `device_tracker.r1s` on a fresh upstream 2.0.0 install) | % |
 | Rivian control | `switch.r1s_schedule_control_solar_charging`, `number.r1s_schedule_control_solar_current`; the standing request from `sensor.r1s_schedule_control_control_state` | A, even 8–48 |
-| Tesla (Fleet, car "Roxxo") | `sensor.roxxo_battery_level`, `number.roxxo_charge_limit`, `binary_sensor.roxxo_charge_cable`, `device_tracker.roxxo_location`; `sensor.roxxo_charging` for the integration's start guard | % |
-| Tesla control | `switch.roxxo_charge`, `number.roxxo_charge_current` (Tesla Fleet; tesla_custom is removed, so its `switch.roxxo_charger` and `number.roxxo_charging_amps` are not used) | A |
+| Tesla (Fleet, car "Tesla") | `sensor.tesla_battery_level`, `number.tesla_charge_limit`, `binary_sensor.tesla_charge_cable`, `device_tracker.tesla_location`; `sensor.tesla_charging` for the integration's start guard | % |
+| Tesla control | `switch.tesla_charge`, `number.tesla_charge_current` (Tesla Fleet; tesla_custom is removed, so its `switch.tesla_charger` and `number.tesla_charging_amps` are not used) | A |
 
 House load is not measured. It is `pv + grid − battery − wall connector` (`house_load_kw`).
 
@@ -318,7 +322,7 @@ Each loop of the integration's coordinator does five things:
 4. Build the `Snapshot` and call `decide`.
 5. Unless the decision is shadow, send the plugged car's command; then remember `commanded_a` and save `state_dict()` in the integration's store.
 
-In shadow mode the planner keeps its own virtual current, so the shadow plan evolves as if it had been obeyed. [`tests/planner/core/ha_fixture.py`](../tests/planner/core/ha_fixture.py) shows the whole mapping on HA-shaped data (states, attributes, statistics rows, the schedule config) with made-up values; run it with `python -m tests.planner.core.ha_fixture`.
+In shadow mode the planner keeps its own virtual current, so the shadow plan evolves as if it had been obeyed. [`tests/planner/core/ha_fixture.py`](https://github.com/bballdavis/SolarSage/blob/main/tests/planner/core/ha_fixture.py) shows the whole mapping on HA-shaped data (states, attributes, statistics rows, the schedule config) with made-up values; run it with `python -m tests.planner.core.ha_fixture`.
 
 ## 11. Known limits
 
@@ -434,9 +438,9 @@ The owner's tariff only: free nights, no plan that forces paid power. That is 12
 
 | Path | What |
 | --- | --- |
-| [`custom_components/solar_ev_planner/core/`](../custom_components/solar_ev_planner/core/) | The package: `types.py`, `tariff.py`, `solcast.py`, `load_profile.py`, `pv.py`, `house.py`, `battery.py`, `planner.py`, `entities.py` |
-| [`tests/planner/core/`](../tests/planner/core/) | Its 59 unit tests, including the HA-shaped end-to-end fixture `ha_fixture.py` |
-| [`custom_components/solar_ev_planner/`](../custom_components/solar_ev_planner/) | The Home Assistant integration that feeds it and sends its commands ([PLANNER.md](PLANNER.md)) |
-| [`tools/replay.py`](../tools/replay.py) | Runs the planner over the owner's recorded days ([TESTING.md](TESTING.md)) |
+| [`custom_components/solar_ev_planner/core/`](https://github.com/bballdavis/SolarSage/blob/main/custom_components/solar_ev_planner/core/) | The package: `types.py`, `tariff.py`, `solcast.py`, `load_profile.py`, `pv.py`, `house.py`, `battery.py`, `planner.py`, `entities.py` |
+| [`tests/planner/core/`](https://github.com/bballdavis/SolarSage/blob/main/tests/planner/core/) | Its 59 unit tests, including the HA-shaped end-to-end fixture `ha_fixture.py` |
+| [`custom_components/solar_ev_planner/`](https://github.com/bballdavis/SolarSage/blob/main/custom_components/solar_ev_planner/) | The Home Assistant integration that feeds it and sends its commands ([PLANNER.md](PLANNER.md)) |
+| [`tools/replay.py`](https://github.com/bballdavis/SolarSage/blob/main/tools/replay.py) | Runs the planner over the owner's recorded days ([TESTING.md](TESTING.md)) |
 
 The simulation harness, the comparison and calibration tools and the chart data belonged to the design run and are not in this repository; the numbers in this document come from that run. On the owner's own data, `tools/replay.py` and shadow mode take their place: they show what the planner would have done on real days, and how its battery prediction compared with what happened.

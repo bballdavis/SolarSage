@@ -65,7 +65,6 @@ from .const import (
     CONF_VEHICLE_ID,
     CONF_WALL_CONNECTOR_ENTITY,
     DEFAULT_OPTIONS,
-    DOMAIN,
     ENTITY_OPTIONS,
     ENTRY_MINOR_VERSION,
     ENTRY_VERSION,
@@ -172,7 +171,7 @@ def _vehicle_label(vehicle: Mapping[str, Any]) -> str:
     return f"{name} ({model})" if model and model != name else name
 
 
-class RivianScheduleControlConfigFlow(ConfigFlow, domain=DOMAIN):
+class RivianScheduleControlConfigFlow(ConfigFlow):
     """Sign in to Rivian, pick a vehicle and map the Home Assistant entities."""
 
     VERSION = ENTRY_VERSION
@@ -193,7 +192,7 @@ class RivianScheduleControlConfigFlow(ConfigFlow, domain=DOMAIN):
 
     # Sign in -------------------------------------------------------------
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_rivian(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for the Rivian account credentials."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -202,7 +201,7 @@ class RivianScheduleControlConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self._async_after_login()
             errors["base"] = error
         return self.async_show_form(
-            step_id="user",
+            step_id="rivian",
             data_schema=self.add_suggested_values_to_schema(
                 USER_SCHEMA, {CONF_EMAIL: self._email} if self._email else {}
             ),
@@ -313,7 +312,7 @@ class RivianScheduleControlConfigFlow(ConfigFlow, domain=DOMAIN):
                 description_placeholders={"name": self._get_reauth_entry().title},
             )
         return self.async_show_form(
-            step_id="user",
+            step_id="rivian",
             data_schema=self.add_suggested_values_to_schema(USER_SCHEMA, {CONF_EMAIL: self._email}),
             errors={"base": error},
         )
@@ -376,6 +375,11 @@ class RivianScheduleControlOptionsFlow(OptionsFlowWithReload):
     """Change the mapped entities and the tuning; saving reloads the entry."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self.async_step_rivian_options(user_input)
+
+    async def async_step_rivian_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Show and validate the options."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -386,7 +390,7 @@ class RivianScheduleControlOptionsFlow(OptionsFlowWithReload):
         else:
             suggested = DEFAULT_OPTIONS | dict(self.config_entry.options)
         return self.async_show_form(
-            step_id="init",
+            step_id="rivian_options",
             data_schema=self.add_suggested_values_to_schema(OPTIONS_SCHEMA, suggested),
             errors=errors,
         )

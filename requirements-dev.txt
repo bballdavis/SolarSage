@@ -1,0 +1,5 @@
+# Tested Home Assistant baseline; update these together.
+homeassistant==2026.10.3
+pytest-homeassistant-custom-component==0.13.374
+rivian-python-client==2.3.1
+ruff==0.17.4

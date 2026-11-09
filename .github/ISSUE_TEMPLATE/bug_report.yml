@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible SolarSage problem using sanitized evidence.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include tokens, VINs, coordinates, private keys, or raw household recordings. Report vulnerabilities privately using SECURITY.md.
+  - type: input
+    id: versions
+    attributes:
+      label: Home Assistant and SolarSage versions
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options: [Site planner, Tesla commands, Rivian schedule control, Dashboard, Documentation, Installation]
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized diagnostics or logs
+      description: Review every attachment for identifying data before posting.

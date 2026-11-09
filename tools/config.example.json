@@ -1,5 +1,5 @@
 {
-  "_about": "Entity mapping for the tools, prefilled with the owner's entity ids. Copy to tools/config.json (git-ignored) and edit what differs; keys left out keep these values. cars.rivian.location: device_tracker.r1s_location (upstream Rivian installs before 2026-10-12) or device_tracker.r1s (fresh 2.0.0 installs); tools/check.py says which exists. cars.tesla.legacy_*: tesla_custom names, never mapped for control; check.py warns while they still exist (remove tesla_custom).",
+  "_about": "Entity mapping for the tools, filled with illustrative entity IDs. Copy to tools/config.json (git-ignored) and edit what differs; keys left out keep these values. cars.rivian.location: device_tracker.r1s_location (upstream Rivian installs before 2026-10-12) or device_tracker.r1s (fresh 2.0.0 installs); tools/check.py says which exists. cars.tesla.legacy_*: tesla_custom names, never mapped for control; check.py warns while they still exist (remove tesla_custom).",
   "site": {
     "pv_power": "sensor.sol_ark_inverter_pv_power",
     "grid_power": "sensor.sol_ark_inverter_grid_power",
@@ -25,18 +25,18 @@
   "cars": {
     "tesla": {
       "kind": "tesla",
-      "name": "Roxxo",
-      "soc": "sensor.roxxo_battery_level",
-      "limit": "number.roxxo_charge_limit",
-      "plugged": "binary_sensor.roxxo_charge_cable",
-      "location": "device_tracker.roxxo_location",
-      "switch": "switch.roxxo_charge",
-      "current": "number.roxxo_charge_current",
-      "charging_state": "sensor.roxxo_charging",
-      "status": "binary_sensor.roxxo_status",
-      "charging_wanted": "binary_sensor.roxxo_planner_charging_wanted",
-      "legacy_switch": "switch.roxxo_charger",
-      "legacy_current": "number.roxxo_charging_amps"
+      "name": "Tesla",
+      "soc": "sensor.tesla_battery_level",
+      "limit": "number.tesla_charge_limit",
+      "plugged": "binary_sensor.tesla_charge_cable",
+      "location": "device_tracker.tesla_location",
+      "switch": "switch.tesla_charge",
+      "current": "number.tesla_charge_current",
+      "charging_state": "sensor.tesla_charging",
+      "status": "binary_sensor.tesla_status",
+      "charging_wanted": "binary_sensor.tesla_planner_charging_wanted",
+      "legacy_switch": "switch.tesla_charger",
+      "legacy_current": "number.tesla_charging_amps"
     },
     "rivian": {
       "kind": "rivian",
@@ -58,12 +58,12 @@
     }
   },
   "planner": {
-    "heartbeat": "sensor.solar_ev_planner_heartbeat",
-    "planning": "switch.solar_ev_planner_planning",
-    "shadow_mode": "switch.solar_ev_planner_shadow_mode",
-    "mode": "sensor.solar_ev_planner_mode",
-    "reason": "sensor.solar_ev_planner_reason",
-    "car_on_charger": "sensor.solar_ev_planner_car_on_charger"
+    "heartbeat": "sensor.solarsage_heartbeat",
+    "planning": "switch.solarsage_planning",
+    "shadow_mode": "switch.solarsage_shadow_mode",
+    "mode": "sensor.solarsage_mode",
+    "reason": "sensor.solarsage_reason",
+    "car_on_charger": "sensor.solarsage_car_on_charger"
   },
   "tariff": {
     "price": 0.32,

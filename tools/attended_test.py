@@ -306,7 +306,7 @@ def _planner_quiet(obs: Mapping[str, Any]) -> None:
     if obs.get("planner") == "active":
         raise Refused(
             "the planner is commanding the cars (its shadow mode is off): turn "
-            "switch.solar_ev_planner_shadow_mode on first, so you are the only writer"
+            "switch.solarsage_shadow_mode on first, so you are the only writer"
         )
 
 

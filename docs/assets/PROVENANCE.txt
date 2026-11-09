@@ -1,0 +1,4 @@
+solarsage-wordmark.png: user-supplied transparent wordmark.png, 2026-11-09.
+solarsage-logo.png: user-supplied transparent logo.png, 2026-11-09.
+The bundled app and integration brand icons are resized copies of logo.png.
+dashboard-desktop.jpg and dashboard-mobile.jpg: rendered SolarSage card using synthetic Home Assistant test fixtures; no household telemetry or live vehicle account.

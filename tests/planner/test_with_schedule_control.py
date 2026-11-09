@@ -20,7 +20,8 @@ from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
-from custom_components.rivian_schedule_control.const import (
+from custom_components.solar_ev_planner.coordinator import PlannerCoordinator
+from custom_components.solar_ev_planner.rivian.const import (
     CONF_ACCESS_TOKEN,
     CONF_CHARGING_ENTITY,
     CONF_DRY_RUN,
@@ -39,7 +40,6 @@ from custom_components.rivian_schedule_control.const import (
     ENTRY_MINOR_VERSION,
     ENTRY_VERSION,
 )
-from custom_components.solar_ev_planner.coordinator import PlannerCoordinator
 
 from .conftest import (
     NOON_UTC,
@@ -58,12 +58,12 @@ from .conftest import (
     turn,
 )
 
-HEARTBEAT = "sensor.solar_ev_planner_heartbeat"
+HEARTBEAT = "sensor.solarsage_heartbeat"
 WANTED = "binary_sensor.r1s_planner_charging_wanted"
 UNTIL = "sensor.r1s_planner_charging_until"
-OVERRIDE = "select.solar_ev_planner_charger_car_override"
-SHADOW = "switch.solar_ev_planner_shadow_mode"
-PLANNING = "switch.solar_ev_planner_planning"
+OVERRIDE = "select.solarsage_charger_car_override"
+SHADOW = "switch.solarsage_shadow_mode"
+PLANNING = "switch.solarsage_planning"
 
 
 def set_rivian_telemetry(hass: HomeAssistant, *, plugged: str = "on", soc: float = 46) -> None:
@@ -365,3 +365,67 @@ async def test_override_naming_the_tesla(
     await tick(hass, freezer, 30)
     assert rivian.writes == []
     assert control(hass)["desired_charge"] is None
+
+
+async def test_combined_entries_route_dashboard_and_services(both) -> None:
+    """Rivian services must not treat the site coordinator as a vehicle runtime."""
+    from homeassistant.exceptions import ServiceValidationError
+
+    from custom_components.solar_ev_planner.const import DOMAIN
+    from custom_components.solar_ev_planner.websocket_api import _coordinator
+
+    hass, coordinator, fake = both
+    before = len(fake.writes)
+    assert _coordinator(hass) is coordinator
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "read_schedules",
+            {"config_entry_id": coordinator.config_entry.entry_id},
+            blocking=True,
+        )
+    assert len(fake.writes) == before
+    # A Rivian-only install is valid, but it cannot masquerade as a site planner.
+    await hass.config_entries.async_unload(coordinator.config_entry.entry_id)
+    assert _coordinator(hass) is None
+
+
+async def test_bundled_controller_refuses_legacy_entry(planner_hass, mock_rivian) -> None:
+    """Block a second controller before creating a client or writing a schedule."""
+    from homeassistant.config_entries import SOURCE_USER
+    from homeassistant.data_entry_flow import FlowResultType
+
+    from custom_components.solar_ev_planner.const import DOMAIN
+
+    hass = planner_hass
+    MockConfigEntry(domain="rivian_schedule_control", unique_id="old-vehicle").add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "rivian"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "legacy_rivian_installed"
+    entry = schedule_control_entry(mock_rivian.vehicles[0]["id"])
+    entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    assert mock_rivian.init_kwargs == [] and mock_rivian.writes == []
+
+
+async def test_shared_domain_allows_rivian_actuators_but_rejects_planner_feedback(both) -> None:
+    """Use registry ownership, even after an actuator has been renamed by the user."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.solar_ev_planner.config_flow import _car_errors
+    from custom_components.solar_ev_planner.const import DOMAIN
+
+    hass, coordinator, _ = both
+    data = {"min_a": 8, "max_a": 48, "switch": RIV["switch"], "current": RIV["current"]}
+    assert _car_errors(hass, data) == {}
+    registry = er.async_get(hass)
+    planner_switch = registry.async_get_entity_id(
+        "switch", DOMAIN, f"{coordinator.config_entry.entry_id}_planning"
+    )
+    registry.async_update_entity(planner_switch, new_entity_id="switch.renamed_controller")
+    assert _car_errors(hass, data | {"switch": "switch.renamed_controller"}) == {
+        "base": "own_entity"
+    }

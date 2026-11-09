@@ -1,6 +1,10 @@
+---
+sidebar_label: Rivian control
+---
+
 # Rivian schedule control: setting the Rivian's charging from Home Assistant
 
-**What it is.** Rivian schedule control is software, not a device: a Home Assistant integration in this repository (`custom_components/rivian_schedule_control`). Nothing is added at the charger or the car. The Rivian plugs into the same Tesla Wall Connector as the Tesla, with its usual cable, and the Wall Connector is only read, never controlled.
+**What it is.** Rivian schedule control is software, not a device: a Home Assistant integration in this repository (`custom_components/solar_ev_planner/rivian`). Nothing is added at the charger or the car. The Rivian plugs into the same Tesla Wall Connector as the Tesla, with its usual cable, and the Wall Connector is only read, never controlled.
 
 No Rivian API command sets the charging current, on any generation, as of October 31, 2026. Start/stop and the charge limit need a phone key, which on a 2025 Gen 2 can be paired only from a Mac through an unofficial proof of concept ([upstream issue #181](https://github.com/bretterer/home-assistant-rivian/issues/181)); that is out of scope here and would still not set the current. Rivian schedule control does it the one way Rivian's API allows: it rewrites the car's **charging schedule**, the same schedules the Rivian app shows. The schedule's amperage is the current. In Home Assistant this appears as a start/stop switch and a current setting for the car. In the [working plan](PLAN.md) the solar planner uses them: it sets the switch and the current, and provides three entities that tell the schedule control whether the planner is running, whether it wants the car charging and, in the free hours, until when ([what the planner must provide](#driving-schedule-control-from-the-planner)). The planner itself is described in [PLANNER.md](PLANNER.md).
 
@@ -91,22 +95,22 @@ The all-week window is parked when charging is no longer wanted, when the reques
          rivian: error
      ```
 
-3. Install this repository through HACS (custom repository, category integration), or copy `custom_components/rivian_schedule_control` into `/config/custom_components/`. Restart Home Assistant. HACS installs only Rivian schedule control from this repository; the planner is copied by hand ([PLANNER.md, install](PLANNER.md#install)).
-4. **Settings → Devices & services → Add integration → Rivian Schedule Control.**
+3. Install SolarSage using the [installation guide](installation.md). Rivian schedule control is bundled in the same integration.
+4. **Settings → Devices & services → Add integration → SolarSage → Rivian schedule control.**
    - **Login:** Rivian email and password, plus the one-time code if your account uses one.
    - **Vehicle:** pick the R1S.
    - **Entities:**
 
-     | Option (key) | Map to (the owner's entity, where known) | Required |
+     | Option (key) | Map to (example entity; use your actual IDs) | Required |
      | --- | --- | --- |
      | Plugged in (`plugged_entity`) | The Rivian charger connection binary sensor: `binary_sensor.r1s_charger_connection` | Yes |
      | Location (`location_entity`) | The Rivian device tracker, not a person: `device_tracker.r1s_location`, or `device_tracker.r1s` on a fresh upstream 2.0.0 install. Its latitude and longitude also give the windows their location. | Yes |
      | Charger state (`charger_state_entity`) | The Rivian integration's "Charger state" sensor, likely `sensor.r1s_charger_state` (`python -m tools.check` confirms it) | Recommended: without it the charger status can never be "charging" (`c`) |
      | Wall Connector vehicle connected (`wall_connector_entity`) | `binary_sensor.tesla_wall_connector_vehicle_connected` | Recommended: it ends a session when the Wall Connector sees no vehicle, and blocks control of a Rivian plugged in elsewhere |
-     | Controller liveness (`controller_liveness_entity`) | The planner's heartbeat, `sensor.solar_ev_planner_heartbeat`: unavailable while the planner is off or down. Leave it empty until the planner is installed. | **Strongly recommended** once a controller runs: without it, a controller outage cannot stop renewals |
+     | Controller liveness (`controller_liveness_entity`) | The planner's heartbeat, `sensor.solarsage_heartbeat`: unavailable while the planner is off or down. Leave it empty until the planner is installed. | **Strongly recommended** once a controller runs: without it, a controller outage cannot stop renewals |
      | Controller wants charging (`controller_charging_entity`) | The planner's charging-wanted sensor for this car, `binary_sensor.r1s_planner_charging_wanted` | **Recommended** with liveness: it lets charging resume after an outage of the liveness entity, and after a long Home Assistant restart |
      | Controller charging until (`controller_until_entity`) | The planner's charging-until sensor for this car, `sensor.r1s_planner_charging_until`: a timestamp, the end of the free hours while the planner charges the car through them | **Recommended** with the planner: it gives the free hours one fixed window, written once. Without it they run on leases renewed all night. |
-     | Vehicle override (`vehicle_override_entity`) | The planner's charger car override, `select.solar_ev_planner_charger_car_override` (`auto`, `tesla`, `rivian`) | Optional: when it names another car, the charger status reports `a` |
+     | Vehicle override (`vehicle_override_entity`) | The planner's charger car override, `select.solarsage_charger_car_override` (`auto`, `tesla`, `rivian`) | Optional: when it names another car, the charger status reports `a` |
 
 5. Options (**Configure**):
 
@@ -124,7 +128,7 @@ The all-week window is parked when charging is no longer wanted, when the reques
    | Restore enabled schedules only if Rivian rejects the full list (`restore_enabled_only`) | off | If Rivian refuses the owner's full list on a restore, write only its enabled schedules instead of faulting; the full list stays archived ([exact restore](#how-it-works)). |
    | Community pattern (`community_pattern`) | off | The [fallback mode](#community-pattern-fallback-mode): one all-week window while charging, one window parked 12 hours away while not. Turn it on only if the trial fails with the usual leases. |
 
-   To drive the schedule control from evcc instead of the planner ([plan decision 8](PLAN.md#decisions)), set the increase margin to 3 A and the ceiling hold to 30 minutes, map the liveness and charging options to evcc's entities, and leave the until option empty.
+   To drive the schedule control from evcc instead of the planner ([plan decision 8](PLAN.md#phase-0-the-rivian-app)), set the increase margin to 3 A and the ceiling hold to 30 minutes, map the liveness and charging options to evcc's entities, and leave the until option empty.
 
 ## Entities
 
@@ -147,7 +151,7 @@ Services:
 
 | Service | What it does |
 | --- | --- |
-| `rivian_schedule_control.release` | Same as the restore button |
+| `solar_ev_planner.release` | Same as the restore button |
 | `.clear_fault` | Same as the clear-fault button |
 | `.read_schedules` | Returns the list summary |
 | `.force_restore` | **Faulted only.** Writes the snapshotted owner list whatever Rivian holds now, then verifies it. An archived list from an earlier abandon is used only while Rivian holds a window the schedule control wrote, so it never replaces schedules the owner has set up since. Otherwise the call fails with `force_restore_archive_unsafe` and writes nothing. |
@@ -166,7 +170,7 @@ The planner ([PLANNER.md](PLANNER.md)) drives Rivian schedule control through Ho
 
 **What the planner provides**, mapped in the schedule control's options:
 
-- **A heartbeat** (`controller_liveness_entity`): the planner's `sensor.solar_ev_planner_heartbeat`. Any domain works. Its state must be known (not `unknown` or `unavailable`) while the planner runs, and unavailable or unknown while it does not. Use a dedicated entity: one that is unknown in normal use, such as "next change" with nothing planned, would read as the planner being down. The schedule control does not check how recent the value is, so a planner that runs but has stopped deciding should make its heartbeat unavailable itself. Never map one of the schedule control's own entities: they stay available.
+- **A heartbeat** (`controller_liveness_entity`): the planner's `sensor.solarsage_heartbeat`. Any domain works. Its state must be known (not `unknown` or `unavailable`) while the planner runs, and unavailable or unknown while it does not. Use a dedicated entity: one that is unknown in normal use, such as "next change" with nothing planned, would read as the planner being down. The schedule control does not check how recent the value is, so a planner that runs but has stopped deciding should make its heartbeat unavailable itself. Never map one of the schedule control's own entities: they stay available.
 - **Wants charging** (`controller_charging_entity`): the planner's `binary_sensor.r1s_planner_charging_wanted`. It must be a binary sensor, on while the planner wants this car charging, off while it wants it paused, unknown while it has no decision. It is not a command. The schedule control reads it only to settle a request from before a Home Assistant restart or a planner outage; the planner still commands the switch. While the planner sends nothing (shadow mode), keep it unknown, so it neither confirms nor drops requests the planner did not make.
 - **Charging until** (`controller_until_entity`): the planner's `sensor.r1s_planner_charging_until`. A timestamp sensor: the end of the free hours the car's standing request belongs to. The planner sets it before it sends the command it belongs to, so that command is written as one fixed window to that time, and it keeps the time, even once past, until a daytime command has replaced the request, so an ended window is not started again on the night's request. It is unknown before the first free-hours charge of a plug-in, after unplug, and while Planning is off. A live fixed window keeps its end whatever the entity shows later. Unknown, or a time already past, gives the usual leases.
 

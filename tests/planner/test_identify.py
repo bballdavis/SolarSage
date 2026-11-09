@@ -66,19 +66,19 @@ async def test_override_select_and_commands(
     hass = site
     set_tesla(hass, plugged="on", charging=False)  # both cars say plugged in at home
     coordinator = await setup_entry(hass, make_entry(RIVIAN, TESLA), fake_cars)
-    await turn(hass, "switch.solar_ev_planner_shadow_mode", False)
-    sensor = hass.states.get("sensor.solar_ev_planner_car_on_charger")
+    await turn(hass, "switch.solarsage_shadow_mode", False)
+    sensor = hass.states.get("sensor.solarsage_car_on_charger")
     assert sensor.state == "none" and "More than one car" in sensor.attributes["why"]
     assert coordinator.data.mode == "empty"
     assert fake_cars.calls == []
 
-    select = "select.solar_ev_planner_charger_car_override"
+    select = "select.solarsage_charger_car_override"
     assert hass.states.get(select).attributes["options"] == ["auto", "rivian", "tesla"]
     await hass.services.async_call(
         "select", "select_option", {"entity_id": select, "option": "tesla"}, blocking=True
     )
     await cycle(hass, coordinator, freezer)
-    assert hass.states.get("sensor.solar_ev_planner_car_on_charger").state == "tesla"
+    assert hass.states.get("sensor.solarsage_car_on_charger").state == "tesla"
     tesla_calls = [c for c in fake_cars.calls if c[2] not in (RIV["switch"],)]
     assert tesla_calls and all(c[2] in (TES["switch"],) or c[1] == "set_value" for c in tesla_calls)
     assert hass.states.get(TES["switch"]).state == "on"
@@ -103,7 +103,7 @@ async def test_unknown_readings_keep_the_session(
     """A car integration that is still starting does not end the plug-in session."""
     hass = site
     coordinator = await setup_entry(hass, make_entry(RIVIAN), fake_cars)
-    await turn(hass, "switch.solar_ev_planner_shadow_mode", False)
+    await turn(hass, "switch.solarsage_shadow_mode", False)
     since = coordinator.runtime["rivian"].plugged_since
     assert hass.states.get("binary_sensor.r1s_planner_charging_wanted").state == "on"
     hass.states.async_set(RIV["plugged"], "unavailable")

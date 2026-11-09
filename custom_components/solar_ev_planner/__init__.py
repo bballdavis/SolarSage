@@ -1,4 +1,4 @@
-"""Solar EV planner.
+"""SolarSage.
 
 Plans each car's charging current on the Wall Connector from the Solcast forecast, recent
 house use (recorder statistics) and the home battery's predicted level, and commands the car
@@ -11,11 +11,13 @@ configuring it is in docs/PLANNER.md.
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.setup import async_setup_component
 
-from . import websocket_api
+from . import rivian, websocket_api
 from .const import DOMAIN, PLATFORMS, STORAGE_VERSION
 from .coordinator import PlannerConfigEntry, PlannerCoordinator
 from .frontend import async_register_card
@@ -26,6 +28,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the dashboard card and its websocket commands (docs/PLANNER.md, "The
     dashboard card")."""
+    await rivian.async_setup(hass, config)
     websocket_api.async_register(hass)
     await async_register_card(hass)
     return True
@@ -33,6 +36,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: PlannerConfigEntry) -> bool:
     """Start the planner: restore its memory, read the history, run the first cycle."""
+    if "vehicle_id" in entry.data:
+        return await rivian.async_setup_entry(hass, entry)
+    if "recorder" not in hass.data and not await async_setup_component(hass, "recorder", {}):
+        raise ConfigEntryNotReady("SolarSage site planning requires recorder")
     coordinator = PlannerCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
@@ -48,9 +55,14 @@ async def _async_reload(hass: HomeAssistant, entry: PlannerConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: PlannerConfigEntry) -> bool:
     """Stop the planner; the coordinator saves its memory as it shuts down."""
+    if "vehicle_id" in entry.data:
+        return await rivian.async_unload_entry(hass, entry)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: PlannerConfigEntry) -> None:
     """Forget the planner's memory and settings."""
+    if "vehicle_id" in entry.data:
+        await rivian.async_remove_entry(hass, entry)
+        return
     await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()

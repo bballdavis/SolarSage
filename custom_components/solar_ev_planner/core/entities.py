@@ -1,4 +1,4 @@
-"""The owner's Home Assistant entities, as config-flow suggestions (every one stays
+"""Example Home Assistant entities, as config-flow suggestions (every one stays
 configurable). Strings only: this package never imports Home Assistant.
 
 How each input of a ``Snapshot`` is read:
@@ -46,7 +46,7 @@ SITE_ENTITIES: dict[str, str] = {
     "forecast_tomorrow": "sensor.solcast_pv_forecast_forecast_tomorrow",
     "forecast_remaining_today": "sensor.solcast_pv_forecast_forecast_remaining_today",
     "forecast_last_polled": "sensor.solcast_pv_forecast_api_last_polled",
-    "free_hours": "schedule.free_hours",  # the owner's Schedule helper (name it as you like)
+    "free_hours": "schedule.free_hours",  # example Schedule helper (name it as you like)
 }
 
 CAR_ENTITIES: dict[str, dict[str, str]] = {
@@ -59,15 +59,15 @@ CAR_ENTITIES: dict[str, dict[str, str]] = {
         "current": "number.r1s_schedule_control_solar_current",
         "control_state": "sensor.r1s_schedule_control_control_state",
     },
-    "tesla": {  # HA core Tesla Fleet names for the car "Roxxo"
-        "soc": "sensor.roxxo_battery_level",
-        "limit": "number.roxxo_charge_limit",
-        "plugged": "binary_sensor.roxxo_charge_cable",
-        "location": "device_tracker.roxxo_location",
-        "switch": "switch.roxxo_charge",
-        "current": "number.roxxo_charge_current",
-        "charging_state": "sensor.roxxo_charging",  # enum: charging, complete, disconnected, ...
-        "status": "binary_sensor.roxxo_status",  # on while the car is online (awake)
+    "tesla": {  # HA core Tesla Fleet names for the car "Tesla"
+        "soc": "sensor.tesla_battery_level",
+        "limit": "number.tesla_charge_limit",
+        "plugged": "binary_sensor.tesla_charge_cable",
+        "location": "device_tracker.tesla_location",
+        "switch": "switch.tesla_charge",
+        "current": "number.tesla_charge_current",
+        "charging_state": "sensor.tesla_charging",  # enum: charging, complete, disconnected, ...
+        "status": "binary_sensor.tesla_status",  # on while the car is online (awake)
     },
 }
 
@@ -83,12 +83,12 @@ CAR_ENTITY_ALTERNATIVES: dict[str, dict[str, tuple[str, ...]]] = {
 # can stay off; the commands still go through Tesla Fleet.
 CAR_ENTITY_PREFERRED: dict[str, dict[str, str]] = {
     "tesla": {
-        "soc": "sensor.teslamate_roxxo_battery_level",
-        "limit": "sensor.teslamate_roxxo_charge_limit",
-        "plugged": "binary_sensor.teslamate_roxxo_plugged_in",
-        "location": "device_tracker.teslamate_roxxo_location",
-        "charging_state": "sensor.teslamate_roxxo_charging",  # Tesla Fleet's states, lowercased
-        "status": "binary_sensor.teslamate_roxxo_status",  # on while online, charging, driving
+        "soc": "sensor.teslamate_tesla_battery_level",
+        "limit": "sensor.teslamate_tesla_charge_limit",
+        "plugged": "binary_sensor.teslamate_tesla_plugged_in",
+        "location": "device_tracker.teslamate_tesla_location",
+        "charging_state": "sensor.teslamate_tesla_charging",  # Tesla Fleet's states, lowercased
+        "status": "binary_sensor.teslamate_tesla_status",  # on while online, charging, driving
     },
 }
 
@@ -96,7 +96,7 @@ CAR_ENTITY_PREFERRED: dict[str, dict[str, str]] = {
 # command without its proxy add-on, and it takes Tesla Fleet's IDs (the limit is the same), so
 # Tesla Fleet's own entities would get a _2 suffix. tools/check.py names leftovers to remove.
 TESLA_CUSTOM_ENTITIES: dict[str, str] = {
-    "switch": "switch.roxxo_charger",
-    "current": "number.roxxo_charging_amps",
-    "limit": "number.roxxo_charge_limit",
+    "switch": "switch.tesla_charger",
+    "current": "number.tesla_charging_amps",
+    "limit": "number.tesla_charge_limit",
 }

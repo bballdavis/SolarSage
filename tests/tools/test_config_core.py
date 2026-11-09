@@ -21,7 +21,7 @@ def test_example_is_the_default() -> None:
     assert cfg.source is None
     assert cfg.site["grid_power"] == "sensor.sol_ark_inverter_grid_power"
     assert cfg.car_entity("rivian", "switch") == "switch.r1s_schedule_control_solar_charging"
-    assert cfg.car_entity("tesla", "switch") == "switch.roxxo_charge"
+    assert cfg.car_entity("tesla", "switch") == "switch.tesla_charge"
     assert cfg.kw_scale("pv_power") == 0.001 and cfg.kw_scale("wall_power") == 1.0
     assert ("rivian.location", "device_tracker.r1s_location") in list(cfg.entities())
     assert "sensor.r1s_schedule_control_control_state" in cfg.entity_ids()

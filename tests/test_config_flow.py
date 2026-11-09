@@ -38,7 +38,7 @@ from rivian.exceptions import (
     RivianUnauthenticated,
 )
 
-from custom_components.rivian_schedule_control.const import (
+from custom_components.solar_ev_planner.rivian.const import (
     CONF_CEILING_HOLD,
     CONF_CHARGER_STATE_ENTITY,
     CONF_CHARGING_ENTITY,
@@ -63,7 +63,7 @@ from custom_components.rivian_schedule_control.const import (
     ENTRY_VERSION,
 )
 
-INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "rivian_schedule_control"
+INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "solar_ev_planner"
 
 SECOND_VEHICLE = {
     "id": "test-vehicle-0002",
@@ -82,9 +82,9 @@ async def mock_setup_entry(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
     """Do not set up the entry a flow creates or reloads."""
     with (
         patch(
-            "custom_components.rivian_schedule_control.async_setup_entry", return_value=True
+            "custom_components.solar_ev_planner.rivian.async_setup_entry", return_value=True
         ) as mock,
-        patch("custom_components.rivian_schedule_control.async_unload_entry", return_value=True),
+        patch("custom_components.solar_ev_planner.rivian.async_unload_entry", return_value=True),
     ):
         yield mock
         # Unload while the patches still apply: the entries have no runtime.
@@ -95,8 +95,11 @@ async def mock_setup_entry(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
 
 async def _sign_in(hass: HomeAssistant) -> dict:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "rivian"}
+    )
+    assert result["step_id"] == "rivian"
     return await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_EMAIL: EMAIL, CONF_PASSWORD: PASSWORD}
     )
@@ -198,7 +201,7 @@ async def test_user_flow_login_errors(
     mock_rivian.login_error = error
     result = await _sign_in(hass)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "rivian"
     assert result["errors"] == {"base": reason}
 
     mock_rivian.login_error = None
@@ -310,7 +313,7 @@ async def test_options_flow(
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert result["step_id"] == "rivian_options"
 
     base = {
         CONF_PLUGGED_ENTITY: PLUGGED_ENTITY,
@@ -428,7 +431,7 @@ def test_translations_match_strings() -> None:
     assert english == strings
     for key in ("already_configured", "already_in_progress", "no_vehicles", "wrong_account"):
         assert key in strings["config"]["abort"]
-    options = strings["options"]["step"]["init"]
+    options = strings["options"]["step"]["rivian_options"]
     for key in (CONF_LIVENESS_ENTITY, CONF_CHARGING_ENTITY, CONF_OVERRIDE_ENTITY):
         assert key in options["data"]
         assert key in options["data_description"]

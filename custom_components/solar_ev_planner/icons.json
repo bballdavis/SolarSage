@@ -50,6 +50,9 @@
       },
       "tesla_refresh_interval": {
         "default": "mdi:refresh-auto"
+      },
+      "solar_current": {
+        "default": "mdi:current-ac"
       }
     },
     "select": {
@@ -120,6 +123,22 @@
       },
       "tesla_api_spend": {
         "default": "mdi:cash-check"
+      },
+      "control_state": {
+        "default": "mdi:state-machine",
+        "state": {
+          "fault": "mdi:alert-circle-outline",
+          "lease_active": "mdi:ev-station",
+          "paused": "mdi:pause-circle-outline",
+          "handed_back": "mdi:account-arrow-left-outline"
+        }
+      },
+      "charger_status": {
+        "default": "mdi:ev-plug-type1",
+        "state": {
+          "a": "mdi:power-plug-off-outline",
+          "c": "mdi:battery-charging"
+        }
       }
     },
     "switch": {
@@ -140,12 +159,49 @@
         "state": {
           "off": "mdi:solar-power-variant-outline"
         }
+      },
+      "solar_charging": {
+        "default": "mdi:solar-power-variant",
+        "state": {
+          "off": "mdi:solar-power-variant-outline"
+        }
+      },
+      "lease_renewal": {
+        "default": "mdi:timer-refresh-outline"
       }
     },
     "time": {
       "plan_time": {
         "default": "mdi:clock-check-outline"
       }
+    },
+    "button": {
+      "release": {
+        "default": "mdi:restore"
+      },
+      "clear_fault": {
+        "default": "mdi:alert-remove-outline"
+      },
+      "read_schedules": {
+        "default": "mdi:calendar-search"
+      }
+    }
+  },
+  "services": {
+    "release": {
+      "service": "mdi:restore"
+    },
+    "clear_fault": {
+      "service": "mdi:alert-remove-outline"
+    },
+    "abandon_ownership": {
+      "service": "mdi:link-variant-off"
+    },
+    "force_restore": {
+      "service": "mdi:backup-restore"
+    },
+    "read_schedules": {
+      "service": "mdi:calendar-search"
     }
   }
 }

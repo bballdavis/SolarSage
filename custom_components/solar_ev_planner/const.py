@@ -1,4 +1,4 @@
-"""Constants for the Solar EV planner integration."""
+"""Constants for the SolarSage integration."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ PV_DAYS_KEPT: Final = 21
 STORAGE_VERSION: Final = 1
 STORE_SAVE_DELAY: Final = 30
 
-ENTRY_TITLE: Final = "Solar EV planner"
+ENTRY_TITLE: Final = "SolarSage"
 
 # Config entry options: the site ----------------------------------------------------------
 CONF_PV_POWER: Final = "pv_power"
@@ -174,7 +174,7 @@ CAR_DEFAULTS: Final[dict[str, dict[str, Any]]] = {
         CONF_CAPACITY_KWH: RIVIAN_R1S.capacity_kwh,
     },
     KIND_TESLA: {
-        CONF_NAME: "Roxxo",
+        CONF_NAME: "Tesla",
         CONF_MIN_A: TESLA.min_a,
         CONF_MAX_A: TESLA.max_a,
         CONF_STEP_A: TESLA.step_a,
@@ -292,8 +292,8 @@ TESLA_ALREADY_DONE: Final[dict[str, frozenset[str]]] = {
     "off": frozenset({"not_charging"}),
 }
 
-DEVICE_MANUFACTURER: Final = "HASS-Solar-Rivian"
-DEVICE_MODEL: Final = "Solar EV planner"
+DEVICE_MANUFACTURER: Final = "SolarSage"
+DEVICE_MODEL: Final = "SolarSage"
 DEVICE_MODEL_CAR: Final = "Car charging plan"
 DEVICE_MODEL_WINDOW: Final = "Price window"
 

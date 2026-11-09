@@ -1,0 +1,52 @@
+:root {
+  --ifm-color-primary: #006f61;
+  --ifm-color-primary-dark: #006457;
+  --ifm-color-primary-darker: #005e52;
+  --ifm-color-primary-darkest: #004e44;
+  --ifm-color-primary-light: #007a6b;
+  --ifm-color-primary-lighter: #008070;
+  --ifm-color-primary-lightest: #00907e;
+  --ifm-background-color: #fcfbf5;
+  --ifm-background-surface-color: #f3f3e9;
+  --ifm-font-color-base: #243f43;
+  --ifm-heading-color: #073545;
+  --ifm-font-family-base: 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  --ifm-line-height-base: 1.75;
+  --ifm-navbar-height: 5rem;
+  --ifm-navbar-background-color: #f7f6ed;
+  --ifm-navbar-shadow: none;
+  --ifm-code-font-size: 90%;
+  --ifm-menu-link-padding-vertical: .5rem;
+  --ifm-menu-color: #354e4e;
+  --ifm-menu-color-background-active: #dce8da;
+  --ifm-menu-color-background-hover: #e4ebe0;
+  --ifm-toc-border-color: #dbe1d5;
+  --ifm-hr-border-color: #dbe1d5;
+  --ifm-breadcrumb-color-active: #006f61;
+  --ifm-breadcrumb-item-background-active: #e4ebe0;
+  --ifm-code-background: #edf0e5;
+  --ifm-footer-background-color: #e9eee2;
+  --ifm-footer-color: #354e4e;
+  --ifm-footer-title-color: #073545;
+  --ifm-footer-link-color: #006f61;
+}
+html, body { background: #fcfbf5; }
+.navbar { border-bottom: 1px solid #dbe1d5; }
+.navbar__brand { height: 100%; margin-right: 2rem; }
+.navbar__logo { height: 72px; }
+.navbar__logo img { width: 216px; height: 72px; object-fit: contain; }
+aside.theme-doc-sidebar-container { background: #f0f2e8; }
+.markdown { max-width: 76ch; }
+.markdown h1 { font-size: clamp(2rem, 4vw, 2.8rem); line-height: 1.2; }
+.markdown h2 { margin-top: 2.5rem; }
+.markdown img { height: auto; border-radius: 8px; }
+.markdown a { text-decoration: underline; }
+a { text-underline-offset: .18em; }
+:focus-visible { outline: 3px solid #00776a; outline-offset: 3px; }
+::selection { background: #ffe09a; color: #073545; }
+@media (max-width: 600px) {
+  :root { --ifm-navbar-height: 4.5rem; }
+  .navbar__logo, .navbar__logo img { width: 180px; height: 60px; }
+  .navbar__brand { margin-right: .5rem; }
+  .markdown table { font-size: .875rem; }
+}

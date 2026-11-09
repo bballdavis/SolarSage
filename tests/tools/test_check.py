@@ -119,10 +119,10 @@ async def test_tesla_custom_only(client: HassClient, fake: FakeHass) -> None:
     build_site(fake, NOW)
     for key in ("t_switch", "t_current"):
         fake.remove(E[key])
-    fake.set_state("switch.roxxo_charger", "off", {})
+    fake.set_state("switch.tesla_charger", "off", {})
     by = await run(client)
     row = by["tesla on Tesla Fleet"]
-    assert row.status == check.FAIL and "switch.roxxo_charger" in row.detail
+    assert row.status == check.FAIL and "switch.tesla_charger" in row.detail
 
 
 @pytest.mark.parametrize(
@@ -151,7 +151,7 @@ async def test_tesla_platforms_and_their_billing(
 async def test_a_leftover_tesla_custom_limit_or_location_fails(
     client: HassClient, fake: FakeHass, key: str
 ) -> None:
-    """tesla_custom holds number.roxxo_charge_limit (and the tracker) under Fleet's IDs."""
+    """tesla_custom holds number.tesla_charge_limit (and the tracker) under Fleet's IDs."""
     build_site(fake, NOW)
     fake.register(E[key], "tesla_custom")
     by = await run(client)
@@ -174,11 +174,11 @@ async def test_tesla_custom_leftovers_beside_tesla_fleet_warn(
     client: HassClient, fake: FakeHass
 ) -> None:
     build_site(fake, NOW)
-    fake.set_state("number.roxxo_charging_amps", 32, {"unit_of_measurement": "A"})
+    fake.set_state("number.tesla_charging_amps", 32, {"unit_of_measurement": "A"})
     by = await run(client)
     assert by["tesla on Tesla Fleet"].status == check.OK
     row = by["tesla tesla_custom leftovers"]
-    assert row.status == check.WARN and row.entity == "number.roxxo_charging_amps"
+    assert row.status == check.WARN and row.entity == "number.tesla_charging_amps"
 
 
 async def test_the_rivian_tracker_under_its_newer_id(client: HassClient, fake: FakeHass) -> None:
@@ -266,20 +266,18 @@ async def test_which_car_the_wall_connector_sees(client: HassClient, fake: FakeH
     assert by["rivian charger status"].status == check.WARN
 
 
-HEARTBEAT = "sensor.solar_ev_planner_heartbeat"
+HEARTBEAT = "sensor.solarsage_heartbeat"
 R_WANTED = "binary_sensor.r1s_planner_charging_wanted"
 
 
 def add_planner(fake: FakeHass, heartbeat: str = "shadow", wanted: str = "unknown") -> None:
     """The planner integration's entities, as it shows them."""
     fake.set_state(HEARTBEAT, heartbeat, {})
-    fake.set_state("switch.solar_ev_planner_planning", "on", {})
-    fake.set_state("switch.solar_ev_planner_shadow_mode", "on" if heartbeat != "active" else "off")
-    fake.set_state("sensor.solar_ev_planner_mode", "day", {})
-    fake.set_state("sensor.solar_ev_planner_car_on_charger", "rivian", {})
-    fake.set_state(
-        "sensor.solar_ev_planner_reason", "Solar charging at 10 A.", {"full_reason": "Solar."}
-    )
+    fake.set_state("switch.solarsage_planning", "on", {})
+    fake.set_state("switch.solarsage_shadow_mode", "on" if heartbeat != "active" else "off")
+    fake.set_state("sensor.solarsage_mode", "day", {})
+    fake.set_state("sensor.solarsage_car_on_charger", "rivian", {})
+    fake.set_state("sensor.solarsage_reason", "Solar charging at 10 A.", {"full_reason": "Solar."})
     fake.set_state(R_WANTED, wanted, {})
 
 
