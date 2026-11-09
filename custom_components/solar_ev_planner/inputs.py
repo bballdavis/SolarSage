@@ -37,6 +37,13 @@ def available(state: State | None) -> bool:
     return state is not None and state.state not in UNAVAILABLE_STATES
 
 
+def commandable(state: State | None) -> bool:
+    """Whether a command entity can take a command: it exists and is not unavailable. An
+    unknown state is fine: Tesla Fleet with its polling off has not read the car since a
+    restart, but its switch and number still send (the planner refreshes it first)."""
+    return state is not None and state.state != STATE_UNAVAILABLE
+
+
 def state_float(state: State | None) -> float | None:
     """A state's numeric value, or None when unavailable or not a number."""
     if not available(state):

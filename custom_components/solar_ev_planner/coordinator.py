@@ -141,6 +141,7 @@ from .inputs import (
     WindowSpec,
     available,
     build_tariff,
+    commandable,
     identify_car,
     integration_quiet,
     last_report,
@@ -759,7 +760,9 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         current = self._state(car[CONF_CURRENT])
         switch = self._state(car[CONF_SWITCH])
         max_a = int(car[CONF_MAX_A])
-        top = current.attributes.get("max") if current is not None else None
+        # the car's own current number caps the maximum, once it has read the car: before
+        # that (Tesla Fleet with its polling off, the car asleep) its max is a placeholder
+        top = current.attributes.get("max") if available(current) else None
         if isinstance(top, (int, float)) and top >= int(car[CONF_MIN_A]):
             max_a = min(max_a, int(top))
         spec = CarSpec(
@@ -773,8 +776,8 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
         stale = (
             soc is None
             or limit is None
-            or not available(switch)
-            or not available(current)
+            or not commandable(switch)
+            or not commandable(current)
             or integration_quiet(self.hass, car[CONF_SOC])
             or integration_quiet(self.hass, car[CONF_SWITCH])
         )

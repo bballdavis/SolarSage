@@ -421,6 +421,25 @@ async def test_the_tesla_has_no_charging_until(
     assert charging_until(hass) is None
 
 
+async def test_a_tesla_not_yet_read_by_tesla_fleet_is_not_stale(
+    site: HomeAssistant, fake_cars: FakeCars, freezer: FrozenDateTimeFactory
+) -> None:
+    """With Tesla Fleet's polling off and the car asleep since a restart, its switch and
+    current read unknown (its current's max a placeholder). The readings come from elsewhere
+    (TeslaMate), so the car is planned with its limit and its own maximum; only unavailable
+    command entities make it stale."""
+    hass = site
+    set_tesla(hass, plugged="on", limit=85)
+    coordinator = await setup_entry(hass, make_entry(TESLA), fake_cars)
+    hass.states.async_set(TESLA["switch"], STATE_UNKNOWN)
+    hass.states.async_set(TESLA["current"], STATE_UNKNOWN, {"min": 0, "max": 32, "step": 1})
+    now = dt_util.utcnow()
+    state = coordinator._car_state("tesla", TESLA, True, now)
+    assert not state.stale and state.limit_pct == 85 and state.spec.max_a == 48
+    hass.states.async_set(TESLA["switch"], STATE_UNAVAILABLE)
+    assert coordinator._car_state("tesla", TESLA, True, now).stale
+
+
 async def test_charging_until_survives_a_restart(
     site: HomeAssistant,
     fake_cars: FakeCars,

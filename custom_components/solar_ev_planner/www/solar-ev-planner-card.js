@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.3';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -161,9 +161,17 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .pill.red { background: var(--red); } .pill.cyan { background: var(--cyan); } .pill.grey { background: rgba(255,255,255,0.78); }
 .grow { flex: 1 1 auto; }
 .toggles { display: flex; gap: 10px; flex-wrap: wrap; }
-.tog { --on: var(--green); display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; border-radius: 14px; border: 1.5px solid var(--hair); background: var(--surface); color: var(--ink-2); font-size: 15px; font-weight: 500; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+/* toggles: dark glass; the border is the indicator (the accent when on, grey when off) */
+.tog { --on: var(--green); display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; border-radius: 14px;
+  border: 1.5px solid rgba(255,255,255,0.22);
+  background: linear-gradient(180deg, rgba(20,30,44,0.46) 0%, rgba(8,14,24,0.62) 100%);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 10px rgba(0,0,0,0.18);
+  color: var(--ink-3); font-size: 15px; font-weight: 500; transition: border-color 0.2s, box-shadow 0.2s, color 0.2s, background 0.2s; }
 .tog.shadow { --on: var(--amber); }
-.tog[aria-pressed="true"] { background: var(--on); border-color: var(--on); color: var(--chip-ink); font-weight: 600; }
+.tog[aria-pressed="true"] { border-color: var(--on); color: var(--ink); font-weight: 600;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--on) 16%, rgba(14,30,34,0.52)) 0%, color-mix(in srgb, var(--on) 6%, rgba(6,16,20,0.68)) 100%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--on) 30%, transparent), 0 0 12px color-mix(in srgb, var(--on) 22%, transparent); }
 
 .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; container: cockpit / inline-size; }
 @media (max-width: 1100px) {
