@@ -5,7 +5,7 @@
 <p align="center">Forecast-aware solar EV charging for Home Assistant.</p>
 <p align="center">
   <a href="https://bballdavis.github.io/SolarSage/">Documentation</a> ·
-  <a href="docs/installation.md">Installation</a> ·
+  <a href="https://bballdavis.github.io/SolarSage/installation/">Installation</a> ·
   <a href="https://github.com/bballdavis/SolarSage/issues">Issues</a>
 </p>
 
@@ -32,14 +32,14 @@ The planner runs in Home Assistant. It reads your configured sensors and Solcast
 
 ## Get started
 
-You need Home Assistant 2026.10+, recorder history, solar/grid/battery sensors, charger power measurement, Solcast, and vehicle telemetry. The reference setup uses a Sol-Ark inverter, a Tesla Wall Connector and one shared charger. Review the [requirements](docs/installation.md#requirements) for your setup.
+You need Home Assistant 2026.10+, recorder history, solar/grid/battery sensors, charger power measurement, Solcast, and vehicle telemetry. The reference setup uses a Sol-Ark inverter, a Tesla Wall Connector and one shared charger. Review the [requirements](https://bballdavis.github.io/SolarSage/installation/#requirements) for your setup.
 
-Install **SolarSage** as a HACS custom integration, then add the site planner and, for a Rivian, its bundled schedule controller. [Installation and upgrades →](docs/installation.md)
+Install **SolarSage** as a HACS custom integration, then add the site planner and, for a Rivian, its bundled schedule controller. [Installation and upgrades →](https://bballdavis.github.io/SolarSage/installation/)
 
-**Experimental:** automated tests use simulated systems. Real-system commissioning is still required. Follow the [staged testing guide](docs/TESTING.md) before turning off shadow mode or dry run. SolarSage is not yet listed in the HACS default catalog.
+**Experimental:** automated tests use simulated systems. Real-system commissioning is still required. Follow the [staged testing guide](https://bballdavis.github.io/SolarSage/TESTING/) before turning off shadow mode or dry run. SolarSage is not yet listed in the HACS default catalog.
 
 ## Read more
 
-[Full documentation](https://bballdavis.github.io/SolarSage/) · [Configuration](docs/PLANNER.md) · [How it works](docs/PLAN.md) · [Rivian control](docs/RIVIAN_SCHEDULE_CONTROL.md) · [Contributing](CONTRIBUTING.md)
+[Full documentation](https://bballdavis.github.io/SolarSage/) · [Configuration](https://bballdavis.github.io/SolarSage/PLANNER/) · [How it works](https://bballdavis.github.io/SolarSage/PLAN/) · [Rivian control](https://bballdavis.github.io/SolarSage/RIVIAN_SCHEDULE_CONTROL/) · [Contributing](https://bballdavis.github.io/SolarSage/development/)
 
 Documentation is built directly from `docs/` with Docusaurus and deployed to GitHub Pages on `main`. The internal integration ID remains `solar_ev_planner` for compatibility. Licensed under [MIT](LICENSE).

@@ -2,9 +2,9 @@ name: Documentation
 on:
   push:
     branches: [main]
-    paths: ['docs/**', 'website/**', '.github/workflows/docs.yml']
+    paths: ['docs/**', 'website/**', 'README.md', '.github/workflows/docs.yml']
   pull_request:
-    paths: ['docs/**', 'website/**', '.github/workflows/docs.yml']
+    paths: ['docs/**', 'website/**', 'README.md', '.github/workflows/docs.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,8 +14,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v4
+      - name: Verify GitHub Pages configuration
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

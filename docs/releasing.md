@@ -8,7 +8,7 @@ A version tag triggers a release archive containing only the installable `solar_
 
 ## GitHub Pages setup
 
-In repository **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The workflow builds `website/` from `docs/` and deploys only successful `main` builds using the `github-pages` environment. It uses `GITHUB_TOKEN`, with no personal token or deployment key.
+In repository **Settings → Pages → Build and deployment**, choose **GitHub Actions**. Do not select **Deploy from a branch**: neither the repository root nor the Markdown source in `docs/` is the generated Docusaurus site. The workflow builds `website/` from `docs/` and deploys only successful `main` builds using the `github-pages` environment. It uses `GITHUB_TOKEN`, with no personal token or deployment key.
 
 The configured URL is `https://bballdavis.github.io/SolarSage/`. If the repository is renamed, update `organizationName`, `projectName`, `url` and `baseUrl` in `website/docusaurus.config.js`, and update README and manifest links. The SolarSage product name does not require renaming the GitHub repository.
 
