@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.2.6';
+  const VERSION = '0.3.0';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -108,6 +108,9 @@
   const key = (color, kind, text, opacity) => `<span>${swatch(color, kind, opacity)}${text}</span>`;
   const title = (ic, text) => `<h2>${icon(ic, 22)}<span>${text}</span></h2>`;
 
+  /** The spacing of the moving dots on a Home Now spoke, in pixels. */
+  const FLOW_GAP = 14;
+
   const FONT_CSS = '@font-face { font-family: "Jost"; font-style: normal; font-weight: 100 900; font-display: swap; src: url(https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2) format("woff2"); }';
 
   const CSS = `:host {
@@ -118,7 +121,7 @@
   --tesla: #E8384F; --rivian: #F7CF4A;
   --c-solar: #FFB347; --c-house: #6FD3FF; --c-grid: #B39DFF; --c-battery: #5DE0A0; --c-charger: #FF8FB1;
   --band: rgba(255,179,71,0.30); --free-band: rgba(155,177,255,0.16);
-  --chip-ink: #0B1E36;
+  --chip-ink: #0B1E36; --hub: #0A1D36;
   --font: "Jost", "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
   display: block; color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.35; -webkit-font-smoothing: antialiased; color-scheme: dark; }
 :host([data-theme="light"]) {
@@ -127,7 +130,7 @@
   --surface: rgba(6,30,72,0.30); --surface-2: rgba(6,30,72,0.46); --sheet: rgba(14,52,104,0.98);
   --amber: #FFB357; --green: #8BEFC0; --red: #FF9A8C; --indigo: #D3DBFF; --cyan: #BFEAFF;
   --tesla: #FF4D63; --rivian: #FFD95C;
-  --band: rgba(255,179,71,0.38); --free-band: rgba(211,219,255,0.18); }
+  --band: rgba(255,179,71,0.38); --free-band: rgba(211,219,255,0.18); --hub: #174E8C; }
 *, *::before, *::after { box-sizing: border-box; }
 button, select, input { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: inherit; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -248,14 +251,11 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .stats { display: flex; gap: 6px 20px; font-size: 14px; color: var(--ink-2); flex-wrap: wrap; margin-top: auto; }
 .stats b { font-weight: 600; color: var(--ink); }
 
-.rows { display: flex; flex-direction: column; }
-.srow { display: grid; grid-template-columns: 34px minmax(0, 1fr) 20px auto 34px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--hair-2); }
-.srow:last-child { border-bottom: 0; }
+.hub { flex: 1; display: flex; align-items: center; }
+.hub svg { margin: 0 auto; }
+.hub .flow { animation: flow 1s linear infinite; }
+@keyframes flow { from { stroke-dashoffset: ${FLOW_GAP}; } to { stroke-dashoffset: 0; } }
 .chip { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--cc); color: var(--chip-ink); }
-.srow .name { font-size: 16px; font-weight: 500; }
-.srow .dir { color: var(--dirc, var(--ink-2)); display: grid; place-items: center; }
-.srow .v { font-size: 24px; font-weight: 500; text-align: right; }
-.srow .u { font-size: 14px; color: var(--ink-2); }
 .foot { font-size: 14px; line-height: 1.4; color: var(--ink-2); margin-top: auto; }
 
 .seg { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface); }
@@ -301,7 +301,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .dialog .btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .dialog .btns button { height: 44px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--hair); }
 .dialog .btns button.go { background: var(--amber); color: #1A0E02; border-color: var(--amber); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) { .tog { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tog { transition: none; } .hub .flow { animation: none; } }
 `;
 
   // ---------------------------------------------------------------- series helpers
@@ -331,6 +331,30 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 
   /** kWh from a held power series between t0 and t1. */
   const energy = (pts, t0, t1) => { let e = 0; for (let i = 0; i < pts.length; i++) { const a = Math.max(pts[i].t, t0); const b = Math.min(i + 1 < pts.length ? pts[i + 1].t : t1, t1); if (b > a) e += Math.max(0, pts[i].v) * (b - a) / HOUR; } return e; };
+
+  /** The house load per bucket, as the planner reads it: solar + grid − battery − car. */
+  const houseBuckets = (h, t0, t1) => {
+    const by = pts => new Map(bucketMeans(pts || [], t0, t1).map(p => [p.t, p.v]));
+    const pv = by(h.pv); const grid = by(h.grid); const bat = by(h.battery); const wall = by(h.wall);
+    const out = [];
+    for (const [t, g] of grid) {
+      const b = bat.get(t); if (b === undefined) continue;
+      out.push({ t, v: Math.max(0, (pv.get(t) || 0) + g - b - (wall.get(t) || 0)) });
+    }
+    return out.sort((a, b) => a.t - b.t);
+  };
+
+  /** kWh in bucket means (each a BUCKET long). */
+  const bucketKwh = pts => pts.reduce((a, p) => a + Math.max(0, p.v) * BUCKET / HOUR, 0);
+
+  /** kWh of a forecast quantile between t0 and t1 (half-hour slots, the part inside). */
+  const fcKwh = (fc, t0, t1, k = 'p50') => fc.reduce((a, f) => { const o = Math.min(f.t + SLOT, t1) - Math.max(f.t, t0); return o > 0 ? a + (f[k] || 0) * o / HOUR : a; }, 0);
+
+  /** The middle of today's daylight (from the forecast), else noon. */
+  const solarNoon = (fc, day0) => {
+    const lit = fc.filter(f => f.t >= day0 && f.t < day0 + 24 * HOUR && f.p90 > 0.05);
+    return lit.length ? (lit[0].t + lit[lit.length - 1].t + SLOT) / 2 : day0 + 12 * HOUR;
+  };
 
   const niceMax = v => { const steps = [2, 4, 6, 8, 10, 12, 16, 20, 24, 30, 40]; return steps.find(s => s >= v) || Math.ceil(v / 10) * 10; };
 
@@ -441,7 +465,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const src = s.sources || {};
       const planned = {};
       for (const [carId, ents] of Object.entries(s.entities?.cars || {})) if (ents.planned_current) planned[carId] = ents.planned_current;
-      const ids = [src.pv?.entity_id, src.wall?.entity_id, ...Object.values(planned)].filter(Boolean);
+      const ids = [src.pv?.entity_id, src.wall?.entity_id, src.grid?.entity_id, src.battery?.entity_id, src.soc?.entity_id, ...Object.values(planned)].filter(Boolean);
       if (!ids.length) return;
       this._histBusy = true;
       try {
@@ -456,6 +480,9 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
         this._hist = {
           pv: src.pv ? toPoints(res[src.pv.entity_id], src.pv.scale) : [],
           wall: src.wall ? toPoints(res[src.wall.entity_id], src.wall.scale) : [],
+          grid: src.grid ? toPoints(res[src.grid.entity_id], src.grid.scale) : [],
+          battery: src.battery ? toPoints(res[src.battery.entity_id], src.battery.scale) : [],
+          soc: src.soc ? toPoints(res[src.soc.entity_id], src.soc.scale) : [],
           planned: plannedPts,
         };
         this._histAt = Date.now();
@@ -650,7 +677,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       let body;
       if (!s) {
         body = this._error === 'not_loaded'
-          ? '<div class="empty"><b>The SolarSage is not running</b>Add or enable it under Settings → Devices &amp; services, then this page fills in.</div>'
+          ? '<div class="empty"><b>SolarSage is not running</b>Add or enable it under Settings → Devices &amp; services, then this page fills in.</div>'
           : this._error ? `<div class="empty"><b>Cannot reach the planner</b>${esc(this._error)}. Trying again every 30 seconds.</div>`
             : '<div class="empty"><b>Connecting to the planner…</b></div>';
       } else {
@@ -713,13 +740,13 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
     _carPanel(s) {
       const c = this._focusCar(s);
       if (!c) {
-        return `<section class="panel car"><div class="ptitle">${title('plug', 'On the charger')}</div>
+        return `<section class="panel car"><div class="ptitle">${title('plug', 'On the Charger')}</div>
           <p class="reason">No cars are set up yet.</p>
           <p class="cap">Add one under Settings → Devices &amp; services → SolarSage → <b>Add car</b>. The Rivian needs Rivian schedule control set up first; the Tesla needs Tesla Fleet.</p></section>`;
       }
       const color = this._carColor(c);
       const site = s.site || {};
-      const label = c.on_charger ? 'On the charger' : s.car_on_charger ? 'Plugged in elsewhere' : c.car_id === s.tonight_car ? 'Tonight\'s car' : 'Nobody on the charger';
+      const label = c.on_charger ? 'On the Charger' : s.car_on_charger ? 'Plugged In Elsewhere' : c.car_id === s.tonight_car ? 'Tonight\'s Car' : 'Nobody on the Charger';
       const soc = num(c.soc); const lim = num(c.limit);
       const kw = a => (num(a) === null ? '—' : f1(a * s.volts / 1000));
       const planned = c.on_charger ? c.planned_a : null;
@@ -804,74 +831,96 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       return view === 'night' ? this._nightPanel(s, seg, now) : this._sunPanel(s, seg, now);
     }
 
+    /**
+     * Today, actuals first: what the sun made, what the house used and what the car drew, with
+     * the forecast behind them for reference. After now the line is the planner's own expectation
+     * (Solcast corrected by today's production), which is what it plans on.
+     */
     _sunPanel(s, seg, now) {
       const fc = (s.forecast || []).map(f => ({ t: ts(f.t), p10: f.p10, p50: f.p50, p90: f.p90 }));
       const today0 = midnight(now);
-      const sunny = d0 => fc.filter(f => f.t >= d0 && f.t < d0 + 24 * HOUR && f.p90 > 0.05);
-      let day0 = today0; let lit = sunny(today0);
-      if (lit.length && now > lit[lit.length - 1].t + SLOT) { const tm = sunny(today0 + 24 * HOUR); if (tm.length) { day0 = today0 + 24 * HOUR; lit = tm; } }
-      const tomorrow = day0 !== today0;
-      let t0 = lit.length ? lit[0].t : day0 + 6 * HOUR; let t1 = lit.length ? lit[lit.length - 1].t + SLOT : day0 + 20 * HOUR;
+      const lit = fc.filter(f => f.t >= today0 && f.t < today0 + 24 * HOUR && f.p90 > 0.05);
+      let t0 = lit.length ? lit[0].t : today0 + 6 * HOUR; let t1 = lit.length ? lit[lit.length - 1].t + SLOT : today0 + 20 * HOUR;
       t0 = Math.floor(t0 / HOUR) * HOUR; t1 = Math.ceil(t1 / HOUR) * HOUR;
       const volts = s.volts || 240;
-      const h = this._hist || { pv: [], wall: [], planned: {} };
-      const pvB = tomorrow ? [] : bucketMeans(h.pv, t0, Math.min(now, t1));
-      const wallB = tomorrow ? [] : bucketMeans(h.wall, t0, Math.min(now, t1));
-      const plan = this._planSteps(s, t0, t1);
-      const yMax = niceMax(Math.max(2, ...fc.filter(f => f.t >= t0 && f.t < t1).map(f => f.p90), ...pvB.map(p => p.v), ...wallB.map(p => p.v), ...plan.map(p => p.v)) * 1.05);
-      const F = this._frame('today', 250);
+      const h = this._hist || { pv: [], wall: [], grid: [], battery: [], planned: {} };
+      const upto = Math.min(now, t1);
+      const pvB = bucketMeans(h.pv, t0, upto);
+      const wallB = bucketMeans(h.wall, t0, upto);
+      const houseB = houseBuckets(h, t0, upto);
+      // the planner's expected solar from now on (15-min steps, each ending at p.t)
+      const exp = (s.trajectory || []).map(p => ({ t: ts(p.t) - STEP / 2, v: num(p.pv_kw) })).filter(p => p.v !== null && p.t > now && p.t < t1);
+      const expLine = exp.length ? [{ t: now, v: pvB.length ? pvB[pvB.length - 1].v : exp[0].v }, ...exp] : [];
+      const plan = this._planSteps(s, Math.max(now, t0), t1);
+      const yMax = niceMax(Math.max(2, ...fc.filter(f => f.t >= t0 && f.t < t1).map(f => f.p90), ...pvB.map(p => p.v), ...houseB.map(p => p.v), ...wallB.map(p => p.v), ...exp.map(p => p.v), ...plan.map(p => p.v)) * 1.05);
+      const F = this._frame('today', 260);
       const x = t => F.L + (t - t0) / (t1 - t0) * F.pw; const y = v => F.T + F.ph - Math.max(0, Math.min(yMax, v)) / yMax * F.ph;
       const base = F.T + F.ph; const P = n => n.toFixed(1);
       const fcIn = fc.filter(f => f.t + SLOT > t0 && f.t < t1).map(f => ({ ...f, m: f.t + SLOT / 2 }));
       const band = fcIn.length ? `M${fcIn.map(f => `${P(x(f.m))},${P(y(f.p90))}`).join(' L')} L${[...fcIn].reverse().map(f => `${P(x(f.m))},${P(y(f.p10))}`).join(' L')} Z` : '';
       const p50 = fcIn.length ? `M${fcIn.map(f => `${P(x(f.m))},${P(y(f.p50))}`).join(' L')}` : '';
       const line = pts => (pts.length > 1 ? `M${pts.map(p => `${P(x(p.t))},${P(y(p.v))}`).join(' L')}` : '');
+      const area = pts => (pts.length > 1 ? `${line(pts)} L${P(x(pts[pts.length - 1].t))},${P(base)} L${P(x(pts[0].t))},${P(base)} Z` : '');
       const grid = [0.5, 1].map(f => `<line x1="${F.L}" y1="${P(base - f * F.ph)}" x2="${F.L + F.pw}" y2="${P(base - f * F.ph)}"/>`).join('');
       const yl = [1, 0.5].map(f => `<text x="${F.L - 8}" y="${P(base - f * F.ph + 4)}" text-anchor="end">${f === 1 ? `${yMax} kW` : yMax / 2}</text>`).join('');
-      const nowMark = !tomorrow && now > t0 && now < t1 ? `<line x1="${P(x(now))}" y1="${F.T - 6}" x2="${P(x(now))}" y2="${base}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="2 4"/><text x="${P(x(now) + 6)}" y="${F.T + 2}" fill="var(--ink)" font-size="12">now</text>` : '';
-      const carColor = this._carColor(this._focusCar(s));
+      const nowMark = now > t0 && now < t1 ? `<line x1="${P(x(now))}" y1="${F.T - 6}" x2="${P(x(now))}" y2="${base}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="2 4"/><text x="${P(x(now) + 6)}" y="${F.T + 2}" fill="var(--ink)" font-size="12">now</text>` : '';
+      // the charger's own colour here: the Rivian's yellow is too close to the sun's orange
+      const carColor = 'var(--c-charger)';
       this._charts.today = {
         x0: F.L, x1: F.L + F.pw, t0, t1,
         read: t => {
           const f = fcIn.find(r => t >= r.t && t < r.t + SLOT);
           const near = pts => pts.find(p => Math.abs(p.t - t) <= BUCKET / 2);
-          const pv = near(pvB); const wl = near(wallB); const pl = plan.find(p => t >= p.a && t < p.b);
+          const pv = near(pvB); const hs = near(houseB); const wl = near(wallB);
+          const ex = exp.find(p => Math.abs(p.t - t) <= STEP / 2); const pl = plan.find(p => t >= p.a && t < p.b);
           const rows = [`<b>${esc(clock(t))}</b>`];
-          if (f) rows.push(`<span class="row">${swatch('var(--c-solar)', 'dash', 0.75)}Forecast ${f1(f.p50)} kW <span class="muted">(${f1(f.p10)}–${f1(f.p90)})</span></span>`);
-          if (pv) rows.push(`<span class="row">${swatch('var(--c-solar)')}Solar ${f1(pv.v)} kW</span>`);
+          if (pv) rows.push(`<span class="row">${swatch('var(--c-solar)')}Solar produced ${f1(pv.v)} kW</span>`);
+          if (hs) rows.push(`<span class="row">${swatch('var(--c-house)')}House use ${f1(hs.v)} kW</span>`);
+          if (wl) rows.push(`<span class="row">${swatch(carColor)}Car charging ${f1(wl.v)} kW</span>`);
+          if (ex) rows.push(`<span class="row">${swatch('var(--c-solar)', 'dash')}Solar expected ${f1(ex.v)} kW</span>`);
           if (pl) rows.push(`<span class="row">${swatch(carColor, 'area')}Planned car ${f1(pl.v)} kW <span class="muted">${f0(pl.v * 1000 / volts)} A</span></span>`);
-          if (wl) rows.push(`<span class="row">${swatch('var(--c-house)')}Car drew ${f1(wl.v)} kW</span>`);
+          if (f) rows.push(`<span class="row">${swatch('var(--ink-3)', 'dot')}Solcast ${f1(f.p50)} kW <span class="muted">(${f1(f.p10)}–${f1(f.p90)})</span></span>`);
           return rows.length > 1 ? rows.join('') : '';
         },
       };
       const pv = s.pv || {};
-      const carToday = tomorrow || !this._hist ? null : energy(h.wall, today0, now);
-      let changes = 0;
-      for (const pts of Object.values(h.planned || {})) for (let i = 1; i < pts.length; i++) if (pts[i].t >= today0 && pts[i].v !== pts[i - 1].v) changes++;
-      const range = num(pv.remaining_p10_kwh) !== null ? ` <span class="muted">(${f0(pv.remaining_p10_kwh)}–${f0(pv.remaining_p90_kwh)})</span>` : '';
+      const have = !!this._hist;
+      const solarSoFar = num(pv.pv_today_kwh) ?? (have ? bucketKwh(pvB) : null);
+      const fcSoFar = fcKwh(fc, today0, now);
+      const houseSoFar = have && houseB.length ? bucketKwh(houseB) : null;
+      const carToday = have ? energy(h.wall, today0, now) : null;
+      const vs = solarSoFar !== null && fcSoFar > 0.5 ? solarSoFar / fcSoFar - 1 : null;
+      const vsTxt = vs === null ? '' : ` <span class="${vs < -0.1 ? 'amber-t' : vs > 0.1 ? 'green-t' : 'muted'}">${vs >= 0 ? '+' : '−'}${f0(Math.abs(vs) * 100)}% vs Solcast</span>`;
+      const ratio = num(pv.ratio);
+      let check = '';
+      if (vs !== null && Math.abs(vs) >= 0.1) {
+        check = `Solar is running ${f0(Math.abs(vs) * 100)}% ${vs < 0 ? 'under' : 'over'} the forecast. The planner plans the rest of today at ×${ratio !== null ? ratio.toFixed(2) : '—'} of Solcast and re-plans every 15 minutes from the live battery level${vs < 0 ? '; if the car starts pulling from the grid or the battery at its floor, it is cut back within minutes' : ''}.`;
+      } else if (vs !== null) check = 'Solar is tracking the forecast; the planner works from the live battery level and re-plans every 15 minutes.';
       return `<section class="panel today">
-        <div class="ptitle">${title('sun', `${tomorrow ? 'Tomorrow' : 'Today'}: sun and the car`)}${seg}</div>
-        <div class="legend">${key('var(--band)', 'band', 'Forecast range')}${key('var(--c-solar)', 'dash', 'Forecast', 0.75)}${key('var(--c-solar)', 'line', 'Solar')}${key(carColor, 'area', 'Planned car')}${key('var(--c-house)', 'line', 'Car drew')}</div>
+        <div class="ptitle">${title('sun', 'Today: Solar, House &amp; Car')}${seg}</div>
+        <div class="legend">${key('var(--c-solar)', 'area', 'Solar produced')}${key('var(--c-house)', 'line', 'House use')}${key(carColor, 'line', 'Car charging')}${key('var(--c-solar)', 'dash', 'Solar expected (adjusted)')}${key(carColor, 'area', 'Planned car')}${key('var(--ink-3)', 'dot', 'Solcast forecast')}</div>
         <div class="chart" data-chart="today">
-          <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Solar forecast range, solar so far, the car's planned charging power and what it drew, ${esc(hourLabel(t0))} to ${esc(hourLabel(t1))}">
+          <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Today's solar produced, house use and car charging, with the adjusted expectation for the rest of the day and the Solcast forecast, ${esc(hourLabel(t0))} to ${esc(hourLabel(t1))}">
             <g stroke="var(--hair-2)" stroke-width="1">${grid}<line x1="${F.L}" y1="${base}" x2="${F.L + F.pw}" y2="${base}" stroke="var(--hair)"/></g>
             <g fill="var(--ink-2)" font-size="12">${yl}${this._axisX(t0, t1, x, base)}</g>
-            ${band ? `<path d="${band}" fill="var(--band)"/>` : ''}
-            ${plan.length ? `<path d="${this._stepPath(plan, x, y, base)}" fill="color-mix(in srgb, ${carColor} 45%, transparent)" stroke="${carColor}" stroke-width="1.5" stroke-linejoin="round"/>` : ''}
-            ${p50 ? `<path d="${p50}" fill="none" stroke="var(--c-solar)" stroke-opacity="0.75" stroke-width="1.5" stroke-dasharray="4 4"/>` : ''}
-            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="var(--c-house)" stroke-width="2" stroke-linejoin="round"/>` : ''}
-            ${pvB.length > 1 ? `<path d="${line(pvB)}" fill="none" stroke="var(--c-solar)" stroke-width="2.6" stroke-linejoin="round"/>` : ''}
+            ${band ? `<path d="${band}" fill="var(--ink)" fill-opacity="0.06"/>` : ''}
+            ${p50 ? `<path d="${p50}" fill="none" stroke="var(--ink-3)" stroke-width="1.6" stroke-dasharray="0.1 4" stroke-linecap="round"/>` : ''}
+            ${pvB.length > 1 ? `<path d="${area(pvB)}" fill="var(--c-solar)" fill-opacity="0.28"/><path d="${line(pvB)}" fill="none" stroke="var(--c-solar)" stroke-width="2.6" stroke-linejoin="round"/>` : ''}
+            ${plan.length ? `<path d="${this._stepPath(plan, x, y, base)}" fill="color-mix(in srgb, ${carColor} 35%, transparent)" stroke="${carColor}" stroke-width="1.2" stroke-linejoin="round"/>` : ''}
+            ${expLine.length > 1 ? `<path d="${line(expLine)}" fill="none" stroke="var(--c-solar)" stroke-width="2.2" stroke-dasharray="6 4" stroke-linejoin="round"/>` : ''}
+            ${houseB.length > 1 ? `<path d="${line(houseB)}" fill="none" stroke="var(--c-house)" stroke-width="2.2" stroke-linejoin="round"/>` : ''}
+            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="${carColor}" stroke-width="2" stroke-linejoin="round"/>` : ''}
             ${nowMark}
-            ${!fcIn.length ? `<text x="${F.L + F.pw / 2}" y="${F.T + F.ph / 2}" text-anchor="middle" fill="var(--ink-2)" font-size="14">No Solcast forecast yet</text>` : ''}
+            ${!fcIn.length && !pvB.length ? `<text x="${F.L + F.pw / 2}" y="${F.T + F.ph / 2}" text-anchor="middle" fill="var(--ink-2)" font-size="14">No solar readings or forecast yet</text>` : ''}
           </svg>
         </div>
         <div class="stats num">
-          <span data-more="${esc(this._ent('forecast_correction') || '')}">Forecast correction <b>×${num(pv.ratio) !== null ? pv.ratio.toFixed(2) : '—'}</b></span>
-          ${tomorrow ? '' : `<span>Left today <b>${f0(pv.remaining_expected_kwh)} kWh</b>${range}</span>`}
-          ${tomorrow ? '' : `<span>Solar today <b>${f0(pv.pv_today_kwh)} kWh</b></span>`}
+          <span data-more="${esc(s.sources?.pv?.entity_id || '')}">Solar so far <b>${solarSoFar !== null ? `${f1(solarSoFar)} kWh` : '—'}</b>${vsTxt}</span>
+          ${houseSoFar !== null ? `<span>House so far <b>${f1(houseSoFar)} kWh</b></span>` : ''}
           ${carToday !== null ? `<span>Car today <b>${f1(carToday)} kWh</b></span>` : ''}
-          ${this._hist ? `<span>Plan changes <b>${changes}</b></span>` : ''}
+          <span data-more="${esc(this._ent('forecast_correction') || '')}">Rest of today <b>${f0(pv.remaining_expected_kwh)} kWh</b>${num(pv.remaining_p50_kwh) !== null ? ` <span class="muted">(Solcast ${f0(pv.remaining_p50_kwh)})</span>` : ''}</span>
         </div>
+        ${check ? `<p class="cap">${esc(check)}</p>` : ''}
       </section>`;
     }
 
@@ -929,7 +978,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
           const pl = plan.find(p => t >= p.a && t < p.b); const wl = wallB.find(p => Math.abs(p.t - t) <= BUCKET / 2);
           const rows = [`<b>${esc(clock(t))}</b> <span class="muted">${isFree(t) ? 'free hours' : 'paid'}</span>`];
           if (pl) rows.push(`<span class="row">${swatch(carColor, 'area')}Planned car ${f1(pl.v)} kW <span class="muted">${f0(pl.v * 1000 / volts)} A</span></span>`);
-          if (wl) rows.push(`<span class="row">${swatch('var(--c-house)')}Car drew ${f1(wl.v)} kW</span>`);
+          if (wl) rows.push(`<span class="row">${swatch(carColor)}Car charging ${f1(wl.v)} kW</span>`);
           return rows.join('');
         },
       };
@@ -941,20 +990,21 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       for (const p of plan) { if (p.b <= now) continue; const mid = (p.a + p.b) / 2; const e = p.v * (p.b - Math.max(p.a, now)) / HOUR; if (isFree(mid)) freeKwh += e; else if (dark(mid)) paidKwh += e; }
       const drewPaid = wallB.filter(p => !isFree(p.t) && dark(p.t) && p.v > 0.3).length * BUCKET / HOUR;
       return `<section class="panel today">
-        <div class="ptitle">${title('moon', 'Tonight: the free hours')}${seg}</div>
-        <div class="legend">${key('var(--indigo)', 'band', 'Free hours', 0.4)}${key(carColor, 'area', 'Planned car')}${key('var(--c-house)', 'line', 'Car drew')}${key(carColor, 'dash', 'Car starts')}</div>
+        <div class="ptitle">${title('moon', 'Tonight: Free Hours')}${seg}</div>
+        <div class="legend">${key('var(--indigo)', 'band', 'Free hours', 0.4)}${key(carColor, 'area', 'Planned car')}${key(carColor, 'line', 'Car charging')}${key(carColor, 'dash', 'Car starts')}</div>
         <div class="chart" data-chart="night">
           <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Tonight: the free hours, when the car starts and its planned charging power">
             ${freeRects}
             <g stroke="var(--hair-2)" stroke-width="1">${grid}<line x1="${F.L}" y1="${base}" x2="${F.L + F.pw}" y2="${base}" stroke="var(--hair)"/></g>
             <g fill="var(--ink-2)" font-size="12">${yl}${this._axisX(t0, t1, x, base)}</g>
             ${plan.length ? `<path d="${this._stepPath(plan, x, y, base)}" fill="color-mix(in srgb, ${carColor} 45%, transparent)" stroke="${carColor}" stroke-width="1.5" stroke-linejoin="round"/>` : ''}
-            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="var(--c-house)" stroke-width="2" stroke-linejoin="round"/>` : ''}
+            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="${carColor}" stroke-width="2" stroke-linejoin="round"/>` : ''}
             ${freeLabel}${startMark}${nowMark}
           </svg>
         </div>
         <div class="stats num">
           <span>Free hours <b>${fw ? `${esc(clock(fa))}–${esc(clock(fb))}` : 'none ahead'}</b></span>
+          ${!fw && s.free_hours_problem ? `<span class="amber-t">${esc(s.free_hours_problem)}</span>` : ''}
           <span>Car starts <b>${start ? esc(clock(start)) : '—'}</b></span>
           <span>Planned tonight <b>${f1(freeKwh)} kWh</b></span>
           <span>${paidKwh > 0.1 ? `<b class="amber-t">${f1(paidKwh)} kWh in paid hours</b>` : 'Paid hours: <b class="green-t">car paused</b>'}</span>
@@ -963,76 +1013,155 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       </section>`;
     }
 
+    /**
+     * Home Now as a flow hub: the house in the middle with a spoke each to the sun, the grid, the
+     * battery and the charger. Dots run along a spoke the way the power flows, faster with more of
+     * it. Drawn at its real pixel width, so the text never scales.
+     */
     _sitePanel(s) {
       const site = s.site || {};
       const c = this._focusCar(s);
-      const bat = num(site.battery_kw); const grid = num(site.grid_kw);
+      const now = Date.now();
       const src = s.sources || {};
-      const row = ({ name, ic, color, dir = '', dirColor = '', dirTitle = '', value, unit, more = '' }) => `<div class="srow" data-more="${esc(more)}">
-          <span class="chip" style="--cc:${color}">${icon(ic, 18)}</span>
-          <span class="name">${name}</span>
-          <span class="dir" style="--dirc:${dirColor}" title="${esc(dirTitle)}">${dir ? icon(dir, 18) : ''}</span>
-          <span class="v num">${value}</span><span class="u">${unit}</span></div>`;
-      const gridDir = grid === null || Math.abs(grid) < 0.05 ? '' : grid > 0 ? 'down' : 'up';
-      const batDir = bat === null || Math.abs(bat) < 0.05 ? '' : bat > 0 ? 'up' : 'down';
+      const pv = num(site.pv_kw); const grid = num(site.grid_kw); const bat = num(site.battery_kw);
+      const wall = num(site.wall_kw); const soc = num(site.soc);
+      const car = c?.on_charger ? c : null;
+      const carSoc = car ? num(car.soc) : null;
+      const freeNow = (s.free_windows || []).some(w => ts(w.start) <= now && now < ts(w.end));
+      const floor = num(s.settings?.floor_pct);
+      const live = v => v !== null && Math.abs(v) >= 0.05;
+      const W = Math.max(260, Math.min(460, this._cw.site || 380)); const H = 308;
+      const cx = W / 2; const cy = 156; const R = 26; const RH = 36; const side = 46;
+      const at = { pv: [cx, 42], grid: [side, cy], bat: [W - side, cy], car: [cx, H - 38], house: [cx, cy] };
+      const P = n => n.toFixed(1);
+      // a spoke runs centre to centre and the discs sit on top, so dots slide out from under one
+      // node and in under the next; `back` turns the flow round
+      const spoke = (a, b, kw, color, back = false) => {
+        const [p, q] = back ? [b, a] : [a, b];
+        const d = `M${P(p[0])},${P(p[1])} L${P(q[0])},${P(q[1])}`;
+        if (!live(kw)) return `<path d="${d}" stroke="var(--hair)" stroke-width="2"/>`;
+        const dur = FLOW_GAP / (14 + 40 * Math.min(1, Math.abs(kw) / 10));
+        return `<path d="${d}" stroke="${color}" stroke-opacity="0.32" stroke-width="2"/>
+          <path class="flow" d="${d}" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="0.1 ${FLOW_GAP - 0.1}" style="animation-duration:${dur.toFixed(2)}s;animation-delay:-${((now / 1000) % dur).toFixed(2)}s"/>`;
+      };
+      const ico = (name, [x, y], size, color) => `<svg class="ic" x="${P(x - size / 2)}" y="${P(y - size / 2)}" width="${size}" height="${size}" viewBox="0 0 24 24" style="color:${color}" aria-hidden="true">${ICON[name]}</svg>`;
+      // a lit node is a solid chip like the rest of the card; an idle one is a dim well
+      const chip = (xy, r, color, name, on, more = '') => `<g data-more="${esc(more || '')}"><circle cx="${P(xy[0])}" cy="${P(xy[1])}" r="${r}" fill="${on ? color : `color-mix(in srgb, ${color} 24%, var(--hub))`}"/>${ico(name, xy, 22, on ? 'var(--chip-ink)' : color)}</g>`;
+      // the two things that hold charge show their level as a ring with the percent inside
+      const gauge = ([x, y], color, pct, more = '') => {
+        const r = R - 2.5; const C = 2 * Math.PI * r;
+        return `<g data-more="${esc(more || '')}"><circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="var(--hub)" stroke="color-mix(in srgb, ${color} 26%, var(--hub))" stroke-width="5"/>
+          <circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${P(C * Math.max(0, Math.min(100, pct)) / 100)} ${P(C)}" transform="rotate(-90 ${P(x)} ${P(y)})"/>
+          <text x="${P(x)}" y="${P(y + 5)}" text-anchor="middle" class="num" fill="var(--ink)" font-size="15" font-weight="600">${f0(pct)}<tspan font-size="11" font-weight="500">%</tspan></text></g>`;
+      };
+      const kw = (x, y, v, anchor) => `<text x="${P(x)}" y="${P(y)}" text-anchor="${anchor}" class="num" fill="var(--ink)" font-size="20" font-weight="500">${f1(v === null ? null : Math.abs(v))}<tspan dx="3" font-size="13" font-weight="400" fill="var(--ink-2)">kW</tspan></text>`;
+      const word = (x, y, t, anchor, fill = 'var(--ink-2)', weight = 400) => `<text x="${P(x)}" y="${P(y)}" text-anchor="${anchor}" fill="${fill}" font-size="13" font-weight="${weight}">${esc(t)}</text>`;
+      const gridWord = !live(grid) ? ['idle', 'var(--ink-3)'] : grid < 0 ? ['exporting', 'var(--green)'] : freeNow ? ['free power', 'var(--indigo)'] : ['importing', 'var(--amber)'];
+      const batWord = !live(bat) ? ['holding', 'var(--ink-3)'] : bat > 0 ? ['charging', 'var(--green)'] : ['discharging', 'var(--amber)'];
+      const batColor = soc !== null && floor !== null && soc <= floor ? 'var(--red)' : 'var(--c-battery)';
+      const carColor = 'var(--c-charger)';
+      const carName = car ? (car.name.length > 16 ? `${car.name.slice(0, 15)}…` : car.name) : 'Charger';
+      const sx = cx + R + 12; // the sun and the car carry their reading beside them, clear of the spokes
+      const label = `Solar ${f1(pv)} kW, house ${f1(site.house_kw)} kW, grid ${gridWord[0]} ${f1(grid === null ? null : Math.abs(grid))} kW, battery ${f0(soc)}% ${batWord[0]} ${f1(bat === null ? null : Math.abs(bat))} kW, ${carName} ${f1(wall)} kW`;
       let foot = '';
       if (site.problem) foot = `<span class="red-t">${esc(site.problem)}</span>`;
       else if (c?.on_charger && s.shadow && num(site.wall_current) !== null && Math.abs(site.wall_current - c.planned_a) >= 2) foot = `The car draws ${f0(site.wall_current)} A on its own schedule; the plan would send ${f0(c.planned_a)} A.`;
       return `<section class="panel site">
-        <div class="ptitle">${title('home', 'Home now')}</div>
-        <div class="rows">
-          ${row({ name: 'Solar', ic: 'sun', color: 'var(--c-solar)', value: f1(site.pv_kw), unit: 'kW', more: src.pv?.entity_id })}
-          ${row({ name: 'House', ic: 'home', color: 'var(--c-house)', value: f1(site.house_kw), unit: 'kW' })}
-          ${row({ name: 'Grid', ic: 'grid', color: 'var(--c-grid)', dir: gridDir, dirColor: grid > 0 ? 'var(--amber)' : 'var(--green)', dirTitle: grid > 0 ? 'importing' : 'exporting', value: f1(grid === null ? null : Math.abs(grid)), unit: 'kW' })}
-          ${row({ name: 'Charger', ic: 'plug', color: this._carColor(c), value: f1(site.wall_kw), unit: 'kW', more: src.wall?.entity_id })}
-          ${row({ name: 'Battery', ic: 'battery', color: 'var(--c-battery)', value: f0(site.soc), unit: '%' })}
-          ${row({ name: 'Battery flow', ic: 'sync', color: 'var(--c-battery)', dir: batDir, dirColor: bat > 0 ? 'var(--green)' : 'var(--amber)', dirTitle: bat > 0 ? 'charging' : 'discharging', value: f1(bat === null ? null : Math.abs(bat)), unit: 'kW' })}
+        <div class="ptitle">${title('home', 'Home Now')}</div>
+        <div class="chart hub" data-chart="site">
+          <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">
+            <g fill="none">
+              ${spoke(at.pv, at.house, pv, 'var(--c-solar)')}
+              ${spoke(at.grid, at.house, grid, 'var(--c-grid)', grid < 0)}
+              ${spoke(at.house, at.bat, bat, batColor, bat < 0)}
+              ${spoke(at.house, at.car, wall, carColor)}
+            </g>
+            ${chip(at.pv, R, 'var(--c-solar)', 'sun', live(pv), src.pv?.entity_id)}
+            ${chip(at.grid, R, 'var(--c-grid)', 'grid', live(grid), src.grid?.entity_id)}
+            ${soc !== null ? gauge(at.bat, batColor, soc, src.soc?.entity_id) : chip(at.bat, R, batColor, 'battery', live(bat), src.battery?.entity_id)}
+            ${carSoc !== null ? gauge(at.car, carColor, carSoc, src.wall?.entity_id) : chip(at.car, R, carColor, car ? 'car' : 'plug', live(wall), src.wall?.entity_id)}
+            <circle cx="${P(cx)}" cy="${cy}" r="${RH}" fill="var(--c-house)"/>
+            ${ico('home', [cx, cy - 10], 22, 'var(--chip-ink)')}
+            <text x="${P(cx)}" y="${cy + 19}" text-anchor="middle" class="num" fill="var(--chip-ink)" font-size="16" font-weight="600">${f1(site.house_kw)}<tspan dx="2" font-size="12" font-weight="500">kW</tspan></text>
+            ${word(sx, at.pv[1] - 6, 'Solar', 'start', 'var(--ink-2)', 500)}${kw(sx, at.pv[1] + 15, pv, 'start')}
+            ${word(sx, at.car[1] - 6, carName, 'start', 'var(--ink-2)', 500)}${kw(sx, at.car[1] + 15, wall, 'start')}
+            ${word(at.grid[0], cy - R - 11, 'Grid', 'middle', 'var(--ink-2)', 500)}${kw(at.grid[0], cy + R + 25, grid, 'middle')}${word(at.grid[0], cy + R + 43, gridWord[0], 'middle', gridWord[1])}
+            ${word(at.bat[0], cy - R - 11, 'Battery', 'middle', 'var(--ink-2)', 500)}${kw(at.bat[0], cy + R + 25, bat, 'middle')}${word(at.bat[0], cy + R + 43, batWord[0], 'middle', batWord[1])}
+          </svg>
         </div>
         ${foot ? `<div class="foot">${foot}</div>` : ''}
       </section>`;
     }
 
+    /**
+     * Today and tonight: 24 hours centred on the middle of the daylight, so the solar day sits in
+     * the middle. The measured level up to now, the planner's paths after it.
+     */
     _batteryPanel(s) {
-      const tr = (s.trajectory || []).map(p => ({ t: ts(p.t), soc: p.soc, exp: p.expected, noCar: p.no_car }));
-      const floor = num(s.settings?.floor_pct) ?? 30;
-      if (tr.length < 2) return `<section class="panel battery"><div class="ptitle">${title('battery', 'Battery outlook')}</div><p class="reason">No battery path yet: the planner shows one once it can decide.</p></section>`;
       const now = Date.now();
-      const t0 = Math.min(now, tr[0].t - STEP); const t1 = tr[tr.length - 1].t;
-      const F = this._frame('battery', 220, 44);
+      const fc = (s.forecast || []).map(f => ({ t: ts(f.t), p90: f.p90 }));
+      let noon = solarNoon(fc, midnight(now));
+      if (now - noon > 12 * HOUR) noon += 24 * HOUR; else if (noon - now > 12 * HOUR) noon -= 24 * HOUR;
+      const t0 = noon - 12 * HOUR; const t1 = noon + 12 * HOUR;
+      const floor = num(s.settings?.floor_pct) ?? 30;
+      const q = num(s.caution_quantile);
+      const qTxt = q !== null ? `${Math.round(q * 100)}%` : '';
+      const soc0 = num(s.site?.soc);
+      const actual = bucketMeans(this._hist?.soc || [], t0, Math.min(now, t1));
+      if (soc0 !== null && now > t0 && now < t1) actual.push({ t: now, v: soc0 });
+      const tr = (s.trajectory || []).map(p => ({ t: ts(p.t), soc: num(p.soc), exp: num(p.expected), noCar: num(p.no_car) })).filter(p => p.t > now && p.t <= t1 && p.soc !== null);
+      const start = soc0 ?? tr[0]?.soc;
+      const ahead = tr.length && start != null ? [{ t: now, soc: start, exp: start, noCar: start }, ...tr] : [];
+      if (!actual.length && !ahead.length) return `<section class="panel battery"><div class="ptitle">${title('battery', 'Battery Outlook')}</div><p class="reason">No battery readings or path yet: the planner shows one once it can decide.</p></section>`;
+      const F = this._frame('battery', 230, 44);
       const x = t => F.L + (t - t0) / (t1 - t0) * F.pw; const y = v => F.T + F.ph - Math.max(0, Math.min(100, v)) / 100 * F.ph;
       const base = F.T + F.ph; const P = n => n.toFixed(1);
-      const soc0 = num(s.site?.soc);
-      const pts = [{ t: t0, soc: soc0 ?? tr[0].soc, exp: soc0 ?? tr[0].exp, noCar: soc0 ?? tr[0].noCar }, ...tr];
-      const path = k => `M${pts.map(p => `${P(x(p.t))},${P(y(p[k]))}`).join(' L')}`;
-      const low = tr.reduce((a, p) => (p.soc < a.soc ? p : a), tr[0]);
-      const free = (s.free_windows || []).map(w => ({ a: Math.max(ts(w.start), t0), b: Math.min(ts(w.end), t1) })).filter(w => w.b > w.a);
-      const freeRects = free.map((w, i) => `<rect x="${P(x(w.a))}" y="${F.T}" width="${P(x(w.b) - x(w.a))}" height="${F.ph}" fill="var(--free-band)"/>${i === 0 && x(w.b) - x(w.a) > 80 ? `<text x="${P(x(w.a) + 8)}" y="${F.T + 16}" fill="var(--indigo)" font-size="12" font-weight="600">Free hours</text>` : ''}`).join('');
+      const path = (pts, k) => (pts.length > 1 ? `M${pts.map(p => `${P(x(p.t))},${P(y(p[k]))}`).join(' L')}` : '');
+      const low = tr.length ? tr.reduce((a, p) => (p.soc < a.soc ? p : a), tr[0]) : null;
+      // daylight from the forecast (the sun's hours), and the free hours, as bands
+      const lit = fc.filter(f => f.t + SLOT > t0 && f.t < t1 && f.p90 > 0.05);
+      const sun = lit.length ? { a: Math.max(t0, lit[0].t), b: Math.min(t1, lit[lit.length - 1].t + SLOT) } : null;
+      const free = [...(s.free_windows_past || []), ...(s.free_windows || [])].map(w => ({ a: Math.max(ts(w.start), t0), b: Math.min(ts(w.end), t1) })).filter(w => w.b > w.a);
+      const sunRect = sun ? `<rect x="${P(x(sun.a))}" y="${F.T}" width="${P(x(sun.b) - x(sun.a))}" height="${F.ph}" fill="var(--c-solar)" fill-opacity="0.08"/><text x="${P((x(sun.a) + x(sun.b)) / 2)}" y="${P(base - 8)}" fill="var(--c-solar)" font-size="12" font-weight="600" text-anchor="middle">Daylight</text>` : '';
+      const freeRects = free.map(w => `<rect x="${P(x(w.a))}" y="${F.T}" width="${P(x(w.b) - x(w.a))}" height="${F.ph}" fill="var(--free-band)"/>${x(w.b) - x(w.a) > 70 ? `<text x="${P(x(w.a) + 8)}" y="${F.T + 16}" fill="var(--indigo)" font-size="12" font-weight="600">Free hours</text>` : ''}`).join('');
+      const nowMark = now > t0 && now < t1 ? `<line x1="${P(x(now))}" y1="${F.T - 6}" x2="${P(x(now))}" y2="${base}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="2 4"/><text x="${P(x(now) + 6)}" y="${F.T + 2}" fill="var(--ink)" font-size="12">now</text>` : '';
+      const actualPts = actual.map(p => ({ t: p.t, v: p.v }));
       this._charts.battery = {
         x0: F.L, x1: F.L + F.pw, t0, t1,
         read: t => {
-          const p = pts.reduce((a, q) => (Math.abs(q.t - t) < Math.abs(a.t - t) ? q : a), pts[0]);
-          const freeNow = free.some(w => p.t >= w.a && p.t < w.b);
-          return `<b>${esc(clock(p.t))}</b>${freeNow ? ' <span class="muted">free hours</span>' : ''}`
-            + `<span class="row">${swatch('var(--c-battery)')}At the caution level ${f0(p.soc)}%</span>`
-            + `<span class="row">${swatch('var(--c-battery)', 'dash', 0.6)}Expected day ${f0(p.exp)}%</span>`
-            + `<span class="row">${swatch('var(--c-house)', 'dot')}Without the car ${f0(p.noCar)}%</span>`
+          const freeNow = free.some(w => t >= w.a && t < w.b);
+          const head = `<b>${esc(clock(t))}</b>${freeNow ? ' <span class="muted">free hours</span>' : ''}`;
+          if (t <= now) {
+            const a = actualPts.length ? actualPts.reduce((m, p) => (Math.abs(p.t - t) < Math.abs(m.t - t) ? p : m), actualPts[0]) : null;
+            return a && Math.abs(a.t - t) <= BUCKET ? `${head}<span class="row">${swatch('var(--c-battery)')}Battery level ${f0(a.v)}%</span>` : '';
+          }
+          if (!ahead.length) return '';
+          const p = ahead.reduce((m, r) => (Math.abs(r.t - t) < Math.abs(m.t - t) ? r : m), ahead[0]);
+          return head
+            + `<span class="row">${swatch('var(--c-battery)', 'dash')}Expected ${f0(p.exp)}%</span>`
+            + `<span class="row">${swatch('var(--amber)', 'dash')}Cautious${qTxt ? ` (${qTxt})` : ''} ${f0(p.soc)}%</span>`
+            + `<span class="row">${swatch('var(--c-house)', 'dot')}Cautious, car off ${f0(p.noCar)}%</span>`
             + `<span class="row">${swatch('var(--red)', 'dash')}Floor ${f0(floor)}%</span>`;
         },
       };
+      const right = low ? `<div class="r num" data-more="${esc(this._ent('battery_minimum') || '')}">lowest ahead <b>${f0(low.soc)}%</b> at ${esc(clock(low.t))}</div>`
+        : soc0 !== null ? `<div class="r num">now <b>${f0(soc0)}%</b></div>` : '';
       return `<section class="panel battery">
-        <div class="ptitle">${title('battery', 'Battery outlook')}<div class="r num" data-more="${esc(this._ent('battery_minimum') || '')}">lowest <b>${f0(low.soc)}%</b> at ${esc(clock(low.t))}</div></div>
-        <div class="legend">${key('var(--c-battery)', 'line', 'At the caution level')}${key('var(--c-battery)', 'dash', 'Expected day', 0.6)}${key('var(--c-house)', 'dot', 'Without the car')}${key('var(--red)', 'dash', 'Floor')}${key('var(--indigo)', 'band', 'Free hours', 0.4)}${key('var(--c-battery)', 'marker', 'Lowest')}</div>
+        <div class="ptitle">${title('battery', 'Battery Outlook')}${right}</div>
+        <div class="legend">${key('var(--c-battery)', 'line', 'Battery level')}${key('var(--c-battery)', 'dash', 'Expected')}${key('var(--amber)', 'dash', `Cautious${qTxt ? ` (${qTxt})` : ''}`)}${key('var(--c-house)', 'dot', 'Cautious, car off')}${key('var(--red)', 'dash', 'Floor')}${key('var(--c-battery)', 'marker', 'Lowest ahead')}</div>
         <div class="chart" data-chart="battery">
-          <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Predicted home battery level until ${esc(hourLabel(t1))}; lowest ${f0(low.soc)} percent at ${esc(clock(low.t))}; floor ${f0(floor)} percent">
-            ${freeRects}
+          <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Home battery from ${esc(hourLabel(t0))} to ${esc(hourLabel(t1))}: the measured level so far and the planner's paths after now${low ? `; lowest ${f0(low.soc)} percent at ${esc(clock(low.t))}` : ''}; floor ${f0(floor)} percent">
+            ${sunRect}${freeRects}
             <g stroke="var(--hair-2)" stroke-width="1"><line x1="${F.L}" y1="${P(y(100))}" x2="${F.L + F.pw}" y2="${P(y(100))}"/><line x1="${F.L}" y1="${P(y(50))}" x2="${F.L + F.pw}" y2="${P(y(50))}"/><line x1="${F.L}" y1="${base}" x2="${F.L + F.pw}" y2="${base}" stroke="var(--hair)"/></g>
             <g fill="var(--ink-2)" font-size="12"><text x="${F.L - 8}" y="${P(y(100) + 4)}" text-anchor="end">100%</text><text x="${F.L - 8}" y="${P(y(50) + 4)}" text-anchor="end">50</text>${this._axisX(t0, t1, x, base)}</g>
             <line x1="${F.L}" y1="${P(y(floor))}" x2="${F.L + F.pw}" y2="${P(y(floor))}" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="6 4"/>
             <text x="${F.L - 8}" y="${P(y(floor) + 4)}" fill="var(--red)" font-size="12" text-anchor="end">${f0(floor)}</text>
-            <path d="${path('noCar')}" fill="none" stroke="var(--c-house)" stroke-width="2.4" stroke-dasharray="0.1 5" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="${path('exp')}" fill="none" stroke="var(--c-battery)" stroke-opacity="0.6" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>
-            <path d="${path('soc')}" fill="none" stroke="var(--c-battery)" stroke-width="2.6" stroke-linejoin="round"/>
-            <circle cx="${P(x(low.t))}" cy="${P(y(low.soc))}" r="5" fill="var(--sky-a)" stroke="var(--c-battery)" stroke-width="2"/>
+            ${ahead.length ? `<path d="${path(ahead, 'noCar')}" fill="none" stroke="var(--c-house)" stroke-width="2.4" stroke-dasharray="0.1 5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="${path(ahead, 'soc')}" fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="3 4" stroke-linejoin="round"/>
+            <path d="${path(ahead, 'exp')}" fill="none" stroke="var(--c-battery)" stroke-width="2.2" stroke-dasharray="7 4" stroke-linejoin="round"/>` : ''}
+            ${actualPts.length > 1 ? `<path d="${path(actualPts, 'v')}" fill="none" stroke="var(--c-battery)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
+            ${nowMark}
+            ${low ? `<circle cx="${P(x(low.t))}" cy="${P(y(low.soc))}" r="5" fill="var(--sky-a)" stroke="var(--amber)" stroke-width="2"/>` : ''}
           </svg>
         </div>
       </section>`;
@@ -1063,7 +1192,17 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
         const fault = a.fault_message || a.last_error ? ` · <span class="red-t">${esc(a.fault_message || a.last_error)}</span>` : '';
         tile(cls, 'sync', `${c.name} control`, label, `${esc(want)}${esc(io)}${fault}`, c.control_state_entity);
       }
-      if (!rivians.length) tile('grey', 'sync', 'Rivian control', 'Not set up', 'Add the R1S to the planner');
+      const setup = s.setup || {};
+      const ctl = setup.rivian_controllers || [];
+      if (setup.legacy_rivian) tile('red', 'sync', 'Rivian control', 'Old version', 'The separate Rivian Schedule Control integration is still installed. Hand the schedule back, remove it and restart; SolarSage will not start its own while it remains.');
+      else if (!rivians.length && ctl.length) {
+        const bad = ctl.find(e => e.state !== 'loaded');
+        tile(bad ? 'red' : 'amber', 'sync', 'Rivian control', bad ? cap1(String(bad.state).replace(/_/g, ' ')) : 'Not in the plan', bad ? `${esc(bad.title)} did not start; open SolarSage under Devices &amp; services` : `${esc(ctl[0].title)} is running; add the car to the planner: SolarSage → Add car`);
+      } else if (!rivians.length) tile('grey', 'sync', 'Rivian control', 'Not set up', 'SolarSage → Add entry → Rivian schedule control, then Add car on the site planner');
+      if (num(setup.planner_entries) > 1) tile('amber', 'alert', 'Setup', 'Two planners', `${f0(setup.planner_entries)} SolarSage site planner entries exist; this card shows the one with cars. Remove the empty one.`);
+      const fwin = (s.free_windows || [])[0];
+      if (s.free_hours_problem) tile('amber', 'moon', 'Free hours', 'Not read', esc(s.free_hours_problem), s.free_hours_entity);
+      else if (fwin) tile('green', 'moon', 'Free hours', `${hourLabel(ts(fwin.start))}–${hourLabel(ts(fwin.end))}`, 'from the schedule helper', s.free_hours_entity);
       const sp = s.spend;
       if (sp) {
         const pct = sp.cap > 0 ? Math.min(100, sp.spent / sp.cap * 100) : 0;
@@ -1086,7 +1225,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const segBtns = CAUTION.map(([key, name]) => `<button type="button" aria-pressed="${key === caution}" data-act="caution:${key}" title="${esc(name)}">${levels[key] ? `${Math.round(levels[key] * 100)}%` : esc(name)}<small>${esc(name)}</small></button>`).join('');
       const stepper = (key, label, value, delta, lo, hi) => `<div class="set"><span data-more="${esc(this._ent(key) || '')}">${label}</span><span class="stepper"><button type="button" aria-label="Lower ${esc(label.toLowerCase())}" data-act="step:${key}:${-delta}" data-range="${lo},${hi}">−</button><b class="num">${f0(value)}%</b><button type="button" aria-label="Raise ${esc(label.toLowerCase())}" data-act="step:${key}:${delta}" data-range="${lo},${hi}">+</button></span></div>`;
       const fw = (s.free_windows || [])[0];
-      const freeText = fw ? `${clock(ts(fw.start))} – ${clock(ts(fw.end))}` : 'none in the next day';
+      const freeText = fw ? `${clock(ts(fw.start))} – ${clock(ts(fw.end))}` : s.free_hours_entity ? 'none in the next day' : 'not set';
       const f = this._free;
       const freeBlock = f
         ? `<div class="editor" aria-label="Edit the free hours">
@@ -1095,7 +1234,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
             ${f.error ? `<div class="cap red-t">${esc(f.error)}</div>` : ''}
             <div class="acts"><button type="button" class="btn" data-act="free-cancel">Cancel</button><button type="button" class="btn go" data-act="free-save" ${f.busy ? 'disabled' : ''}>${f.busy ? 'Saving…' : 'Save'}</button></div>
           </div>`
-        : `<div class="set"><span data-more="${esc(s.free_hours_entity || '')}">Free hours</span><span style="display:flex;align-items:center;gap:8px"><span class="num">${esc(freeText)}</span>${s.free_hours_entity ? `<button type="button" class="btn icon" data-act="free-edit" aria-label="Edit the free hours" title="Edit the free hours">${icon('edit', 16)}</button>` : ''}</span></div>`;
+        : `<div class="set"><span data-more="${esc(s.free_hours_entity || '')}">Free hours</span><span style="display:flex;align-items:center;gap:8px"><span class="num${s.free_hours_problem ? ' amber-t' : ''}">${esc(freeText)}</span>${s.free_hours_entity ? `<button type="button" class="btn icon" data-act="free-edit" aria-label="Edit the free hours" title="Edit the free hours">${icon('edit', 16)}</button>` : ''}</span></div>${s.free_hours_problem ? `<div class="cap amber-t">${esc(s.free_hours_problem)}</div>` : ''}`;
       const nsId = this._ent('night_charging_start');
       const nsOptions = this._hass?.states[nsId]?.attributes?.options || [];
       const nsValue = String(st.night_start || FREE_START);

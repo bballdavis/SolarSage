@@ -25,7 +25,12 @@ NOT_LOADED = "not_loaded"
 
 def _coordinator(hass: HomeAssistant) -> PlannerCoordinator | None:
     entries = hass.config_entries.async_loaded_entries(DOMAIN)
-    return next((entry.runtime_data for entry in entries if "vehicle_id" not in entry.data), None)
+    planners = [entry for entry in entries if "vehicle_id" not in entry.data]
+    if not planners:
+        return None
+    # Two planner entries should not exist, but an older install may have left one: show the
+    # one that is actually configured (cars and price windows), not an empty duplicate.
+    return max(planners, key=lambda entry: len(entry.subentries)).runtime_data
 
 
 @callback

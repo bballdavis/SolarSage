@@ -9,9 +9,10 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
+from custom_components.solar_ev_planner.const import CONF_FREE_HOURS
 from custom_components.solar_ev_planner.dashboard import snapshot
 
-from .conftest import RIVIAN, TESLA, FakeCars, make_entry, setup_entry, turn
+from .conftest import OPTIONS, RIVIAN, TESLA, FakeCars, make_entry, setup_entry, turn
 
 
 async def test_snapshot_describes_the_cycle(
@@ -54,6 +55,21 @@ async def test_snapshot_describes_the_cycle(
         "scale": 0.001,
     }
     assert snap["caution_levels"]["conservative"] == 0.9
+    # the actuals the card charts: grid and battery power (for the house load) and the level
+    assert snap["sources"]["grid"]["entity_id"] == "sensor.sol_ark_inverter_grid_power"
+    assert snap["sources"]["battery"]["entity_id"] == "sensor.sol_ark_inverter_battery_power"
+    assert snap["sources"]["soc"] == {
+        "entity_id": "sensor.sol_ark_inverter_battery_state_of_charge",
+        "scale": 1.0,
+    }
+    # what is set up: one planner, both car kinds, the free hours read
+    assert snap["free_hours_problem"] is None
+    # the free hours already passed today, for the battery chart
+    past = snap["free_windows_past"]
+    assert past and all(w["end"] <= snap["now"] for w in past)
+    assert snap["setup"]["planner_entries"] == 1
+    assert snap["setup"]["car_kinds"] == ["rivian", "tesla"]
+    assert snap["setup"]["legacy_rivian"] is False
     json.dumps(snap)  # JSON-safe as is
 
 
@@ -144,3 +160,16 @@ async def test_refresh_schedules_rereads_the_free_hours(
     snap = (await client.receive_json())["result"]
     assert snap["free_hours_entity"] == "schedule.free_hours"
     assert snap["cars"][0]["max_a"] == 48
+
+
+async def test_snapshot_says_why_there_are_no_free_hours(
+    site: HomeAssistant, fake_cars: FakeCars
+) -> None:
+    """No free-hours schedule mapped: the card is told so, rather than "none ahead"."""
+    hass = site
+    options = {k: v for k, v in OPTIONS.items() if k != CONF_FREE_HOURS}
+    coordinator = await setup_entry(hass, make_entry(TESLA, options=options), fake_cars)
+    snap = snapshot(hass, coordinator)
+    assert snap["free_windows"] == []
+    assert "No free-hours schedule is mapped" in snap["free_hours_problem"]
+    assert snap["setup"]["car_kinds"] == ["tesla"]
