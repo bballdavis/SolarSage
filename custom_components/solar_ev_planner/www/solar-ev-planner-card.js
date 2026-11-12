@@ -1031,7 +1031,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const floor = num(s.settings?.floor_pct);
       const live = v => v !== null && Math.abs(v) >= 0.05;
       const W = Math.max(260, Math.min(460, this._cw.site || 380)); const H = 308;
-      const cx = W / 2; const cy = 156; const R = 26; const RH = 36; const side = 46;
+      const cx = W / 2; const cy = 156; const R = 28; const RH = 36; const side = 48;
       const at = { pv: [cx, 42], grid: [side, cy], bat: [W - side, cy], car: [cx, H - 38], house: [cx, cy] };
       const P = n => n.toFixed(1);
       // a spoke runs centre to centre and the discs sit on top, so dots slide out from under one
@@ -1047,12 +1047,16 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const ico = (name, [x, y], size, color) => `<svg class="ic" x="${P(x - size / 2)}" y="${P(y - size / 2)}" width="${size}" height="${size}" viewBox="0 0 24 24" style="color:${color}" aria-hidden="true">${ICON[name]}</svg>`;
       // a lit node is a solid chip like the rest of the card; an idle one is a dim well
       const chip = (xy, r, color, name, on, more = '') => `<g data-more="${esc(more || '')}"><circle cx="${P(xy[0])}" cy="${P(xy[1])}" r="${r}" fill="${on ? color : `color-mix(in srgb, ${color} 24%, var(--hub))`}"/>${ico(name, xy, 22, on ? 'var(--chip-ink)' : color)}</g>`;
-      // the two things that hold charge show their level as a ring with the percent inside
-      const gauge = ([x, y], color, pct, more = '') => {
-        const r = R - 2.5; const C = 2 * Math.PI * r;
-        return `<g data-more="${esc(more || '')}"><circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="var(--hub)" stroke="color-mix(in srgb, ${color} 26%, var(--hub))" stroke-width="5"/>
-          <circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${P(C * Math.max(0, Math.min(100, pct)) / 100)} ${P(C)}" transform="rotate(-90 ${P(x)} ${P(y)})"/>
-          <text x="${P(x)}" y="${P(y + 5)}" text-anchor="middle" class="num" fill="var(--ink)" font-size="15" font-weight="600">${f0(pct)}<tspan font-size="11" font-weight="500">%</tspan></text></g>`;
+      // the two things that hold charge are discs whose own border is the charge: it fills
+      // clockwise from the top, with the icon and the percent inside
+      const gauge = ([x, y], color, pct, name, more = '') => {
+        const sw = 5; const r = R - sw / 2; const C = 2 * Math.PI * r;
+        const fill = P(C * Math.max(0, Math.min(100, pct)) / 100);
+        return `<g data-more="${esc(more || '')}"><circle cx="${P(x)}" cy="${P(y)}" r="${R}" fill="color-mix(in srgb, ${color} 20%, var(--hub))"/>
+          <circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="none" stroke="color-mix(in srgb, ${color} 30%, var(--hub))" stroke-width="${sw}"/>
+          <circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${fill} ${P(C)}" transform="rotate(-90 ${P(x)} ${P(y)})"/>
+          ${ico(name, [x, y - 8], 17, color)}
+          <text x="${P(x)}" y="${P(y + 14)}" text-anchor="middle" class="num" fill="var(--ink)" font-size="14" font-weight="600">${f0(pct)}<tspan font-size="10" font-weight="500">%</tspan></text></g>`;
       };
       const kw = (x, y, v, anchor) => `<text x="${P(x)}" y="${P(y)}" text-anchor="${anchor}" class="num" fill="var(--ink)" font-size="20" font-weight="500">${f1(v === null ? null : Math.abs(v))}<tspan dx="3" font-size="13" font-weight="400" fill="var(--ink-2)">kW</tspan></text>`;
       const word = (x, y, t, anchor, fill = 'var(--ink-2)', weight = 400) => `<text x="${P(x)}" y="${P(y)}" text-anchor="${anchor}" fill="${fill}" font-size="13" font-weight="${weight}">${esc(t)}</text>`;
@@ -1078,8 +1082,8 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
             </g>
             ${chip(at.pv, R, 'var(--c-solar)', 'sun', live(pv), src.pv?.entity_id)}
             ${chip(at.grid, R, 'var(--c-grid)', 'grid', live(grid), src.grid?.entity_id)}
-            ${soc !== null ? gauge(at.bat, batColor, soc, src.soc?.entity_id) : chip(at.bat, R, batColor, 'battery', live(bat), src.battery?.entity_id)}
-            ${carSoc !== null ? gauge(at.car, carColor, carSoc, src.wall?.entity_id) : chip(at.car, R, carColor, car ? 'car' : 'plug', live(wall), src.wall?.entity_id)}
+            ${soc !== null ? gauge(at.bat, batColor, soc, 'battery', src.soc?.entity_id) : chip(at.bat, R, batColor, 'battery', live(bat), src.battery?.entity_id)}
+            ${carSoc !== null ? gauge(at.car, carColor, carSoc, 'car', src.wall?.entity_id) : chip(at.car, R, carColor, car ? 'car' : 'plug', live(wall), src.wall?.entity_id)}
             <circle cx="${P(cx)}" cy="${cy}" r="${RH}" fill="var(--c-house)"/>
             ${ico('home', [cx, cy - 10], 22, 'var(--chip-ink)')}
             <text x="${P(cx)}" y="${cy + 19}" text-anchor="middle" class="num" fill="var(--chip-ink)" font-size="16" font-weight="600">${f1(site.house_kw)}<tspan dx="2" font-size="12" font-weight="500">kW</tspan></text>
