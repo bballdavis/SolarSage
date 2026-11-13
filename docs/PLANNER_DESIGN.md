@@ -247,7 +247,7 @@ Config-flow suggestions are in [`core/entities.py`](https://github.com/bballdavi
 | Battery power | `sensor.sol_ark_inverter_battery_power` | W, positive = charging |
 | Battery level | `sensor.sol_ark_inverter_battery_state_of_charge` | % |
 | Battery capacity | `sensor.sol_ark_battery_capacity_estimate` | kWh |
-| Car power | `sensor.tesla_wall_connector_total_power` | kW |
+| Car power | `sensor.garage_tesla_wall_connector_vehicle_current` | A × set volts (the Wall Connector's total power reads about 28% high on split-phase) |
 | Car current (confirms a change) | `sensor.garage_tesla_wall_connector_vehicle_current` | A |
 | Car on the charger | `binary_sensor.tesla_wall_connector_vehicle_connected` (+ contactor) | |
 | Forecast | `sensor.solcast_pv_forecast_forecast_today` / `_tomorrow` (`detailedForecast`) | kW per half hour |

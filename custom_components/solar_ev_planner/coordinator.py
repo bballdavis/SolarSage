@@ -655,6 +655,7 @@ class PlannerCoordinator(DataUpdateCoordinator[PlannerData]):
                 states[key],
                 o.get(unit_key(key), DEFAULT_POWER_UNITS[key]),
                 bool(o.get(invert_key(key))),
+                float(o.get(CONF_VOLTS) or 240.0),
             )
             for key in POWER_KEYS
         }

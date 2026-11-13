@@ -14,7 +14,7 @@
           "volts": "Charging voltage"
         },
         "data_description": {
-          "wall_power": "The car's charging power, for example sensor.tesla_wall_connector_total_power. House use is solar + grid - battery - this.",
+          "wall_power": "The car's charging power. A current sensor in A works too and counts at the voltage below; on US split-phase wiring use the Wall Connector's vehicle current, because its total power reads about 28% high. House use is solar + grid - battery - this.",
           "wall_power_unit": "Used when the sensor states no unit.",
           "wall_current": "Optional. Shown with each change, to confirm the car followed it.",
           "wall_connected": "Recommended. On while a vehicle is connected. Off means no car is on the charger, so no car is commanded. It does not say which car is connected.",
@@ -208,7 +208,7 @@
           "volts": "Charging voltage"
         },
         "data_description": {
-          "wall_power": "The car's charging power, for example sensor.tesla_wall_connector_total_power. House use is solar + grid - battery - this.",
+          "wall_power": "The car's charging power. A current sensor in A works too and counts at the voltage below; on US split-phase wiring use the Wall Connector's vehicle current, because its total power reads about 28% high. House use is solar + grid - battery - this.",
           "wall_power_unit": "Used when the sensor states no unit.",
           "wall_current": "Optional. Shown with each change, to confirm the car followed it.",
           "wall_connected": "Recommended. On while a vehicle is connected. Off means no car is on the charger, so no car is commanded. It does not say which car is connected.",

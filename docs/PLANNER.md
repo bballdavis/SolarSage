@@ -47,7 +47,7 @@ The form suggests example entity IDs only when those entities exist. Map every i
 | | Battery capacity sensor | `sensor.sol_ark_battery_capacity_estimate` (optional; the fixed capacity, 31 kWh, is used without it) |
 | | Maximum charge and discharge power | 9 kW each |
 | | Battery reserve | 10%: where the inverter stops discharging |
-| Wall Connector | Power | `sensor.tesla_wall_connector_total_power` (kW). **Required:** without it the planner cannot tell the house from the car, and does not plan. |
+| Wall Connector | Power | `sensor.garage_tesla_wall_connector_vehicle_current` (A, counted at the set voltage). A power sensor in W or kW works too, but on US split-phase wiring the Wall Connector's `total_power` adds a phantom third phase and reads about 28% high, which makes the house look smaller than it is. **Required:** without it the planner cannot tell the house from the car, and does not plan. |
 | | Vehicle current | `sensor.garage_tesla_wall_connector_vehicle_current` |
 | | Vehicle connected | `binary_sensor.tesla_wall_connector_vehicle_connected` (recommended: off means no car is commanded) |
 | | Contactor closed | `binary_sensor.tesla_wall_connector_contactor_closed` |
@@ -277,7 +277,7 @@ It needs no entity IDs: it finds the planner's entities itself.
 | Header | The mode, and whether the planner is off, in shadow mode or live | Turn Planning, Shadow and Daytime solar on or off. Turning shadow mode off, or the planner off while live, asks first |
 | On the Charger | The car, its level and limit, what the planner sends (or would send) beside what the Wall Connector reads, the reason, the next change, the outlook and the plan. The other cars are listed underneath | |
 | Sun / Night chart | **Sun (Today: Solar, House & Car):** today's daylight, actuals first: solar produced, house use (solar + grid − battery − car, as the planner reads it) and what the car drew. After now, the solar line is the planner's own expectation (Solcast corrected by today's production) with the planned car power. Solcast's median and range sit faintly behind for reference. Underneath: solar so far against what Solcast expected by now, house and car energy today, and the rest of today with Solcast's figure beside it. When solar runs 10% or more off the forecast, a line says how the planner is handling it. **Night (Tonight: Free Hours):** the evening and the free hours, when the car starts, tonight's planned charging and what the car drew, with a warning if the car would charge, or charged, on paid power after dark | Switch between Sun and Night. Point at the chart for the values at that time |
-| Home Now | A flow hub: the house in the middle with a spoke each to solar, the grid, the battery and the charger. Dots run along a spoke the way the power flows, faster with more of it. The battery and the car on the charger show their level as the border of their disc; the grid says importing, exporting or free power, the battery charging or discharging | |
+| Home Now | The Daylight energy cluster: rings for solar, the house and the car on one shared scale, with the battery level and its charge or use in the middle. A bar on the left shows the grid (in up, out down) and one on the right the battery (use up, charge down). Below, the grid in words (importing, exporting or free power) and the solar, house, car and grid readings; the car shows its level when it is on the charger | |
 | Battery Outlook | Today and tonight: 24 hours centred on the middle of today's daylight. The measured battery level up to now, then the planner's paths: expected, cautious (at the caution level, with the planned car) and cautious with the car off. Also the floor, the daylight and free hours as bands, and the lowest point ahead | Point at the chart for the values |
 | Health | A tile per part, coloured by state: the planner's heartbeat, the inputs, the Solcast forecast's age, the car on the charger, Rivian schedule control (dry run, writes, faults; or what is missing: a controller set up but its car not added to the planner, or the old standalone integration still installed), the free hours (or why there are none: no schedule mapped, the helper missing or unreadable), a second planner entry if one exists, and the Tesla API spend, with how many are OK | |
 | Settings | | Caution, battery floor and battery at free start (steps of 5%), the free hours (every day the same; edits their Schedule helper, admin only), the night charging start, and which car is on the charger |
@@ -309,7 +309,7 @@ views:
           - sensor.solarsage_battery_minimum_time
           - sensor.solarsage_forecast_correction
           - sensor.sol_ark_inverter_battery_state_of_charge
-          - sensor.tesla_wall_connector_total_power
+          - sensor.garage_tesla_wall_connector_vehicle_current
           - sensor.solarsage_heartbeat
       - type: entities
         title: R1S

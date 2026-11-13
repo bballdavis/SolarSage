@@ -96,6 +96,10 @@ UNIT_KW: Final = "kW"
 POWER_UNITS: Final = (UNIT_W, UNIT_KW)
 # kW per unit; a sensor's own unit_of_measurement wins over the configured one.
 POWER_SCALE: Final[dict[str, float]] = {"W": 0.001, "kW": 1.0, "MW": 1000.0}
+# A current sensor (A) counts as power at the configured voltage. The Wall Connector's own
+# total power adds a third phase that US split-phase wiring does not have and reads about
+# 28% high, so its vehicle current is the better car power there.
+UNIT_A: Final = "A"
 DEFAULT_POWER_UNITS: Final[dict[str, str]] = {
     CONF_PV_POWER: UNIT_W,
     CONF_GRID_POWER: UNIT_W,
@@ -107,6 +111,13 @@ DEFAULT_POWER_UNITS: Final[dict[str, str]] = {
 def unit_key(key: str) -> str:
     """The option holding a power sensor's unit."""
     return f"{key}_unit"
+
+
+def power_scale(unit: object, volts: float) -> float | None:
+    """kW per unit of a power sensor, or None for a unit that is not power or current."""
+    if unit == UNIT_A:
+        return volts / 1000.0
+    return POWER_SCALE.get(unit) if isinstance(unit, str) else None
 
 
 def invert_key(key: str) -> str:

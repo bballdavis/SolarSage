@@ -35,8 +35,8 @@ from .const import (
     CONF_WALL_POWER,
     DEFAULT_POWER_UNITS,
     DOMAIN,
-    POWER_SCALE,
     invert_key,
+    power_scale,
     unit_key,
 )
 from .coordinator import CarView, PlannerCoordinator
@@ -84,9 +84,10 @@ def _source(hass: HomeAssistant, options: dict[str, Any], key: str) -> dict[str,
         return None
     state = hass.states.get(entity_id)
     own = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) if state else None
-    scale = POWER_SCALE.get(own) if isinstance(own, str) else None
+    volts = float(options.get(CONF_VOLTS) or 240.0)
+    scale = power_scale(own, volts)
     if scale is None:
-        scale = POWER_SCALE.get(options.get(unit_key(key), DEFAULT_POWER_UNITS[key]), 1.0)
+        scale = power_scale(options.get(unit_key(key), DEFAULT_POWER_UNITS[key]), volts) or 1.0
     return {"entity_id": entity_id, "scale": -scale if options.get(invert_key(key)) else scale}
 
 

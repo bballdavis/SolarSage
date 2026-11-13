@@ -30,13 +30,14 @@ from .const import (
     CONF_BATTERY_POWER,
     CONF_GRID_POWER,
     CONF_PV_POWER,
+    CONF_VOLTS,
     CONF_WALL_POWER,
     DEFAULT_POWER_UNITS,
     HISTORY_DAYS,
     POWER_KEYS,
-    POWER_SCALE,
     RECENT_HOURS,
     invert_key,
+    power_scale,
     unit_key,
 )
 from .core import (
@@ -100,9 +101,11 @@ def _scale(options: Mapping[str, Any], key: str, metadata: Mapping[str, Any]) ->
     """kW per unit of a statistic: the recorder's unit, else the configured unit."""
     meta = metadata.get(options.get(key) or "")
     unit = meta[1].get("unit_of_measurement") if meta else None
-    if unit in POWER_SCALE:
-        return POWER_SCALE[unit]
-    return POWER_SCALE.get(options.get(unit_key(key), DEFAULT_POWER_UNITS[key]), 1.0)
+    volts = float(options.get(CONF_VOLTS) or 240.0)
+    scale = power_scale(unit, volts)
+    if scale is None:
+        scale = power_scale(options.get(unit_key(key), DEFAULT_POWER_UNITS[key]), volts) or 1.0
+    return scale
 
 
 def _converted(

@@ -25,7 +25,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, State, split_entity_id
 from homeassistant.helpers import entity_registry as er
 
-from .const import OVERRIDE_AUTO, POWER_SCALE
+from .const import OVERRIDE_AUTO, power_scale
 from .core import PriceWindow, Tariff, WeeklySchedule
 from .core.tariff import WEEKDAYS
 
@@ -75,17 +75,16 @@ def state_home(state: State | None) -> bool | None:
     return state.state == STATE_HOME
 
 
-def power_kw(state: State | None, unit: str, invert: bool) -> float | None:
+def power_kw(state: State | None, unit: str, invert: bool, volts: float = 240.0) -> float | None:
     """A power sensor in kW with the planner's sign. The sensor's own unit wins over the
-    configured one when it has a power unit."""
+    configured one when it has a power unit; a current sensor (A) counts at ``volts``."""
     value = state_float(state)
     if value is None:
         return None
     assert state is not None
-    own = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
-    scale = POWER_SCALE.get(own) if isinstance(own, str) else None
+    scale = power_scale(state.attributes.get(ATTR_UNIT_OF_MEASUREMENT), volts)
     if scale is None:
-        scale = POWER_SCALE.get(unit, 1.0)
+        scale = power_scale(unit, volts) or 1.0
     value *= scale
     return -value if invert else value
 

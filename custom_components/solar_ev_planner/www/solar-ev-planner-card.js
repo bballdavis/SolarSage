@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.2';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -109,8 +109,6 @@
   const title = (ic, text) => `<h2>${icon(ic, 22)}<span>${text}</span></h2>`;
 
   /** The spacing of the moving dots on a Home Now spoke, in pixels. */
-  const FLOW_GAP = 14;
-
   const FONT_CSS = '@font-face { font-family: "Jost"; font-style: normal; font-weight: 100 900; font-display: swap; src: url(https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2) format("woff2"); }';
 
   const CSS = `:host {
@@ -121,7 +119,7 @@
   --tesla: #E8384F; --rivian: #F7CF4A;
   --c-solar: #FFB347; --c-house: #6FD3FF; --c-grid: #B39DFF; --c-battery: #5DE0A0; --c-charger: #FF8FB1;
   --band: rgba(255,179,71,0.30); --free-band: rgba(155,177,255,0.16);
-  --chip-ink: #0B1E36; --hub: #0A1D36;
+  --chip-ink: #0B1E36;
   --font: "Jost", "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
   display: block; color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.35; -webkit-font-smoothing: antialiased; color-scheme: dark; }
 :host([data-theme="light"]) {
@@ -130,7 +128,7 @@
   --surface: rgba(6,30,72,0.30); --surface-2: rgba(6,30,72,0.46); --sheet: rgba(14,52,104,0.98);
   --amber: #FFB357; --green: #8BEFC0; --red: #FF9A8C; --indigo: #D3DBFF; --cyan: #BFEAFF;
   --tesla: #FF4D63; --rivian: #FFD95C;
-  --band: rgba(255,179,71,0.38); --free-band: rgba(211,219,255,0.18); --hub: #174E8C; }
+  --band: rgba(255,179,71,0.38); --free-band: rgba(211,219,255,0.18); }
 *, *::before, *::after { box-sizing: border-box; }
 button, select, input { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: inherit; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -251,10 +249,49 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .stats { display: flex; gap: 6px 20px; font-size: 14px; color: var(--ink-2); flex-wrap: wrap; margin-top: auto; }
 .stats b { font-weight: 600; color: var(--ink); }
 
-.hub { flex: 1; display: flex; align-items: center; }
-.hub svg { margin: 0 auto; }
-.hub .flow { animation: flow 1s linear infinite; }
-@keyframes flow { from { stroke-dashoffset: ${FLOW_GAP}; } to { stroke-dashoffset: 0; } }
+.nrow { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; align-items: center; }
+.nrings { position: relative; width: 100%; max-width: 236px; aspect-ratio: 1; margin: 0 auto; }
+.nrings > svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; display: block; }
+.nrings circle { fill: none; stroke-linecap: round; }
+.nrings .c { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.nrings .soc { font-size: 46px; font-weight: 300; line-height: 1; letter-spacing: -0.02em; }
+.nrings .soc small { font-size: 18px; font-weight: 400; color: var(--ink-2); }
+.nrings .rate { margin-top: 5px; display: grid; justify-items: center; gap: 3px; }
+.nrings .rv { display: flex; align-items: center; gap: 3px; font-size: 18px; line-height: 1.1; }
+.nrings .rv small { font-size: 12px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+.nrings .rv .ic { width: 14px; height: 14px; stroke-width: 2.4; }
+.nrings .ru { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); line-height: 1; }
+.nbar { display: grid; justify-items: center; gap: 7px; }
+.nbar .vt { position: relative; width: 11px; height: 140px; border-radius: 6px; background: var(--hair-2); }
+.nbar .vt::before { content: ""; position: absolute; left: -5px; right: -5px; top: 50%; height: 1px; background: var(--ink-3); }
+.nbar .vt i { position: absolute; left: 0; right: 0; background: var(--fc); }
+.nbar .vt i.up { border-radius: 6px 6px 0 0; }
+.nbar .vt i.dn { border-radius: 0 0 6px 6px; }
+.nbar .vt i.glow { box-shadow: 0 0 12px var(--fc); }
+.nbar .fi { color: var(--fc); }
+.nbar .e { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); line-height: 1; }
+.nbar.off .vt { opacity: 0.4; }
+.nline { display: flex; justify-content: center; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); text-align: center; }
+.nline .ic { color: var(--gc); flex: none; }
+.nstats { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; padding-top: 12px; border-top: 1px solid var(--hair-2); margin-top: auto; }
+.hairv { width: 1px; background: linear-gradient(to bottom, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }
+.nstat { text-align: center; padding: 2px; min-width: 0; }
+.nstat .lbl { display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); min-width: 0; }
+.nstat .lbl .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nstat .lbl .ic { width: 16px; height: 16px; flex: none; }
+.nstat .v { font-size: 22px; line-height: 1.1; margin-top: 5px; white-space: nowrap; }
+.nstat .v small { font-size: 12px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+.nstat .sub { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+.panel.site { container-type: inline-size; }
+@container (max-width: 280px) {
+  .nrow { grid-template-columns: 38px minmax(0, 1fr) 38px; }
+  .nbar .vt { height: 110px; }
+  .nrings .soc { font-size: 34px; }
+  .nrings .rv { font-size: 15px; }
+  .nstats { grid-template-columns: 1fr 1fr; gap: 10px 0; }
+  .nstats .hairv { display: none; }
+  .nstat .v { font-size: 20px; }
+}
 .chip { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--cc); color: var(--chip-ink); }
 .foot { font-size: 14px; line-height: 1.4; color: var(--ink-2); margin-top: auto; }
 
@@ -301,7 +338,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .dialog .btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .dialog .btns button { height: 44px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--hair); }
 .dialog .btns button.go { background: var(--amber); color: #1A0E02; border-color: var(--amber); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) { .tog { transition: none; } .hub .flow { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tog { transition: none; } }
 `;
 
   // ---------------------------------------------------------------- series helpers
@@ -876,7 +913,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
           const rows = [`<b>${esc(clock(t))}</b>`];
           if (pv) rows.push(`<span class="row">${swatch('var(--c-solar)')}Solar produced ${f1(pv.v)} kW</span>`);
           if (hs) rows.push(`<span class="row">${swatch('var(--c-house)')}House use ${f1(hs.v)} kW</span>`);
-          if (wl) rows.push(`<span class="row">${swatch(carColor)}Car charging ${f1(wl.v)} kW</span>`);
+          if (wl) rows.push(`<span class="row">${swatch('var(--ink)')}Car charging ${f1(wl.v)} kW</span>`);
           if (ex) rows.push(`<span class="row">${swatch('var(--c-solar)', 'dash')}Solar expected ${f1(ex.v)} kW</span>`);
           if (pl) rows.push(`<span class="row">${swatch(carColor, 'area')}Planned car ${f1(pl.v)} kW <span class="muted">${f0(pl.v * 1000 / volts)} A</span></span>`);
           if (f) rows.push(`<span class="row">${swatch('var(--ink-3)', 'dot')}Solcast ${f1(f.p50)} kW <span class="muted">(${f1(f.p10)}–${f1(f.p90)})</span></span>`);
@@ -898,7 +935,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       } else if (vs !== null) check = 'Solar is tracking the forecast; the planner works from the live battery level and re-plans every 15 minutes.';
       return `<section class="panel today">
         <div class="ptitle">${title('sun', 'Today: Solar, House &amp; Car')}${seg}</div>
-        <div class="legend">${key('var(--c-solar)', 'area', 'Solar produced')}${key('var(--c-house)', 'line', 'House use')}${key(carColor, 'line', 'Car charging')}${key('var(--c-solar)', 'dash', 'Solar expected (adjusted)')}${key(carColor, 'area', 'Planned car')}${key('var(--ink-3)', 'dot', 'Solcast forecast')}</div>
+        <div class="legend">${key('var(--c-solar)', 'area', 'Solar produced')}${key('var(--c-house)', 'line', 'House use')}${key('var(--ink)', 'line', 'Car charging')}${key('var(--c-solar)', 'dash', 'Solar expected (adjusted)')}${key(carColor, 'area', 'Planned car')}${key('var(--ink-3)', 'dot', 'Solcast forecast')}</div>
         <div class="chart" data-chart="today">
           <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Today's solar produced, house use and car charging, with the adjusted expectation for the rest of the day and the Solcast forecast, ${esc(hourLabel(t0))} to ${esc(hourLabel(t1))}">
             <g stroke="var(--hair-2)" stroke-width="1">${grid}<line x1="${F.L}" y1="${base}" x2="${F.L + F.pw}" y2="${base}" stroke="var(--hair)"/></g>
@@ -909,7 +946,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
             ${plan.length ? `<path d="${this._stepPath(plan, x, y, base)}" fill="color-mix(in srgb, ${carColor} 35%, transparent)" stroke="${carColor}" stroke-width="1.2" stroke-linejoin="round"/>` : ''}
             ${expLine.length > 1 ? `<path d="${line(expLine)}" fill="none" stroke="var(--c-solar)" stroke-width="2.2" stroke-dasharray="6 4" stroke-linejoin="round"/>` : ''}
             ${houseB.length > 1 ? `<path d="${line(houseB)}" fill="none" stroke="var(--c-house)" stroke-width="2.2" stroke-linejoin="round"/>` : ''}
-            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="${carColor}" stroke-width="2" stroke-linejoin="round"/>` : ''}
+            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="var(--ink)" stroke-width="2.2" stroke-linejoin="round"/>` : ''}
             ${nowMark}
             ${!fcIn.length && !pvB.length ? `<text x="${F.L + F.pw / 2}" y="${F.T + F.ph / 2}" text-anchor="middle" fill="var(--ink-2)" font-size="14">No solar readings or forecast yet</text>` : ''}
           </svg>
@@ -944,6 +981,9 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const h = this._hist || { wall: [], planned: {} };
       const wallB = bucketMeans(h.wall, t0, Math.min(now, t1));
       const c = this._focusCar(s); const carColor = this._carColor(c);
+      // one colour per meaning: the plan in the car's colour, what it really drew in white, the
+      // start time in green
+      const drewColor = 'var(--ink)'; const startColor = 'var(--green)';
       const fullKw = (c?.max_a || 48) * volts / 1000;
       const start = fw ? this._nightStart(s, fa, fb) : null;
       let plan = this._planSteps(s, t0, t1);
@@ -959,6 +999,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
         plan.sort((p, q) => p.a - q.a);
       }
       const maxKw = fullKw;
+      const planOn = plan.filter(p => p.v > 0.05); // drawn only where the car charges
       const yMax = niceMax(Math.max(2, maxKw, ...plan.map(p => p.v), ...wallB.map(p => p.v)) * 1.05);
       const F = this._frame('night', 250);
       const x = t => F.L + (t - t0) / (t1 - t0) * F.pw; const y = v => F.T + F.ph - Math.max(0, Math.min(yMax, v)) / yMax * F.ph;
@@ -966,7 +1007,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const windows = (s.free_windows || []).map(w => ({ a: Math.max(ts(w.start), t0), b: Math.min(ts(w.end), t1) })).filter(w => w.b > w.a);
       const freeRects = windows.map(w => `<rect x="${P(x(w.a))}" y="${F.T}" width="${P(x(w.b) - x(w.a))}" height="${F.ph}" fill="var(--free-band)"/>`).join('');
       const freeLabel = windows[0] && x(windows[0].b) - x(windows[0].a) > 80 ? `<text x="${P(x(windows[0].a) + 8)}" y="${F.T + 16}" fill="var(--indigo)" font-size="12" font-weight="600">Free hours</text>` : '';
-      const startMark = start && start > t0 && start < t1 && start !== fa ? `<line x1="${P(x(start))}" y1="${F.T}" x2="${P(x(start))}" y2="${base}" stroke="${carColor}" stroke-width="2" stroke-dasharray="5 4"/><text x="${P(x(start) + 6)}" y="${F.T + 34}" fill="var(--ink)" font-size="12">car starts ${esc(clock(start))}</text>` : '';
+      const startMark = start && start > t0 && start < t1 && start !== fa ? `<line x1="${P(x(start))}" y1="${F.T}" x2="${P(x(start))}" y2="${base}" stroke="${startColor}" stroke-width="2" stroke-dasharray="5 4"/><text x="${P(x(start) + 6)}" y="${F.T + 34}" fill="${startColor}" font-size="12" font-weight="600">car starts ${esc(clock(start))}</text>` : '';
       const nowMark = now > t0 && now < t1 ? `<line x1="${P(x(now))}" y1="${F.T - 6}" x2="${P(x(now))}" y2="${base}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="2 4"/><text x="${P(x(now) + 6)}" y="${F.T + 2}" fill="var(--ink)" font-size="12">now</text>` : '';
       const grid = [0.5, 1].map(f => `<line x1="${F.L}" y1="${P(base - f * F.ph)}" x2="${F.L + F.pw}" y2="${P(base - f * F.ph)}"/>`).join('');
       const yl = [1, 0.5].map(f => `<text x="${F.L - 8}" y="${P(base - f * F.ph + 4)}" text-anchor="end">${f === 1 ? `${yMax} kW` : yMax / 2}</text>`).join('');
@@ -978,7 +1019,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
           const pl = plan.find(p => t >= p.a && t < p.b); const wl = wallB.find(p => Math.abs(p.t - t) <= BUCKET / 2);
           const rows = [`<b>${esc(clock(t))}</b> <span class="muted">${isFree(t) ? 'free hours' : 'paid'}</span>`];
           if (pl) rows.push(`<span class="row">${swatch(carColor, 'area')}Planned car ${f1(pl.v)} kW <span class="muted">${f0(pl.v * 1000 / volts)} A</span></span>`);
-          if (wl) rows.push(`<span class="row">${swatch(carColor)}Car charging ${f1(wl.v)} kW</span>`);
+          if (wl) rows.push(`<span class="row">${swatch(drewColor)}Car charging ${f1(wl.v)} kW</span>`);
           return rows.join('');
         },
       };
@@ -991,14 +1032,14 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const drewPaid = wallB.filter(p => !isFree(p.t) && dark(p.t) && p.v > 0.3).length * BUCKET / HOUR;
       return `<section class="panel today">
         <div class="ptitle">${title('moon', 'Tonight: Free Hours')}${seg}</div>
-        <div class="legend">${key('var(--indigo)', 'band', 'Free hours', 0.4)}${key(carColor, 'area', 'Planned car')}${key(carColor, 'line', 'Car charging')}${key(carColor, 'dash', 'Car starts')}</div>
+        <div class="legend">${key('var(--indigo)', 'band', 'Free hours', 0.4)}${key(carColor, 'area', 'Planned car')}${key(drewColor, 'line', 'Car charging')}${startMark ? key(startColor, 'dash', 'Car starts') : ''}</div>
         <div class="chart" data-chart="night">
           <svg width="${F.W}" height="${F.H}" viewBox="0 0 ${F.W} ${F.H}" role="img" aria-label="Tonight: the free hours, when the car starts and its planned charging power">
             ${freeRects}
             <g stroke="var(--hair-2)" stroke-width="1">${grid}<line x1="${F.L}" y1="${base}" x2="${F.L + F.pw}" y2="${base}" stroke="var(--hair)"/></g>
             <g fill="var(--ink-2)" font-size="12">${yl}${this._axisX(t0, t1, x, base)}</g>
-            ${plan.length ? `<path d="${this._stepPath(plan, x, y, base)}" fill="color-mix(in srgb, ${carColor} 45%, transparent)" stroke="${carColor}" stroke-width="1.5" stroke-linejoin="round"/>` : ''}
-            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="${carColor}" stroke-width="2" stroke-linejoin="round"/>` : ''}
+            ${planOn.length ? `<path d="${this._stepPath(planOn, x, y, base)}" fill="color-mix(in srgb, ${carColor} 45%, transparent)" stroke="${carColor}" stroke-width="1.5" stroke-linejoin="round"/>` : ''}
+            ${wallB.length > 1 ? `<path d="${line(wallB)}" fill="none" stroke="${drewColor}" stroke-width="2.4" stroke-linejoin="round"/>` : ''}
             ${freeLabel}${startMark}${nowMark}
           </svg>
         </div>
@@ -1014,9 +1055,9 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
     }
 
     /**
-     * Home Now as a flow hub: the house in the middle with a spoke each to the sun, the grid, the
-     * battery and the charger. Dots run along a spoke the way the power flows, faster with more of
-     * it. Drawn at its real pixel width, so the text never scales.
+     * Home Now, the Daylight energy cluster: concentric rings for solar, the house and the car
+     * with the battery level inside, a bar each side for the grid (in up, out down) and the
+     * battery (in use up, charging down), the grid in words and the readings underneath.
      */
     _sitePanel(s) {
       const site = s.site || {};
@@ -1024,74 +1065,56 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const now = Date.now();
       const src = s.sources || {};
       const pv = num(site.pv_kw); const grid = num(site.grid_kw); const bat = num(site.battery_kw);
-      const wall = num(site.wall_kw); const soc = num(site.soc);
+      const wall = num(site.wall_kw); const soc = num(site.soc); const house = num(site.house_kw);
       const car = c?.on_charger ? c : null;
       const carSoc = car ? num(car.soc) : null;
       const freeNow = (s.free_windows || []).some(w => ts(w.start) <= now && now < ts(w.end));
       const floor = num(s.settings?.floor_pct);
       const live = v => v !== null && Math.abs(v) >= 0.05;
-      const W = Math.max(260, Math.min(460, this._cw.site || 380)); const H = 308;
-      const cx = W / 2; const cy = 156; const R = 28; const RH = 36; const side = 48;
-      const at = { pv: [cx, 42], grid: [side, cy], bat: [W - side, cy], car: [cx, H - 38], house: [cx, cy] };
-      const P = n => n.toFixed(1);
-      // a spoke runs centre to centre and the discs sit on top, so dots slide out from under one
-      // node and in under the next; `back` turns the flow round
-      const spoke = (a, b, kw, color, back = false) => {
-        const [p, q] = back ? [b, a] : [a, b];
-        const d = `M${P(p[0])},${P(p[1])} L${P(q[0])},${P(q[1])}`;
-        if (!live(kw)) return `<path d="${d}" stroke="var(--hair)" stroke-width="2"/>`;
-        const dur = FLOW_GAP / (14 + 40 * Math.min(1, Math.abs(kw) / 10));
-        return `<path d="${d}" stroke="${color}" stroke-opacity="0.32" stroke-width="2"/>
-          <path class="flow" d="${d}" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="0.1 ${FLOW_GAP - 0.1}" style="animation-duration:${dur.toFixed(2)}s;animation-delay:-${((now / 1000) % dur).toFixed(2)}s"/>`;
+      const batColor = soc === null ? 'var(--ink-3)' : floor !== null && soc <= floor ? 'var(--red)' : 'var(--c-battery)';
+      const carName = car ? car.name : site.wall_connected ? 'Car' : 'Charger';
+      // the rings share one scale, so solar, the house and the car compare at a glance
+      const chargerKw = (num(s.volts) || 240) * 48 / 1000;
+      const ringMax = Math.max(10, chargerKw, pv || 0, house || 0, wall || 0);
+      const TAU = 2 * Math.PI;
+      const ring = (r, frac, color, w, glow) => {
+        const C = TAU * r; const f = Math.max(0.002, Math.min(1, frac || 0));
+        return `<circle cx="104" cy="104" r="${r}" stroke="${color}" stroke-opacity="0.16" stroke-width="${w}"/><circle cx="104" cy="104" r="${r}" stroke="${color}" stroke-width="${w}" stroke-dasharray="${(C * f).toFixed(1)} ${C.toFixed(1)}"${glow ? ` style="filter: drop-shadow(0 0 6px ${color})"` : ''}/>`;
       };
-      const ico = (name, [x, y], size, color) => `<svg class="ic" x="${P(x - size / 2)}" y="${P(y - size / 2)}" width="${size}" height="${size}" viewBox="0 0 24 24" style="color:${color}" aria-hidden="true">${ICON[name]}</svg>`;
-      // a lit node is a solid chip like the rest of the card; an idle one is a dim well
-      const chip = (xy, r, color, name, on, more = '') => `<g data-more="${esc(more || '')}"><circle cx="${P(xy[0])}" cy="${P(xy[1])}" r="${r}" fill="${on ? color : `color-mix(in srgb, ${color} 24%, var(--hub))`}"/>${ico(name, xy, 22, on ? 'var(--chip-ink)' : color)}</g>`;
-      // the two things that hold charge are discs whose own border is the charge: it fills
-      // clockwise from the top, with the icon and the percent inside
-      const gauge = ([x, y], color, pct, name, more = '') => {
-        const sw = 5; const r = R - sw / 2; const C = 2 * Math.PI * r;
-        const fill = P(C * Math.max(0, Math.min(100, pct)) / 100);
-        return `<g data-more="${esc(more || '')}"><circle cx="${P(x)}" cy="${P(y)}" r="${R}" fill="color-mix(in srgb, ${color} 20%, var(--hub))"/>
-          <circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="none" stroke="color-mix(in srgb, ${color} 30%, var(--hub))" stroke-width="${sw}"/>
-          <circle cx="${P(x)}" cy="${P(y)}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${fill} ${P(C)}" transform="rotate(-90 ${P(x)} ${P(y)})"/>
-          ${ico(name, [x, y - 8], 17, color)}
-          <text x="${P(x)}" y="${P(y + 14)}" text-anchor="middle" class="num" fill="var(--ink)" font-size="14" font-weight="600">${f0(pct)}<tspan font-size="10" font-weight="500">%</tspan></text></g>`;
+      // a bar fills from its middle: up for power coming in, down for power going out
+      const bar = (ic, label, val, max, color, upWord, downWord, more) => {
+        const v = val === null ? 0 : val; const f = Math.min(1, Math.abs(v) / max) * 50; const up = v >= 0;
+        return `<div class="nbar${live(val) ? '' : ' off'}" style="--fc:${color}" data-more="${esc(more || '')}" title="${esc(label)}"><span class="fi">${icon(ic, 22)}</span><span class="e">${upWord}</span><span class="vt"><i class="${up ? 'up' : 'dn'}${live(val) ? ' glow' : ''}" style="${up ? 'bottom' : 'top'}:50%;height:${f.toFixed(1)}%"></i></span><span class="e">${downWord}</span></div>`;
       };
-      const kw = (x, y, v, anchor) => `<text x="${P(x)}" y="${P(y)}" text-anchor="${anchor}" class="num" fill="var(--ink)" font-size="20" font-weight="500">${f1(v === null ? null : Math.abs(v))}<tspan dx="3" font-size="13" font-weight="400" fill="var(--ink-2)">kW</tspan></text>`;
-      const word = (x, y, t, anchor, fill = 'var(--ink-2)', weight = 400) => `<text x="${P(x)}" y="${P(y)}" text-anchor="${anchor}" fill="${fill}" font-size="13" font-weight="${weight}">${esc(t)}</text>`;
-      const gridWord = !live(grid) ? ['idle', 'var(--ink-3)'] : grid < 0 ? ['exporting', 'var(--green)'] : freeNow ? ['free power', 'var(--indigo)'] : ['importing', 'var(--amber)'];
-      const batWord = !live(bat) ? ['holding', 'var(--ink-3)'] : bat > 0 ? ['charging', 'var(--green)'] : ['discharging', 'var(--amber)'];
-      const batColor = soc !== null && floor !== null && soc <= floor ? 'var(--red)' : 'var(--c-battery)';
-      const carColor = 'var(--c-charger)';
-      const carName = car ? (car.name.length > 16 ? `${car.name.slice(0, 15)}…` : car.name) : 'Charger';
-      const sx = cx + R + 12; // the sun and the car carry their reading beside them, clear of the spokes
-      const label = `Solar ${f1(pv)} kW, house ${f1(site.house_kw)} kW, grid ${gridWord[0]} ${f1(grid === null ? null : Math.abs(grid))} kW, battery ${f0(soc)}% ${batWord[0]} ${f1(bat === null ? null : Math.abs(bat))} kW, ${carName} ${f1(wall)} kW`;
+      const batKw = bat === null ? null : Math.abs(bat);
+      const batRate = !live(bat) ? '<div class="ru">holding</div>'
+        : `<div class="rv num">${bat > 0 ? `<span style="color:var(--green)">${icon('up')}</span>` : `<span style="color:var(--amber)">${icon('down')}</span>`}${f1(batKw)}<small>kW</small></div><div class="ru">${bat > 0 ? 'charging' : 'in use'}</div>`;
+      const gridText = !live(grid) ? 'No grid power flowing'
+        : grid < 0 ? `Exporting ${f1(-grid)} kW to the grid`
+        : freeNow ? `Free power: ${f1(grid)} kW from the grid` : `Importing ${f1(grid)} kW from the grid`;
+      const gridColor = !live(grid) ? 'var(--ink-3)' : grid < 0 ? 'var(--green)' : freeNow ? 'var(--indigo)' : 'var(--c-grid)';
+      const kwv = v => `${f1(v === null ? null : Math.abs(v))}<small>kW</small>`;
+      const stat = (color, ic, l, v, more, sub = '') => `<div class="nstat" data-more="${esc(more || '')}"><div class="lbl"><span style="color:${color}">${icon(ic)}</span><span class="t">${esc(l)}</span></div><div class="v num">${v}</div>${sub ? `<div class="sub num">${sub}</div>` : ''}</div>`;
+      const label = `Solar ${f1(pv)} kW, house ${f1(house)} kW, ${carName} ${f1(wall)} kW, battery ${f0(soc)}%${live(bat) ? `, ${bat > 0 ? 'charging' : 'in use'} ${f1(batKw)} kW` : ', holding'}. ${gridText}`;
       let foot = '';
       if (site.problem) foot = `<span class="red-t">${esc(site.problem)}</span>`;
       else if (c?.on_charger && s.shadow && num(site.wall_current) !== null && Math.abs(site.wall_current - c.planned_a) >= 2) foot = `The car draws ${f0(site.wall_current)} A on its own schedule; the plan would send ${f0(c.planned_a)} A.`;
       return `<section class="panel site">
         <div class="ptitle">${title('home', 'Home Now')}</div>
-        <div class="chart hub" data-chart="site">
-          <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">
-            <g fill="none">
-              ${spoke(at.pv, at.house, pv, 'var(--c-solar)')}
-              ${spoke(at.grid, at.house, grid, 'var(--c-grid)', grid < 0)}
-              ${spoke(at.house, at.bat, bat, batColor, bat < 0)}
-              ${spoke(at.house, at.car, wall, carColor)}
-            </g>
-            ${chip(at.pv, R, 'var(--c-solar)', 'sun', live(pv), src.pv?.entity_id)}
-            ${chip(at.grid, R, 'var(--c-grid)', 'grid', live(grid), src.grid?.entity_id)}
-            ${soc !== null ? gauge(at.bat, batColor, soc, 'battery', src.soc?.entity_id) : chip(at.bat, R, batColor, 'battery', live(bat), src.battery?.entity_id)}
-            ${carSoc !== null ? gauge(at.car, carColor, carSoc, 'car', src.wall?.entity_id) : chip(at.car, R, carColor, car ? 'car' : 'plug', live(wall), src.wall?.entity_id)}
-            <circle cx="${P(cx)}" cy="${cy}" r="${RH}" fill="var(--c-house)"/>
-            ${ico('home', [cx, cy - 10], 22, 'var(--chip-ink)')}
-            <text x="${P(cx)}" y="${cy + 19}" text-anchor="middle" class="num" fill="var(--chip-ink)" font-size="16" font-weight="600">${f1(site.house_kw)}<tspan dx="2" font-size="12" font-weight="500">kW</tspan></text>
-            ${word(sx, at.pv[1] - 6, 'Solar', 'start', 'var(--ink-2)', 500)}${kw(sx, at.pv[1] + 15, pv, 'start')}
-            ${word(sx, at.car[1] - 6, carName, 'start', 'var(--ink-2)', 500)}${kw(sx, at.car[1] + 15, wall, 'start')}
-            ${word(at.grid[0], cy - R - 11, 'Grid', 'middle', 'var(--ink-2)', 500)}${kw(at.grid[0], cy + R + 25, grid, 'middle')}${word(at.grid[0], cy + R + 43, gridWord[0], 'middle', gridWord[1])}
-            ${word(at.bat[0], cy - R - 11, 'Battery', 'middle', 'var(--ink-2)', 500)}${kw(at.bat[0], cy + R + 25, bat, 'middle')}${word(at.bat[0], cy + R + 43, batWord[0], 'middle', batWord[1])}
-          </svg>
+        <div class="nrow">
+          ${bar('grid', 'Grid', grid, 15, 'var(--c-grid)', 'in', 'out', src.grid?.entity_id)}
+          <div class="nrings" role="img" aria-label="${esc(label)}" data-more="${esc(src.soc?.entity_id || '')}">
+            <svg viewBox="0 0 208 208" aria-hidden="true">${ring(94, (pv || 0) / ringMax, 'var(--c-solar)', 13, live(pv))}${ring(77, (house || 0) / ringMax, 'var(--c-house)', 10, false)}${ring(62, (wall || 0) / ringMax, 'var(--c-charger)', 10, live(wall))}${ring(47, (soc || 0) / 100, batColor, 10, true)}</svg>
+            <div class="c"><div class="soc num">${soc === null ? '—' : f0(soc)}<small>%</small></div><div class="rate">${batRate}</div></div>
+          </div>
+          ${bar('battery', 'Battery', bat === null ? null : -bat, 10, batColor, 'use', 'chg', src.battery?.entity_id)}
+        </div>
+        <div class="nline" style="--gc:${gridColor}">${icon('grid')}<span>${esc(gridText)}</span></div>
+        <div class="nstats">
+          ${stat('var(--c-solar)', 'sun', 'Solar', kwv(pv), src.pv?.entity_id)}<span class="hairv"></span>
+          ${stat('var(--c-house)', 'home', 'House', kwv(house), '')}<span class="hairv"></span>
+          ${stat('var(--c-charger)', car ? 'car' : 'plug', carName, kwv(wall), src.wall?.entity_id, carSoc !== null ? `${f0(carSoc)}%` : '')}<span class="hairv"></span>
+          ${stat('var(--c-grid)', 'grid', 'Grid', kwv(grid), src.grid?.entity_id, live(grid) ? (grid < 0 ? 'out' : 'in') : '')}
         </div>
         ${foot ? `<div class="foot">${foot}</div>` : ''}
       </section>`;

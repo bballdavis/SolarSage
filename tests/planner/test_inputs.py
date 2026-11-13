@@ -46,6 +46,9 @@ def test_power_units_and_signs() -> None:
     assert power_kw(st("sensor.p", "1.5"), "kW", True) == -1.5  # inverted sign
     assert power_kw(st("sensor.p", "unavailable"), "W", False) is None
     assert power_kw(None, "W", False) is None
+    # A current sensor counts at the configured voltage (the Wall Connector's vehicle current)
+    assert power_kw(st("sensor.a", "48", unit_of_measurement="A"), "kW", False, 240.0) == 11.52
+    assert power_kw(st("sensor.a", "10", unit_of_measurement="A"), "kW", False, 208.0) == 2.08
 
 
 def test_states() -> None:
