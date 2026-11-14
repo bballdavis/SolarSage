@@ -36,8 +36,13 @@ the cheapest paid hours as late as possible.
 
 SAFETY (every call). Paid import while the car draws for longer than the tolerance, or the
 battery at the floor and discharging into the car, cuts the car by what it costs and caps it
-for 30 min; a full battery that keeps exporting allows an increase before the interval is up;
-an unplugged, full or stale car is never commanded.
+for 30 min; an unplugged, full or stale car is never commanded.
+
+EXPORT (every call). The steady plan counts on the battery to buffer the sun, and a full battery
+cannot buffer upward. So while it is full (or charging at its full rate) and solar has been
+exported for 5 min, the car is raised at once by the exported power, up to P_cap. That lift is
+held while the battery stays full and dropped when it leaves the top or starts to discharge;
+the plan then takes the car back down at its usual slow pace.
 """
 
 from __future__ import annotations
@@ -82,8 +87,9 @@ class Params:
     import_trip_kw: float = 0.25  # paid import above this counts for the safety rule
     safety_cap_min: float = 30.0  # after a safety cut, no increase for this long
     settle_min: float = 10.0  # no safety action this soon after a change
-    export_kick_min: float = 10.0  # full battery exporting this long allows an early increase
+    export_kick_min: float = 5.0  # full battery exporting this long lifts the car to take it
     full_soc_pct: float = 97.0
+    lift_band_pct: float = 3.0  # the lift is held down to this far under full_soc_pct
     near_limit_frac: float = 0.75  # no cut when the car needs less than this x 1 h at its rate
     min_current_spill: float = 0.0  # run at the minimum current only with this share of it spare
     pv: PvParams = field(default_factory=PvParams)
@@ -154,6 +160,7 @@ class Planner:
         self.import_since: datetime | None = None
         self.export_since: datetime | None = None
         self.cap: tuple[int, datetime] | None = None  # safety cap (amps, until)
+        self.lift: int | None = None  # amps held to take the solar a full battery cannot store
         self.plan_on: datetime | None = None  # deadline of the plan pushed through paid hours
         self.shadow_a: int | None = None  # the virtual car's current in shadow mode
 
@@ -170,6 +177,7 @@ class Planner:
             "plan_on": iso(self.plan_on),
             "cap": [self.cap[0], iso(self.cap[1])] if self.cap else None,
             "shadow_a": self.shadow_a,
+            "lift": self.lift,
         }
 
     def load_state(self, d: dict[str, Any]) -> None:
@@ -184,6 +192,7 @@ class Planner:
         c = d.get("cap")
         self.cap = (int(c[0]), dt(c[1])) if c else None
         self.shadow_a = d.get("shadow_a")
+        self.lift = d.get("lift")
 
     # ------------------------------------------------------------------ entry point
 
@@ -329,15 +338,38 @@ class Planner:
         if safe is not None:
             cut, why, rule = safe
             self.cap = (cut, now + timedelta(minutes=self.params.safety_cap_min))
+            self.lift = None
             dbg["exempt"] = True  # either way the lower current goes at once
             dbg["safety"] = rule
             if cut < a:  # otherwise the plan already wants less than the cut
                 return cut, why, dbg
+        lift = self._export_lift(snap, car, b)
+        planned = a
+        if lift is not None and lift > car.commanded_a:
+            dbg["lift_a"] = lift  # _limit: this much goes at once, whatever the plan's pace
+        if lift is not None and lift > a:
+            a = lift
         if self.cap is not None and now < self.cap[1] and a > self.cap[0]:
             dbg["capped_from"] = a
             a = self.cap[0]
         if not s.daytime_solar:
             return 0, "Daytime solar charging is off; waiting for the free hours.", dbg
+        if a > planned:  # the lift, as far as a safety cap leaves it
+            exp = max(0.0, -snap.measured.grid_kw) if snap.measured else 0.0
+            if a > car.commanded_a:
+                dbg["exempt"] = True  # the surplus is being lost now: no interval, no step limit
+                return (
+                    a,
+                    f"Battery full and exporting {exp:.1f} kW: raising to {a} A to take it "
+                    f"(the plan alone is {planned} A).",
+                    dbg,
+                )
+            return (
+                a,
+                f"Solar charging at {a} A: the battery is full, so the car takes the solar it "
+                f"cannot store (the plan alone is {planned} A).",
+                dbg,
+            )
         conf = f"{s.caution_p():.0%}-confidence"
         if b.t_car_end is None or b.t_car_end <= now or not b.steps or not b.steps[0].car_on:
             return (
@@ -732,6 +764,40 @@ class Planner:
             minutes=self.params.export_kick_min
         )
 
+    def _export_lift(self, snap: Snapshot, car: CarState, b: Budget) -> int | None:
+        """The current that takes the solar a full battery is exporting, or None.
+
+        Raised by the measured export once it has lasted ``export_kick_min`` (``_safety`` times
+        it), never above what the battery rules allow (P_cap). Held while the battery stays
+        at the top, dropped when it leaves it or discharges: then the plan decides alone."""
+        m, p, now = snap.measured, self.params, snap.now
+        open_now = bool(b.steps) and b.steps[0].car_on
+        if m is None or not self.settings.daytime_solar or not open_now or car.need_kwh <= 0.5:
+            self.lift = None
+            return None
+        export_kw = max(0.0, -m.grid_kw)
+        at_top = (
+            m.soc_pct >= p.full_soc_pct - p.lift_band_pct
+            or m.battery_kw >= snap.battery.max_charge_kw - 0.8
+        )
+        if not at_top or (m.battery_kw < -0.5 and export_kw <= 0.4):
+            self.lift = None
+        cur = car.commanded_a
+        settling = self.last_change is not None and now - self.last_change < timedelta(
+            minutes=p.settle_min
+        )
+        if not self._early_increase_ok(now) or car.pending or settling:
+            return self.lift
+        if self.settings.shadow:  # the virtual car is not in the measured export: take it out
+            export_kw -= max(0.0, car.spec.kw(cur, snap.volts) - m.car_kw)
+        add = int(export_kw * 1000.0 / snap.volts)
+        top = min(self._max_a(car, snap), self._to_amps(b.p_cap, car, snap))
+        want = cur + add if cur > 0 else max(car.spec.min_a, add)
+        new = self._down(car, min(want, top))
+        if add > 0 and new > cur and new > (self.lift or 0):
+            self.lift = new
+        return self.lift
+
     # ------------------------------------------------------------------ amps and rate limits
 
     @staticmethod
@@ -770,6 +836,9 @@ class Planner:
             return None, reason, want
         if exempt or want == cur:
             return want, reason, want
+        lift = dbg.get("lift_a")
+        if lift is not None and want > lift > cur:  # the exported part now, the rest at pace
+            return lift, self._on_the_way(reason, lift, want), want
         since = (now - self.last_change).total_seconds() if self.last_change else 1e9
         if since < s.min_change_min * 60.0 and not (want > cur and self._early_increase_ok(now)):
             nxt = self.last_change + timedelta(minutes=s.min_change_min)
@@ -809,13 +878,15 @@ class Planner:
             step = max(car.spec.step_a, s.max_step_a - s.max_step_a % car.spec.step_a)
             if abs(want - cur) > step:
                 new = cur + step if want > cur else cur - step
-                head = f"at {want} A:"
-                if head in reason:
-                    reason = reason.replace(head, f"at {new} A (on the way to {want} A):", 1)
-                else:
-                    reason = reason.rstrip(".") + f"; {new} A now, on the way to {want} A."
-                return new, reason, want
+                return new, self._on_the_way(reason, new, want), want
         return want, reason, want
+
+    @staticmethod
+    def _on_the_way(reason: str, new: int, want: int) -> str:
+        head = f"at {want} A:"
+        if head in reason:
+            return reason.replace(head, f"at {new} A (on the way to {want} A):", 1)
+        return reason.rstrip(".") + f"; {new} A now, on the way to {want} A."
 
     # ------------------------------------------------------------------ outputs
 
@@ -1018,7 +1089,8 @@ class Planner:
                 at, want, "the planned current, after the minimum time between changes"
             )
         if mode == "day" and b is not None:
-            for st, kw in zip(b.steps, b.path.car_kw, strict=False):
+            # while the export lift holds the car above the plan, the plan's steps say nothing
+            for st, kw in zip(b.steps if self.lift is None else (), b.path.car_kw, strict=False):
                 if st.refill:
                     break  # the free hours: full current, below
                 a = self._to_amps(kw, replace(car, commanded_a=cur), snap) if st.car_on else 0

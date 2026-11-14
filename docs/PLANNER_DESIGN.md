@@ -171,7 +171,7 @@ The internal constants are `planner_core.Params`, not owner settings. Each was v
 | multi-day PV bias | on when `pv_days` are given | off | ±13, or ±30 counting one weekday-plan seed that flips (the simulation has no persistent bias) |
 | house level prior / offset fade | 4 kWh / 3 h | 2 kWh; 6 h; 3-h window | within ±10 |
 | run at minimum current without spill | yes | only with ≥50% / 100% spill | 14–21 worse, +0.5 changes a day |
-| take measured export when full | no | yes | 20 worse, more floor time |
+| take measured export when full | upward only, while the battery is full (section 8) | always, in the simulation | 20 worse, more floor time; the upward-only rule is not simulated |
 
 ## 5. How tariffs change behaviour
 
@@ -210,7 +210,7 @@ These are checked on every call, and they override the plan:
 | --- | --- |
 | Paid import above 0.25 kW while the car draws, for longer than the tolerance (5 min) | Cut the car by the import plus 1 A; no increase for 30 min |
 | Battery at the floor and discharging into the car in paid hours | Cut the car by the discharge; no increase for 30 min |
-| Battery at 97% or more, or charging at full rate, and exporting more than 0.4 kW for 10 min | An increase may skip the 15-min interval |
+| Battery at 97% or more, or charging at full rate, and exporting more than 0.4 kW for 5 min | Raise the car at once by the exported power, up to Room; no interval and no 6 A step. Hold that current while the battery stays within 3% of full; drop it when the battery leaves the top or discharges, and let the plan lower the car at its usual pace |
 | Car unplugged, at its limit, or its data stale | Send nothing |
 | Planner off | Send nothing to either car (by day Rivian schedule control then parks the Rivian's charging window; the free night's one window runs on to its end) |
 
@@ -332,7 +332,7 @@ In shadow mode the planner keeps its own virtual current, so the shadow plan evo
 - **Plans are forced through battery-first physics.** Paid power for a plan comes from the home battery first. On a cloudy daytime-only weekday plan this empties the battery, and in the simulation the free-hours hold kept it low overnight (weekday_plan: 1,500–2,900 car-caused floor minutes per 5 days); with the refill it is full again by morning. On time of use, where nothing is free, night plan charging drains the home battery too, and the planner's only lever is not to charge (tou: about 85 kWh of plan-driven paid import over 3 days for every design). Plans outrank the floor, as the owner asked. The early/late push split is a hand-made rule, and it is sensitive near the boundary.
 - **The free-hours refill is assumed to reach 100%.** The planner assumes the Sol-Ark's own settings fill the battery from the grid in free hours, and never checks it. If the refill stops short (a changed time-of-use slot, a lower grid-charge rate), a day that Spread planned down to the wanted level leaves the next paid morning short.
 - **Spread is not simulated** (see the top of this page). It cycles the home battery more than Spill alone, roughly the car's share of the battery each sunny day; raising the wanted level at free start limits that.
-- **A steady current with a 2-hour commitment is an approximation.** Some midday export can remain when Room binds: 20–26 kWh over 3 flat-tariff days, where the trajectory design leaves 8–9. Taking the measured export when the battery is full was tried; it cost more floor time elsewhere.
+- **A steady current with a 2-hour commitment is an approximation.** Some midday export can remain when Room binds: 20–26 kWh over 3 flat-tariff days, where the trajectory design leaves 8–9. Taking the measured export when the battery is full was tried in the simulation and cost more floor time elsewhere. The planner now takes it in one direction only: upward, while the battery is full, never above Room, and released as soon as the battery leaves the top (section 8). That rule is covered by unit tests, not by the simulation; the shadow week is its check.
 - **The simulation's 10 PM night window cost it points.** The simulated planner charged the car from 10 PM, and simulated runs end at midnight, so the last night delivered only two hours. This is why the free-hours-only baseline (which starts at 8 PM) wins the season and winter rows by up to 7 points. The planner now charges from the start of the free hours, as that baseline does.
 - **History builds up.** The multi-day PV bias needs past days' solar against their forecast, which the integration keeps in its own store; until it has a few days, the planner uses priors. The house profile comes from the recorder's statistics, so a new installation starts with whatever history the recorder already has.
 - **Not measured here:**

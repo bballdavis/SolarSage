@@ -327,14 +327,26 @@ def test_small_change_inside_deadband_is_ignored(settings):
     assert d.amps is None and "deadband" in d.reason
 
 
-def test_full_battery_exporting_allows_an_early_increase(settings):
+EXPORTING = Measured(pv_kw=9.0, grid_kw=-3.0, battery_kw=0.0, car_kw=2.4, soc_pct=99.0)
+POOR = {"fc_ratio": 0.25, "actual_ratio": 0.25}  # a forecast whose plan alone wants 14 A
+
+
+def _lifted(settings, car, measured=EXPORTING, **site) -> tuple[Planner, object]:
+    """A planner that has seen the full battery export for 35 min, and its decision at noon."""
     p = _plan(settings)
+    p.decide(
+        snapshot(NOON - timedelta(minutes=30), soc=99.0, cars=[car], measured=measured, **site)
+    )
+    p.last_change = NOON - timedelta(minutes=10)  # inside the 15-min interval, past the settle
+    return p, p.decide(snapshot(NOON, soc=99.0, cars=[car], measured=measured, **site))
+
+
+def test_full_battery_exporting_lifts_the_car_by_the_export(settings):
     car = rivian(since=NOON - timedelta(hours=2), commanded_a=10)
-    m = Measured(pv_kw=9.0, grid_kw=-3.0, battery_kw=0.0, car_kw=2.4, soc_pct=99.0)
-    _running(p, car, soc=99.0, measured=m)
-    p.last_change = NOON - timedelta(minutes=10)  # inside the 15-min interval
-    d = p.decide(snapshot(NOON, soc=99.0, cars=[car], measured=m))
-    assert d.amps == 16
+    p, d = _lifted(settings, car)
+    # 10 A + 3 kW at 240 V (12.5 A), on the Rivian's even amps: at once, not 6 A per interval
+    assert d.amps == 22 and d.debug["lift_a"] == 22 and p.lift == 22
+    assert d.reason.startswith("Solar charging at 22 A (on the way to 38 A):")
     # without the export the same call holds
     q = _plan(settings)
     quiet = Measured(pv_kw=9.0, grid_kw=0.0, battery_kw=3.0, car_kw=2.4, soc_pct=90.0)
@@ -342,6 +354,79 @@ def test_full_battery_exporting_allows_an_early_increase(settings):
     q.last_change = NOON - timedelta(minutes=10)
     d2 = q.decide(snapshot(NOON, soc=90.0, cars=[car], measured=quiet))
     assert d2.amps is None and d2.reason.startswith("Holding 10 A until 12:05")
+    assert q.lift is None
+
+
+def test_the_export_lifts_the_car_above_a_cautious_plan(settings):
+    car = rivian(since=NOON - timedelta(hours=2), commanded_a=10)
+    p, d = _lifted(settings, car, **POOR)
+    assert d.amps == 22 and d.debug["want_a"] == 22
+    assert d.reason == (
+        "Battery full and exporting 3.0 kW: raising to 22 A to take it (the plan alone is 14 A)."
+    )
+
+
+def test_the_lift_stays_inside_the_battery_rules_and_the_car(settings):
+    car = rivian(since=NOON - timedelta(hours=2), commanded_a=30)
+    flood = replace(EXPORTING, grid_kw=-9.0, car_kw=7.2)
+    p, d = _lifted(settings, car, flood, **POOR)
+    assert p.budget is not None and p.budget.p_cap < car.spec.kw(48)
+    assert d.amps is not None and 30 < d.amps < 48  # 30 A + 37 A of export stops at P_cap
+    assert car.spec.kw(d.amps) <= p.budget.p_cap
+    q, d2 = _lifted(settings, car, flood)  # a good forecast: the car's maximum is the limit
+    assert d2.amps == 48
+
+
+def test_the_lift_holds_while_the_battery_is_full_and_ends_when_it_is_not(settings):
+    car = rivian(since=NOON - timedelta(hours=2), commanded_a=10)
+    p, d = _lifted(settings, car, **POOR)
+    held = replace(car, commanded_a=d.amps)
+    # the car now takes the export; the battery is still full: the plan does not pull it back
+    took = Measured(pv_kw=9.0, grid_kw=0.0, battery_kw=0.1, car_kw=5.3, soc_pct=98.0)
+    t2 = NOON + timedelta(minutes=20)
+    d2 = p.decide(snapshot(t2, soc=98.0, cars=[held], measured=took, **POOR))
+    assert d2.amps is None and d2.debug["want_a"] == 22 and p.lift == 22
+    assert "the battery is full" in d2.reason
+    # a cloud: the battery discharges into the car and leaves the top
+    cloud = Measured(pv_kw=3.0, grid_kw=0.0, battery_kw=-3.0, car_kw=5.3, soc_pct=92.0)
+    t3 = NOON + timedelta(minutes=40)
+    d3 = p.decide(snapshot(t3, soc=92.0, cars=[held], measured=cloud, **POOR))
+    assert p.lift is None and "lift_a" not in d3.debug and d3.debug["want_a"] < 22
+
+
+def test_a_paid_import_cut_ends_the_lift(settings):
+    car = rivian(since=NOON - timedelta(hours=2), commanded_a=10)
+    p, d = _lifted(settings, car, **POOR)
+    held = replace(car, commanded_a=d.amps)
+    p.last_change = NOON - timedelta(hours=1)
+    imp = Measured(pv_kw=2.0, grid_kw=4.0, battery_kw=-1.0, car_kw=5.3, soc_pct=96.0)
+    for k in range(1, 4):
+        t = NOON + timedelta(minutes=5 * k)
+        d = p.decide(snapshot(t, soc=96.0, cars=[held], measured=imp, **POOR))
+    assert d.safety == "paid_import" and d.amps is not None and d.amps < 22
+    assert p.lift is None
+
+
+def test_the_lift_survives_a_restart(settings):
+    car = rivian(since=NOON - timedelta(hours=2), commanded_a=10)
+    p, _ = _lifted(settings, car, **POOR)
+    q = _plan(settings)
+    q.load_state(json.loads(json.dumps(p.state_dict())))
+    assert q.lift == 22
+
+
+def test_shadow_mode_takes_the_virtual_car_out_of_the_export():
+    p = Planner(Settings(shadow=True))
+    car = rivian(since=NOON - timedelta(hours=2))
+    # the real car draws nothing, so the virtual car's power is still in the measured export
+    m = replace(EXPORTING, car_kw=0.0)
+    p.decide(snapshot(NOON - timedelta(minutes=30), soc=99.0, cars=[car], measured=m, **POOR))
+    virtual = p.shadow_a
+    assert virtual and virtual >= 14
+    # the export: the virtual car's own power, and 1.2 kW (5 A) that nothing takes
+    m = replace(m, grid_kw=-(car.spec.kw(virtual) + 1.2))
+    d = p.decide(snapshot(NOON - timedelta(minutes=15), soc=99.0, cars=[car], measured=m, **POOR))
+    assert d.amps == virtual + 4 and p.shadow_a == virtual + 4  # even amps: 4 of the 5 A
 
 
 def test_charging_when_free_hours_begin_carries_on(settings):

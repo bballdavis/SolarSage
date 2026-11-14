@@ -20,7 +20,9 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CAUTION_OPTIONS,
+    CONF_BATTERY_MAX_CHARGE_KW,
     CONF_BATTERY_POWER,
+    CONF_BATTERY_RESERVE_PCT,
     CONF_BATTERY_SOC,
     CONF_CHARGER_MAX_A,
     CONF_CONTROL_STATE,
@@ -39,7 +41,7 @@ from .const import (
     power_scale,
     unit_key,
 )
-from .coordinator import CarView, PlannerCoordinator
+from .coordinator import CarView, PlannerCoordinator, SiteView
 from .core.types import CAUTION_LEVELS
 
 # How far ahead the free hours are looked for, and in what steps.
@@ -204,6 +206,80 @@ def _car(coordinator: PlannerCoordinator, car_id: str, view: CarView | None) -> 
     }
 
 
+# Solar under this is not worth a bar; a battery at or above this level takes no more.
+BUDGET_MIN_KW = 0.05
+BUDGET_FULL_PCT = 99.5
+
+
+def solar_budget(
+    pv_kw: float | None,
+    house_kw: float | None,
+    car_plan_kw: float,
+    soc_pct: float | None,
+    *,
+    max_charge_kw: float = 9.0,
+    reserve_pct: float = 10.0,
+    free_now: bool = False,
+) -> dict[str, Any] | None:
+    """Where the solar being made now goes, by the decision in force.
+
+    The sun serves the house first, then the car at the planned power, then the battery (up
+    to its charge rate, nothing once it is full); the rest is exported. What the house and the
+    car take beyond the sun is reported apart, with where it comes from: the battery above its
+    reserve, else the grid. In shadow mode the car's share is the virtual car's, so the bar
+    shows what the planner would do, not what a car on its own schedule draws."""
+    if pv_kw is None or house_kw is None:
+        return None
+    solar = max(0.0, pv_kw)
+    if solar < BUDGET_MIN_KW:
+        solar = 0.0
+    house_want, car_want = max(0.0, house_kw), max(0.0, car_plan_kw)
+    house = min(solar, house_want)
+    car = min(solar - house, car_want)
+    left = solar - house - car
+    room = soc_pct is None or soc_pct < BUDGET_FULL_PCT
+    battery = min(left, max(0.0, max_charge_kw)) if room else 0.0
+    house_extra, car_extra = house_want - house, car_want - car
+    source = None
+    if house_extra + car_extra >= BUDGET_MIN_KW:
+        if free_now:
+            source = "free_grid"
+        else:
+            source = "battery" if soc_pct is None or soc_pct > reserve_pct else "grid"
+    return {
+        "solar_kw": _r(solar),
+        "house_kw": _r(house),
+        "car_kw": _r(car),
+        "battery_kw": _r(battery),
+        "export_kw": _r(left - battery),
+        "house_extra_kw": _r(house_extra),
+        "car_extra_kw": _r(car_extra),
+        "extra_from": source,
+    }
+
+
+def _budget(
+    coordinator: PlannerCoordinator,
+    site: SiteView | None,
+    cars: dict[str, CarView],
+    volts: float,
+    free_now: bool,
+) -> dict[str, Any] | None:
+    if site is None:
+        return None
+    on = next((c for c in cars.values() if c.on_charger), None)
+    options = coordinator.options
+    return solar_budget(
+        site.pv_kw,
+        site.house_kw,
+        (on.planned_a if on else 0) * volts / 1000.0,
+        site.soc_pct,
+        max_charge_kw=float(options.get(CONF_BATTERY_MAX_CHARGE_KW) or 9.0),
+        reserve_pct=float(options.get(CONF_BATTERY_RESERVE_PCT) or 10.0),
+        free_now=free_now,
+    )
+
+
 def snapshot(hass: HomeAssistant, coordinator: PlannerCoordinator) -> dict[str, Any]:
     """The card's view of the planner now."""
     now = dt_util.now()
@@ -216,6 +292,8 @@ def snapshot(hass: HomeAssistant, coordinator: PlannerCoordinator) -> dict[str, 
     nxt = decision.next_change if decision else None
     caution = str(coordinator.settings.get("caution"))
     free_windows = _free_windows(coordinator, now)
+    volts = float(options.get(CONF_VOLTS) or 240.0)
+    free_now = any(datetime.fromisoformat(w["start"]) <= now for w in free_windows)
     return {
         "now": now.isoformat(),
         "planned_at": _iso(data.now if data else None),
@@ -236,7 +314,8 @@ def snapshot(hass: HomeAssistant, coordinator: PlannerCoordinator) -> dict[str, 
         "next_change": (
             {"at": nxt.at.isoformat(), "amps": nxt.amps, "why": nxt.why} if nxt else None
         ),
-        "volts": float(options.get(CONF_VOLTS) or 240.0),
+        "volts": volts,
+        "budget": _budget(coordinator, site, data.cars if data else {}, volts, free_now),
         "site": (
             {
                 "pv_kw": _r(site.pv_kw),

@@ -17,7 +17,7 @@
  */
 (() => {
   const TAG = 'solar-ev-planner-card';
-  const VERSION = '0.3.2';
+  const VERSION = '0.3.5';
   if (customElements.get(TAG)) return;
 
   const HISTORY_EVERY = 5 * 60 * 1000;
@@ -109,6 +109,9 @@
   const title = (ic, text) => `<h2>${icon(ic, 22)}<span>${text}</span></h2>`;
 
   /** The spacing of the moving dots on a Home Now spoke, in pixels. */
+  // Home Now's chip at --hs 1: the phone's 134px reading column, the 178.8px ring box, the 53px rail, two 10px gaps
+  const ECHIP_W = 134 + 178.8 + 53 + 20;
+
   const FONT_CSS = '@font-face { font-family: "Jost"; font-style: normal; font-weight: 100 900; font-display: swap; src: url(https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2) format("woff2"); }';
 
   const CSS = `:host {
@@ -221,6 +224,16 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .tile .v { font-size: 38px; font-weight: 500; line-height: 1.1; }
 .tile .v small { font-size: 19px; }
 .tile .u { font-size: 14px; color: var(--ink-2); }
+/* Solar Now: the solar made now as one bar, shared out by the decision in force */
+.budget { display: flex; flex-direction: column; gap: 8px; }
+.budget .bh { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.budget .bh .v { font-size: 15px; color: var(--ink-2); }
+.budget .bh .v b { font-size: 19px; font-weight: 500; color: var(--ink); }
+.bbar { display: flex; gap: 2px; height: 16px; border-radius: 8px; overflow: hidden; background: var(--hair-2); }
+.bbar > i { display: block; flex: var(--w) 1 0; min-width: 4px; background: var(--sc); }
+.bbar > i.out { background: repeating-linear-gradient(135deg, var(--sc) 0 4px, color-mix(in srgb, var(--sc) 30%, transparent) 4px 8px); }
+.bbar.none { box-shadow: inset 0 0 0 1px var(--hair-2); }
+.budget .cap { margin: 0; }
 .reason { font-size: 16px; line-height: 1.45; color: var(--ink); margin: 0; }
 .note { font-size: 14px; line-height: 1.4; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--ink); }
 .note.bad { background: color-mix(in srgb, var(--red) 26%, transparent); }
@@ -249,49 +262,38 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
 .stats { display: flex; gap: 6px 20px; font-size: 14px; color: var(--ink-2); flex-wrap: wrap; margin-top: auto; }
 .stats b { font-weight: 600; color: var(--ink); }
 
-.nrow { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; align-items: center; }
-.nrings { position: relative; width: 100%; max-width: 236px; aspect-ratio: 1; margin: 0 auto; }
-.nrings > svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; display: block; }
-.nrings circle { fill: none; stroke-linecap: round; }
-.nrings .c { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
-.nrings .soc { font-size: 46px; font-weight: 300; line-height: 1; letter-spacing: -0.02em; }
-.nrings .soc small { font-size: 18px; font-weight: 400; color: var(--ink-2); }
-.nrings .rate { margin-top: 5px; display: grid; justify-items: center; gap: 3px; }
-.nrings .rv { display: flex; align-items: center; gap: 3px; font-size: 18px; line-height: 1.1; }
-.nrings .rv small { font-size: 12px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
-.nrings .rv .ic { width: 14px; height: 14px; stroke-width: 2.4; }
-.nrings .ru { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); line-height: 1; }
-.nbar { display: grid; justify-items: center; gap: 7px; }
-.nbar .vt { position: relative; width: 11px; height: 140px; border-radius: 6px; background: var(--hair-2); }
-.nbar .vt::before { content: ""; position: absolute; left: -5px; right: -5px; top: 50%; height: 1px; background: var(--ink-3); }
-.nbar .vt i { position: absolute; left: 0; right: 0; background: var(--fc); }
-.nbar .vt i.up { border-radius: 6px 6px 0 0; }
-.nbar .vt i.dn { border-radius: 0 0 6px 6px; }
-.nbar .vt i.glow { box-shadow: 0 0 12px var(--fc); }
-.nbar .fi { color: var(--fc); }
-.nbar .e { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); line-height: 1; }
-.nbar.off .vt { opacity: 0.4; }
-.nline { display: flex; justify-content: center; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); text-align: center; }
-.nline .ic { color: var(--gc); flex: none; }
-.nstats { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; padding-top: 12px; border-top: 1px solid var(--hair-2); margin-top: auto; }
-.hairv { width: 1px; background: linear-gradient(to bottom, transparent, var(--hair) 12%, var(--hair) 88%, transparent); }
-.nstat { text-align: center; padding: 2px; min-width: 0; }
-.nstat .lbl { display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); min-width: 0; }
-.nstat .lbl .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nstat .lbl .ic { width: 16px; height: 16px; flex: none; }
-.nstat .v { font-size: 22px; line-height: 1.1; margin-top: 5px; white-space: nowrap; }
-.nstat .v small { font-size: 12px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
-.nstat .sub { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
-.panel.site { container-type: inline-size; }
-@container (max-width: 280px) {
-  .nrow { grid-template-columns: 38px minmax(0, 1fr) 38px; }
-  .nbar .vt { height: 110px; }
-  .nrings .soc { font-size: 34px; }
-  .nrings .rv { font-size: 15px; }
-  .nstats { grid-template-columns: 1fr 1fr; gap: 10px 0; }
-  .nstats .hairv { display: none; }
-  .nstat .v { font-size: 20px; }
-}
+/* Home Now: the Daylight phone energy chip, its CSS at the phone's sizes; --hs scales it all.
+   Five rows (the phone has four) and a 120-unit ring box (the phone's 100) for the car's ring. */
+.echip { --hs: 1; --rg: calc(178.8px * var(--hs)); position: relative; margin: auto 0; display: grid; grid-template-columns: 1fr var(--rg) calc(53px * var(--hs)); gap: 0 calc(10px * var(--hs)); align-items: center; height: calc(210px * var(--hs)); }
+.echip svg.conn { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
+.echip .conn path { fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 0.92; }
+.echip .conn path.live { filter: drop-shadow(0 0 5px var(--tone)); }
+.echip .ms { position: relative; z-index: 2; display: grid; grid-template-columns: auto minmax(calc(56px * var(--hs)), auto); grid-template-rows: repeat(5, 1fr); column-gap: calc(9px * var(--hs)); height: 100%; padding: 0; justify-self: start; }
+.echip .m { position: relative; top: calc(-6.7px * var(--hs)); grid-column: 1 / -1; align-self: center; display: grid; grid-template-columns: subgrid; grid-template-rows: auto auto; row-gap: calc(2px * var(--hs)); align-items: center; min-width: 0; }
+.echip .m .mi { grid-column: 1; grid-row: 2; margin: calc(-8.8px * var(--hs)) 0; width: calc(38px * var(--hs)); height: calc(38px * var(--hs)); border-radius: 50%; display: grid; place-items: center; color: var(--mc); background: color-mix(in srgb, var(--mc) 16%, transparent); flex: none; }
+.echip .m .mi .ic { width: calc(22px * var(--hs)); height: calc(22px * var(--hs)); stroke-width: 1.9; }
+.echip .m .lbl { grid-column: 2; grid-row: 1; justify-self: end; font-size: calc(11.4px * var(--hs)); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); line-height: 1; white-space: nowrap; max-width: calc(96px * var(--hs)); overflow: hidden; text-overflow: ellipsis; }
+.echip .m b { grid-column: 2; grid-row: 2; display: block; width: 100%; text-align: right; font-weight: 400; font-size: calc(20.4px * var(--hs)); line-height: 1; letter-spacing: -0.01em; white-space: nowrap; }
+.echip .m b small { font-size: calc(12.6px * var(--hs)); font-weight: 500; color: var(--ink-2); margin-left: calc(3px * var(--hs)); letter-spacing: 0.04em; }
+.echip .rings { position: relative; z-index: 2; width: var(--rg); height: var(--rg); }
+.echip .rings svg { width: 100%; height: 100%; overflow: visible; display: block; }
+.echip .rings path { fill: none; }
+.echip .rings .live { filter: drop-shadow(0 0 5px var(--tone)); }
+.echip .rings .tick { stroke: var(--ink); stroke-width: 1.2; stroke-opacity: 0.9; }
+.echip .rail { position: relative; z-index: 2; align-self: stretch; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; justify-items: center; gap: calc(6px * var(--hs)); padding: calc(2px * var(--hs)) 0 calc(4px * var(--hs)); }
+.echip .rail .bt { display: grid; grid-template-rows: auto minmax(0, 1fr); justify-items: center; width: calc(38px * var(--hs)); min-height: 0; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--rc) 55%, transparent)); }
+.echip .rail .bt .nub { display: block; width: 38%; height: calc(6px * var(--hs)); border-radius: calc(2px * var(--hs)) calc(2px * var(--hs)) 0 0; background: var(--ink-3); }
+.echip .rail .bt .body { position: relative; justify-self: stretch; border-radius: calc(7px * var(--hs)); background: var(--surface); box-shadow: inset 0 0 0 1.6px var(--ink-2); overflow: hidden; }
+.echip .rail .bt .body i { position: absolute; display: block; left: calc(3px * var(--hs)); right: calc(3px * var(--hs)); bottom: calc(3px * var(--hs)); border-radius: calc(4px * var(--hs)); }
+.echip .rail .bt .fill { height: calc((100% - 6px * var(--hs)) * var(--f)); background: var(--rc); }
+.echip .rail .bt .floor { height: calc((100% - 6px * var(--hs)) * var(--fl)); background: linear-gradient(180deg, color-mix(in srgb, var(--red) 55%, transparent), color-mix(in srgb, var(--red) 22%, transparent) 35%, color-mix(in srgb, var(--red) 12%, transparent)); }
+.echip .rail > b { font-size: calc(18px * var(--hs)); font-weight: 500; line-height: 1; letter-spacing: -0.01em; }
+.echip .rail .rt { position: relative; display: inline-flex; align-items: center; }
+.echip .rail .rt b { font-size: calc(18px * var(--hs)); font-weight: 500; line-height: 1; letter-spacing: -0.02em; display: inline-flex; align-items: center; gap: calc(1px * var(--hs)); }
+.echip .rail .rt b .ic { width: calc(14px * var(--hs)); height: calc(14px * var(--hs)); stroke-width: 3; margin-left: calc(-2px * var(--hs)); }
+.echip .rail .rt b.up .ic { color: var(--green); }
+.echip .rail .rt b.dn .ic { color: var(--red); }
+.echip .rail .rt .u { position: absolute; right: 100%; bottom: calc(1.63px * var(--hs)); margin-right: calc(5px * var(--hs)); font-size: calc(10px * var(--hs)); font-weight: 600; letter-spacing: 0.08em; line-height: 1; color: var(--ink-3); text-transform: uppercase; white-space: nowrap; }
 .chip { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--cc); color: var(--chip-ink); }
 .foot { font-size: 14px; line-height: 1.4; color: var(--ink-2); margin-top: auto; }
 
@@ -688,6 +690,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
     /** Charts are drawn at their real pixel width (fixed height), so text never scales. */
     _measure() {
       if (!this.shadowRoot) return;
+      this._connectors();
       let changed = false;
       this.shadowRoot.querySelectorAll('.chart[data-chart]').forEach(el => {
         const key = el.getAttribute('data-chart'); const w = Math.round(el.clientWidth);
@@ -730,6 +733,8 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       this.shadowRoot.innerHTML = `<style>${CSS}</style><div class="app">${toast}${body}${dlg}</div>`;
       if (this._confirm) this.shadowRoot.querySelector('.dialog .go')?.focus();
       this._measure();
+      this._connectors();
+      if (!this._fontsHooked && document.fonts?.ready) { this._fontsHooked = true; document.fonts.ready.then(() => this._connectors()); }
     }
 
     _header(s) {
@@ -812,6 +817,7 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
           <div class="tile plan ${s.shadow ? '' : 'live'}" data-more="${esc(this._ent('planned_current', c.car_id) || '')}"><div class="k">${esc(planK)}</div><div class="v num">${planned === null ? '—' : f0(planned)} <small>A</small></div><div class="u">${esc(plannedSub)}</div></div>
           <div class="tile" data-more="${esc((s.sources?.wall_current || s.sources?.wall)?.entity_id || '')}"><div class="k">Wall Connector reads</div><div class="v num">${wallA === null ? '—' : f0(wallA)} <small>A</small></div><div class="u">${esc(wallSub)}</div></div>
         </div>
+        ${this._budgetBar(s)}
         <p class="reason" data-more="${esc(this._ent('reason') || '')}">${esc(s.reason || '')}</p>
         ${notes.join('')}
         <div class="kv">
@@ -821,6 +827,41 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
         </div>
         ${others ? `<div class="others">${others}</div>` : ''}
       </section>`;
+    }
+
+    /**
+     * Solar Now: the decision this minute as one bar. Its width is the solar being made; the
+     * shares are the house, the car at the planned power, the battery and what is exported.
+     * No solar leaves the grey track. What the house and the car take beyond the sun is said
+     * underneath, with where it comes from.
+     */
+    _budgetBar(s) {
+      const b = s.budget; if (!b) return '';
+      const car = (s.cars || []).find(c => c.on_charger);
+      const solar = num(b.solar_kw) || 0;
+      const shares = [
+        ['House', b.house_kw, 'var(--c-house)', ''],
+        [car ? `${car.name} ${s.shadow ? 'plan' : ''}`.trim() : 'Car', b.car_kw, this._carColor(car), ''],
+        ['Battery', b.battery_kw, 'var(--c-battery)', ''],
+        ['Export', b.export_kw, 'var(--c-grid)', 'out'],
+      ].filter(x => (num(x[1]) || 0) >= 0.05);
+      const from = { battery: 'from the battery', grid: 'from the grid', free_grid: 'from free grid power' }[b.extra_from] || '';
+      const extra = [];
+      if ((num(b.car_extra_kw) || 0) >= 0.05) extra.push(`the car plan takes ${f1(b.car_extra_kw)} kW`);
+      if ((num(b.house_extra_kw) || 0) >= 0.05) extra.push(`the house ${extra.length ? '' : 'takes '}${f1(b.house_extra_kw)} kW`);
+      let cap = '';
+      if (extra.length) cap = `${solar > 0 ? 'Beyond the sun, ' : ''}${extra.join(' and ')} ${from}.`;
+      else if (!solar) cap = 'Nothing is drawing power now.';
+      const said = shares.map(x => `${x[0]} ${f1(x[1])} kW`).join(', ');
+      const label = solar > 0 ? `Solar now ${f1(solar)} kW: ${said}. ${cap}` : `No solar now. ${cap}`;
+      const bar = solar > 0 && shares.length
+        ? `<div class="bbar">${shares.map(x => `<i class="${x[3]}" style="--w:${Number(x[1]).toFixed(2)};--sc:${x[2]}"></i>`).join('')}</div><div class="legend num">${shares.map(x => key(x[2], 'band', `${esc(x[0])} <b>${f1(x[1])}</b> kW`, x[3] ? 0.6 : 1)).join('')}</div>`
+        : '<div class="bbar none"></div>';
+      return `<div class="budget" role="img" aria-label="${esc(label.trim())}" data-more="${esc(s.sources?.pv?.entity_id || '')}">
+        <div class="bh"><span class="lbl">Solar Now</span><span class="v num">${solar > 0 ? `<b>${f1(solar)}</b> kW` : 'No solar to budget'}</span></div>
+        ${bar}
+        ${cap ? `<p class="cap">${esc(cap[0].toUpperCase() + cap.slice(1))}</p>` : ''}
+      </div>`;
     }
 
     /** The planned car power: the recorded plan until now, the trajectory after. */
@@ -1055,9 +1096,11 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
     }
 
     /**
-     * Home Now, the Daylight energy cluster: concentric rings for solar, the house and the car
-     * with the battery level inside, a bar each side for the grid (in up, out down) and the
-     * battery (in use up, charging down), the grid in words and the readings underneath.
+     * Home Now, the Daylight phone energy chip, at the phone's own geometry: rings 10 units apart
+     * and 5.5 wide, a 42px row per reading with its callout line into the top of its ring, and the
+     * battery rail on the right. The phone has four rings; the car is a fifth at the same spacing,
+     * so the ring box grows from 100 to 120 units and the chip gains one row. The whole chip scales
+     * by --hs, set from the panel's width (_connectors), the way the phone scales by screen height.
      */
     _sitePanel(s) {
       const site = s.site || {};
@@ -1066,58 +1109,93 @@ svg.ic { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: ro
       const src = s.sources || {};
       const pv = num(site.pv_kw); const grid = num(site.grid_kw); const bat = num(site.battery_kw);
       const wall = num(site.wall_kw); const soc = num(site.soc); const house = num(site.house_kw);
+      const cap = num(site.capacity_kwh);
       const car = c?.on_charger ? c : null;
       const carSoc = car ? num(car.soc) : null;
       const freeNow = (s.free_windows || []).some(w => ts(w.start) <= now && now < ts(w.end));
       const floor = num(s.settings?.floor_pct);
-      const live = v => v !== null && Math.abs(v) >= 0.05;
-      const batColor = soc === null ? 'var(--ink-3)' : floor !== null && soc <= floor ? 'var(--red)' : 'var(--c-battery)';
+      const tier = soc === null ? 'var(--ink-3)' : soc < 20 ? 'var(--red)' : soc < 40 ? 'var(--amber)' : 'var(--green)';
       const carName = car ? car.name : site.wall_connected ? 'Car' : 'Charger';
-      // the rings share one scale, so solar, the house and the car compare at a glance
-      const chargerKw = (num(s.volts) || 240) * 48 / 1000;
-      const ringMax = Math.max(10, chargerKw, pv || 0, house || 0, wall || 0);
-      const TAU = 2 * Math.PI;
-      const ring = (r, frac, color, w, glow) => {
-        const C = TAU * r; const f = Math.max(0.002, Math.min(1, frac || 0));
-        return `<circle cx="104" cy="104" r="${r}" stroke="${color}" stroke-opacity="0.16" stroke-width="${w}"/><circle cx="104" cy="104" r="${r}" stroke="${color}" stroke-width="${w}" stroke-dasharray="${(C * f).toFixed(1)} ${C.toFixed(1)}"${glow ? ` style="filter: drop-shadow(0 0 6px ${color})"` : ''}/>`;
-      };
-      // a bar fills from its middle: up for power coming in, down for power going out
-      const bar = (ic, label, val, max, color, upWord, downWord, more) => {
-        const v = val === null ? 0 : val; const f = Math.min(1, Math.abs(v) / max) * 50; const up = v >= 0;
-        return `<div class="nbar${live(val) ? '' : ' off'}" style="--fc:${color}" data-more="${esc(more || '')}" title="${esc(label)}"><span class="fi">${icon(ic, 22)}</span><span class="e">${upWord}</span><span class="vt"><i class="${up ? 'up' : 'dn'}${live(val) ? ' glow' : ''}" style="${up ? 'bottom' : 'top'}:50%;height:${f.toFixed(1)}%"></i></span><span class="e">${downWord}</span></div>`;
-      };
-      const batKw = bat === null ? null : Math.abs(bat);
-      const batRate = !live(bat) ? '<div class="ru">holding</div>'
-        : `<div class="rv num">${bat > 0 ? `<span style="color:var(--green)">${icon('up')}</span>` : `<span style="color:var(--amber)">${icon('down')}</span>`}${f1(batKw)}<small>kW</small></div><div class="ru">${bat > 0 ? 'charging' : 'in use'}</div>`;
-      const gridText = !live(grid) ? 'No grid power flowing'
-        : grid < 0 ? `Exporting ${f1(-grid)} kW to the grid`
-        : freeNow ? `Free power: ${f1(grid)} kW from the grid` : `Importing ${f1(grid)} kW from the grid`;
-      const gridColor = !live(grid) ? 'var(--ink-3)' : grid < 0 ? 'var(--green)' : freeNow ? 'var(--indigo)' : 'var(--c-grid)';
-      const kwv = v => `${f1(v === null ? null : Math.abs(v))}<small>kW</small>`;
-      const stat = (color, ic, l, v, more, sub = '') => `<div class="nstat" data-more="${esc(more || '')}"><div class="lbl"><span style="color:${color}">${icon(ic)}</span><span class="t">${esc(l)}</span></div><div class="v num">${v}</div>${sub ? `<div class="sub num">${sub}</div>` : ''}</div>`;
-      const label = `Solar ${f1(pv)} kW, house ${f1(house)} kW, ${carName} ${f1(wall)} kW, battery ${f0(soc)}%${live(bat) ? `, ${bat > 0 ? 'charging' : 'in use'} ${f1(batKw)} kW` : ', holding'}. ${gridText}`;
+      // the phone's value format: watts under 1 kW, kW to one decimal above
+      const fmtW = kw => { if (kw === null) return '—'; const w = Math.abs(kw * 1000); return w >= 1000 ? `${(w / 1000).toFixed(1)}<small>kW</small>` : `${Math.round(w)}<small>W</small>`; };
+      // solar, the house and the car share a scale, so their rings compare at a glance
+      const share = Math.max(10, (num(s.volts) || 240) * 48 / 1000, pv || 0, house || 0, wall || 0);
+      const W = v => (v || 0) * 1000; // the phone's thresholds are in watts
+      const rings = [
+        { k: 'solar', tone: 'var(--c-solar)', ic: 'sun', label: 'Solar', v: pv, frac: (pv || 0) / share, more: src.pv?.entity_id },
+        { k: 'house', tone: 'var(--c-house)', ic: 'home', label: 'House', v: house, frac: (house || 0) / share },
+        { k: 'car', tone: 'var(--c-charger)', ic: car ? 'car' : 'plug', label: carName, v: wall, frac: (wall || 0) / share, live: W(wall) > 50, more: src.wall?.entity_id },
+        { k: 'batt', tone: tier, ic: 'battery', label: W(bat) > 50 ? 'Charging' : W(bat) < -50 ? 'Using' : 'Battery', v: bat, frac: Math.abs(bat || 0) / 10, sign: Math.sign(bat || 0), bipolar: true, live: true, more: src.battery?.entity_id },
+        { k: 'grid', tone: 'var(--c-grid)', ic: 'grid', label: (grid || 0) < 0 ? 'Grid out' : freeNow && W(grid) > 50 ? 'Grid free' : 'Grid in', v: grid, frac: Math.abs(grid || 0) / 15, sign: Math.sign(grid || 0), bipolar: true, more: src.grid?.entity_id },
+      ];
+      const V = 100 + 20 * (rings.length - 4); const C = V / 2;
+      rings.forEach((R, i) => { R.r = C - 5 - 10 * i; }); // 55, 45, 35, 25, 15: the phone's 10-unit step
+      const pol = (r, deg) => [C + r * Math.cos(deg * Math.PI / 180), C + r * Math.sin(deg * Math.PI / 180)];
+      const arc = (r, a0, a1) => { const [x0, y0] = pol(r, a0); const [x1, y1] = pol(r, a1); return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${Math.abs(a1 - a0) > 180 ? 1 : 0} ${a1 > a0 ? 1 : 0} ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
+      const SW = 5.5; const A0 = -90; const A1 = 180; const ZERO = 45;
+      const ringSvg = rings.map(R => {
+        const f = Math.min(1, R.frac || 0);
+        let seg = '';
+        if (R.bipolar) { const sweep = f * 135; if (R.sign > 0 && sweep > 0.5) seg = arc(R.r, ZERO, ZERO + sweep); else if (R.sign < 0 && sweep > 0.5) seg = arc(R.r, ZERO - sweep, ZERO); }
+        else if (f > 0.002) seg = arc(R.r, A0, A0 + f * 270);
+        const [tx0, ty0] = pol(R.r - SW / 2 + 0.6, ZERO); const [tx1, ty1] = pol(R.r + SW / 2 - 0.6, ZERO);
+        return `<g style="--tone:${R.tone}" data-ring="${R.k}" data-r="${R.r}"><path d="${arc(R.r, A0, A1)}" stroke="${R.tone}" stroke-opacity="0.16" stroke-width="${SW}" stroke-linecap="round"/>${seg ? `<path class="${R.live ? 'live' : ''}" d="${seg}" stroke="${R.tone}" stroke-width="${SW}" stroke-linecap="round"/>` : ''}${R.bipolar ? `<line class="tick" x1="${tx0.toFixed(2)}" y1="${ty0.toFixed(2)}" x2="${tx1.toFixed(2)}" y2="${ty1.toFixed(2)}"/>` : ''}</g>`;
+      }).join('');
+      const metric = R => `<div class="m" data-k="${R.k}" style="--mc:${R.tone}" data-more="${esc(R.more || '')}"><span class="mi">${icon(R.ic, 22)}</span><span class="lbl">${esc(R.label)}</span><b class="num">${fmtW(R.v)}</b></div>`;
+      // the battery: its level with the floor as a red shadow, then the change per hour
+      const rate = bat !== null && cap ? bat / cap * 100 : 0;
+      const fl = floor === null ? 0 : Math.max(0, Math.min(100, floor)) / 100;
+      const cell = `<span class="bt" aria-hidden="true"><i class="nub"></i><span class="body"><i class="fill" style="--f:${(Math.max(0, Math.min(100, soc || 0)) / 100).toFixed(3)}"></i>${fl > 0 ? `<i class="floor" style="--fl:${fl.toFixed(3)}"></i>` : ''}</span></span>`;
+      const rail = `<div class="rail" style="--rc:${tier}" data-more="${esc(src.soc?.entity_id || '')}">${cell}<b class="num">${soc === null ? '—' : f0(soc)}%</b><span class="rt"><span class="u">%/hr</span><b class="num ${rate > 0 ? 'up' : rate < 0 ? 'dn' : ''}">${rate > 0 ? icon('up') : rate < 0 ? icon('down') : ''}${Math.abs(rate).toFixed(1)}</b></span></div>`;
+      const label = `Solar ${f1(pv)} kW, house ${f1(house)} kW, ${carName} ${f1(wall)} kW${carSoc !== null ? ` at ${f0(carSoc)}%` : ''}, battery ${f0(soc)}%, ${W(bat) > 50 ? `charging ${f1(bat)} kW` : W(bat) < -50 ? `in use ${f1(-bat)} kW` : 'holding'}, grid ${(grid || 0) < 0 ? `out ${f1(-grid)} kW` : `in ${f1(grid)} kW`}`;
       let foot = '';
       if (site.problem) foot = `<span class="red-t">${esc(site.problem)}</span>`;
       else if (c?.on_charger && s.shadow && num(site.wall_current) !== null && Math.abs(site.wall_current - c.planned_a) >= 2) foot = `The car draws ${f0(site.wall_current)} A on its own schedule; the plan would send ${f0(c.planned_a)} A.`;
       return `<section class="panel site">
-        <div class="ptitle">${title('home', 'Home Now')}</div>
-        <div class="nrow">
-          ${bar('grid', 'Grid', grid, 15, 'var(--c-grid)', 'in', 'out', src.grid?.entity_id)}
-          <div class="nrings" role="img" aria-label="${esc(label)}" data-more="${esc(src.soc?.entity_id || '')}">
-            <svg viewBox="0 0 208 208" aria-hidden="true">${ring(94, (pv || 0) / ringMax, 'var(--c-solar)', 13, live(pv))}${ring(77, (house || 0) / ringMax, 'var(--c-house)', 10, false)}${ring(62, (wall || 0) / ringMax, 'var(--c-charger)', 10, live(wall))}${ring(47, (soc || 0) / 100, batColor, 10, true)}</svg>
-            <div class="c"><div class="soc num">${soc === null ? '—' : f0(soc)}<small>%</small></div><div class="rate">${batRate}</div></div>
-          </div>
-          ${bar('battery', 'Battery', bat === null ? null : -bat, 10, batColor, 'use', 'chg', src.battery?.entity_id)}
-        </div>
-        <div class="nline" style="--gc:${gridColor}">${icon('grid')}<span>${esc(gridText)}</span></div>
-        <div class="nstats">
-          ${stat('var(--c-solar)', 'sun', 'Solar', kwv(pv), src.pv?.entity_id)}<span class="hairv"></span>
-          ${stat('var(--c-house)', 'home', 'House', kwv(house), '')}<span class="hairv"></span>
-          ${stat('var(--c-charger)', car ? 'car' : 'plug', carName, kwv(wall), src.wall?.entity_id, carSoc !== null ? `${f0(carSoc)}%` : '')}<span class="hairv"></span>
-          ${stat('var(--c-grid)', 'grid', 'Grid', kwv(grid), src.grid?.entity_id, live(grid) ? (grid < 0 ? 'out' : 'in') : '')}
+        <div class="ptitle">${title('home', 'Home Now')}${carSoc !== null ? `<span class="r">${esc(carName)} <b class="num">${f0(carSoc)}%</b></span>` : ''}</div>
+        <div class="echip" role="img" aria-label="${esc(label)}" style="--hs:${this._hs || 1}" data-v="${V}">
+          <svg class="conn" aria-hidden="true"></svg>
+          <div class="ms">${rings.map(metric).join('')}</div>
+          <div class="rings" data-more="${esc(src.soc?.entity_id || '')}"><svg viewBox="0 0 ${V} ${V}" aria-hidden="true">${ringSvg}</svg></div>
+          ${rail}
         </div>
         ${foot ? `<div class="foot">${foot}</div>` : ''}
       </section>`;
+    }
+
+    /** Home Now's scale and callout lines, after layout. The chip is ECHIP_W wide at --hs 1 (the
+     * phone's columns with the wider ring box); it scales down to fit the panel. Each callout is
+     * the phone's: from just past the reading, one even S-curve to the horizontal midpoint, then
+     * level into the top of its ring. */
+    _connectors() {
+      const chip = this.shadowRoot?.querySelector('.echip'); if (!chip) return;
+      const avail = chip.parentElement?.clientWidth || 0;
+      if (avail > 0) {
+        const cs = getComputedStyle(chip.parentElement);
+        const inner = avail - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        const hs = Math.max(0.6, Math.min(1, inner / ECHIP_W));
+        if (Math.abs(hs - (this._hs || 0)) > 0.002) { this._hs = hs; chip.style.setProperty('--hs', hs.toFixed(3)); }
+      }
+      const svg = chip.querySelector('svg.conn'); const ringsEl = chip.querySelector('.rings');
+      const cr = chip.getBoundingClientRect(); const rr = ringsEl?.getBoundingClientRect();
+      if (!svg || !rr || !cr.width || !rr.width) return;
+      const V = Number(chip.getAttribute('data-v')) || 100;
+      svg.setAttribute('viewBox', `0 0 ${cr.width.toFixed(1)} ${cr.height.toFixed(1)}`);
+      const scale = rr.width / V; const cx = rr.left - cr.left + (V / 2) * scale; const top = rr.top - cr.top; const sw = 5.5 * scale;
+      let defs = ''; let paths = '';
+      chip.querySelectorAll('.ms .m').forEach(m => {
+        const k = m.getAttribute('data-k'); const g = chip.querySelector(`.rings [data-ring="${k}"]`); const v = m.querySelector('b');
+        if (!g || !v) return;
+        const r = Number(g.getAttribute('data-r'));
+        const vr = v.getBoundingClientRect(); const tx = vr.right - cr.left + 7; const ty = vr.top + vr.height / 2 - cr.top;
+        const ay = top + (V / 2 - r) * scale; const ax = cx - sw - 2;
+        const midX = tx + (ax - tx) * 0.5; const kk = (midX - tx) * 0.38;
+        const d = `M ${ax.toFixed(1)} ${ay.toFixed(1)} H ${midX.toFixed(1)} C ${(midX - kk).toFixed(1)} ${ay.toFixed(1)}, ${(tx + kk).toFixed(1)} ${ty.toFixed(1)}, ${tx.toFixed(1)} ${ty.toFixed(1)}`;
+        const col = g.style.getPropertyValue('--tone') || 'var(--ink)'; const id = `cg-${k}`; const lit = !!g.querySelector('path.live');
+        defs += `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${tx.toFixed(1)}" y1="${ty.toFixed(1)}" x2="${ax.toFixed(1)}" y2="${ay.toFixed(1)}"><stop offset="0" stop-color="${col}" stop-opacity="0.48"/><stop offset="0.62" stop-color="${col}" stop-opacity="0.82"/><stop offset="1" stop-color="${col}" stop-opacity="1"/></linearGradient>`;
+        paths += `<path class="${lit ? 'live' : ''}" style="--tone:${col}" d="${d}" stroke="url(#${id})" stroke-width="${(sw * 0.8).toFixed(1)}"/>`;
+      });
+      svg.innerHTML = `<defs>${defs}</defs>${paths}`;
     }
 
     /**

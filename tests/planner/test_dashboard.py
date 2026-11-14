@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.solar_ev_planner.const import CONF_FREE_HOURS
-from custom_components.solar_ev_planner.dashboard import snapshot
+from custom_components.solar_ev_planner.dashboard import snapshot, solar_budget
 
 from .conftest import OPTIONS, RIVIAN, TESLA, FakeCars, make_entry, setup_entry, turn
 
@@ -70,7 +70,35 @@ async def test_snapshot_describes_the_cycle(
     assert snap["setup"]["planner_entries"] == 1
     assert snap["setup"]["car_kinds"] == ["rivian", "tesla"]
     assert snap["setup"]["legacy_rivian"] is False
+    # the solar made now, shared out by the decision in force (the virtual car in shadow mode)
+    budget = snap["budget"]
+    shares = ("house_kw", "car_kw", "battery_kw", "export_kw")
+    assert abs(sum(budget[k] for k in shares) - budget["solar_kw"]) < 0.03
+    planned_kw = cars["rivian"]["planned_a"] * snap["volts"] / 1000
+    assert abs(budget["car_kw"] + budget["car_extra_kw"] - planned_kw) < 0.02
     json.dumps(snap)  # JSON-safe as is
+
+
+def test_the_solar_budget_serves_the_house_the_car_then_the_battery() -> None:
+    b = solar_budget(8.0, 1.5, 3.0, 60.0)
+    assert b is not None
+    assert (b["house_kw"], b["car_kw"], b["battery_kw"], b["export_kw"]) == (1.5, 3.0, 3.5, 0.0)
+    assert b["extra_from"] is None and b["car_extra_kw"] == 0.0
+    # the battery takes its charge rate at most, and nothing once it is full: the rest is lost
+    assert solar_budget(14.0, 1.0, 2.0, 60.0)["export_kw"] == 2.0
+    full = solar_budget(8.0, 1.5, 3.0, 100.0)
+    assert (full["battery_kw"], full["export_kw"]) == (0.0, 3.5)
+
+
+def test_the_solar_budget_says_what_comes_from_elsewhere() -> None:
+    b = solar_budget(3.0, 1.0, 5.0, 60.0)  # the plan reaches past the sun
+    assert (b["house_kw"], b["car_kw"], b["battery_kw"], b["export_kw"]) == (1.0, 2.0, 0.0, 0.0)
+    assert (b["car_extra_kw"], b["house_extra_kw"], b["extra_from"]) == (3.0, 0.0, "battery")
+    assert solar_budget(3.0, 1.0, 5.0, 9.0)["extra_from"] == "grid"  # at the reserve
+    night = solar_budget(0.02, 1.2, 11.5, 50.0, free_now=True)
+    assert night["solar_kw"] == 0.0 and night["extra_from"] == "free_grid"
+    assert (night["house_extra_kw"], night["car_extra_kw"]) == (1.2, 11.5)
+    assert solar_budget(None, 1.0, 0.0, 50.0) is None  # no reading, no bar
 
 
 async def test_subscription_pushes_after_a_setting_changes(
